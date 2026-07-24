@@ -14,8 +14,11 @@
       "text": "Most likely primary diagnosis and brief differential.",
       "rubric": {
         "acceptable": [
-          "bipolar I disorder, current manic episode (first manic episode)",
-          "manic episode — rule out substance/medication-induced"
+          "bipolar I (or bipolar) as primary frame",
+          "current / first manic episode",
+          "substance or medication-induced mania on differential",
+          "links prior depression / SSRI history",
+          "mentions stimulants, decongestants, caffeine/energy drinks, or thyroid as DDx"
         ],
         "must_include": [
           "manic",
@@ -25,7 +28,7 @@
         "must_not": [
           "unipolar depression as current primary"
         ],
-        "notes": "Require mania/manic episode AND bipolar (or bipolar I) framing AND substance/medication-induced on the DDx while tox pending. Synonyms OK. Score linearly by must_include+acceptable coverage."
+        "notes": "Atomic checklist. Full m+a without stem-specific quality should land ~90–95, not auto-100."
       }
     },
     {
@@ -35,7 +38,11 @@
       "text": "Immediate tests / workup.",
       "rubric": {
         "acceptable": [
-          "urine tox, basic metabolic panel, ECG before some agents, consider TSH"
+          "urine toxicology",
+          "metabolic panel / BMP / CMP / electrolytes / renal labs",
+          "ECG",
+          "TSH or thyroid labs",
+          "mentions medical clearance or collateral meds/substances"
         ],
         "must_include": [
           "toxicology",
@@ -43,7 +50,7 @@
           "ECG"
         ],
         "must_not": [],
-        "notes": "Need tox PLUS metabolic panel/BMP/CMP/electrolytes PLUS ECG (or equivalents). Score linearly by coverage; TSH alone is partial credit only."
+        "notes": "Split acceptable points atomically. Tox alone is not enough."
       }
     },
     {
@@ -53,8 +60,10 @@
       "text": "Urgency and disposition considerations.",
       "rubric": {
         "acceptable": [
-          "high",
-          "psychiatric emergency / likely admission"
+          "rates urgency high (or psychiatric emergency equivalent)",
+          "recommends inpatient / admission",
+          "notes impaired judgment, risk spending, or inability to care for self",
+          "addresses voluntary vs involuntary or capacity/safety monitoring"
         ],
         "must_include": [
           "high",
@@ -63,7 +72,7 @@
         "must_not": [
           "outpatient only with no safeguards"
         ],
-        "notes": "Need high (or emergency equivalent) AND admission/inpatient intent. Score linearly by coverage."
+        "notes": "Need urgency + disposition; extras raise acceptable coverage and quality."
       }
     },
     {
@@ -73,8 +82,11 @@
       "text": "Medication safety given CKD (eGFR 55).",
       "rubric": {
         "acceptable": [
-          "avoid or use extreme caution with lithium in CKD",
-          "prefer alternatives (e.g. valproate/atypical antipsychotic) with renal dosing awareness"
+          "names lithium risk in CKD / low eGFR",
+          "explicit avoid or extreme caution with lithium",
+          "prefers alternative antimanic (valproate and/or antipsychotic)",
+          "mentions eGFR 55 or stage 2 CKD or nephrology",
+          "notes monitoring needs if lithium ever considered (levels, creatinine)"
         ],
         "must_include": [
           "lithium",
@@ -83,7 +95,7 @@
         "must_not": [
           "start lithium without acknowledging CKD risk"
         ],
-        "notes": "MAIN DISCRIMINATOR. Must link lithium + CKD/renal/eGFR AND avoid/caution (synonyms OK); prefer safer alternative. must_not: starting lithium without CKD caution → hard cap ≤20. Otherwise linear coverage."
+        "notes": "MAIN DISCRIMINATOR. must_not → hard cap. Completing only 'lithium+CKD' without alternative/eGFR anchors should not reach 100."
       }
     },
     {
@@ -93,7 +105,11 @@
       "text": "Initial management plan.",
       "rubric": {
         "acceptable": [
-          "psychiatry consult, safe environment, hold SSRI, treat mania with CKD-safe agent, address stimulants/decongestants"
+          "psychiatry involvement / admission pathway",
+          "hold or stop SSRI / antidepressant",
+          "stop or avoid decongestants / stimulants / energy drinks",
+          "CKD-safe acute mania treatment (antipsychotic and/or valproate)",
+          "safe environment / observation / de-escalation"
         ],
         "must_include": [
           "psychiatry",
@@ -102,7 +118,7 @@
         "must_not": [
           "increase SSRI dose"
         ],
-        "notes": "Need psychiatry involvement AND hold/stop SSRI (or antidepressant-switch caution). CKD-safe antimanic raises acceptable coverage. Linear score."
+        "notes": "Atomic plan points. Missing SSRI hold is a major m miss."
       }
     }
   ]

@@ -43,6 +43,88 @@ def _weighted_accuracy(case: Case, scores: List[QuestionScore]) -> float:
     return round(acc / total_w, 2)
 
 
+def _linear_item_score(
+    *,
+    m_hit: int,
+    m_total: int,
+    a_hit: int,
+    a_total: int,
+    quality: float,
+) -> float:
+    """Enforce continuous formula in Python (do not trust raw LLM score alone)."""
+    mt = max(int(m_total), 1)
+    at = max(int(a_total), 1)
+    m = min(max(int(m_hit), 0), mt) / mt
+    a = min(max(int(a_hit), 0), at) / at
+    q = min(max(float(quality), 0.0), 1.0)
+    return round(100.0 * (0.55 * m + 0.25 * a + 0.20 * q), 1)
+
+
+def _score_from_judge_item(case: Case, item: Dict[str, Any]) -> QuestionScore:
+    qid = str(item.get("question_id", ""))
+    qdef = next((q for q in case.questions if q.id == qid), None)
+    m_total = len(qdef.rubric.must_include) if qdef else int(item.get("m_total") or 1)
+    a_total = len(qdef.rubric.acceptable) if qdef else int(item.get("a_total") or 1)
+    m_total = max(m_total, 1)
+    a_total = max(a_total, 1)
+
+    raw_errors = [str(e) for e in (item.get("errors") or [])]
+    rationale = str(item.get("rationale") or "")
+    evidence = str(item.get("evidence") or "")
+
+    # Prefer judge-reported hits; clamp to rubric lengths
+    try:
+        m_hit = int(item.get("m_hit"))
+    except (TypeError, ValueError):
+        m_hit = None
+    try:
+        a_hit = int(item.get("a_hit"))
+    except (TypeError, ValueError):
+        a_hit = None
+    try:
+        quality = float(item.get("quality"))
+    except (TypeError, ValueError):
+        quality = None
+
+    if m_hit is None or a_hit is None or quality is None:
+        # Incomplete JSON: do not allow a free 100 from a bare "score" field
+        try:
+            fallback = float(item.get("score", 0))
+        except (TypeError, ValueError):
+            fallback = 0.0
+        # Cap anonymous fallback so checklist rubber-stamps cannot all be 100
+        score = round(min(max(fallback, 0.0), 92.0), 1)
+        raw_errors = list(raw_errors) + ["incomplete_linear_fields"]
+        rationale = (rationale + " | fallback capped (missing m/a/quality)").strip(" |")
+    else:
+        score = _linear_item_score(
+            m_hit=m_hit,
+            m_total=m_total,
+            a_hit=a_hit,
+            a_total=a_total,
+            quality=quality,
+        )
+        rationale = (
+            f"m={m_hit}/{m_total} a={a_hit}/{a_total} quality={quality:.2f} → {score}"
+            + (f" | {rationale}" if rationale else "")
+        )
+
+    # must_not soft enforcement if judge listed trap errors
+    trap_hints = ("must_not", "safety trap", "nitrate", "lithium without", "ignored")
+    if any(any(h in e.lower() for h in trap_hints) for e in raw_errors):
+        if qdef and qdef.kind in ("safety", "diagnosis") and score > 20:
+            score = min(score, 20.0)
+            rationale += " | must_not/safety cap≤20"
+
+    return QuestionScore(
+        question_id=qid,
+        score=float(score),
+        rationale=rationale,
+        evidence=evidence,
+        errors=raw_errors,
+    )
+
+
 def _zero_judgment(
     case: Case,
     candidate: CandidateAnswer,
@@ -108,15 +190,7 @@ def judge_candidate(
     q_scores: List[QuestionScore] = []
     for item in data.get("question_scores") or []:
         try:
-            q_scores.append(
-                QuestionScore(
-                    question_id=str(item.get("question_id", "")),
-                    score=float(item.get("score", 0)),
-                    rationale=str(item.get("rationale") or ""),
-                    evidence=str(item.get("evidence") or ""),
-                    errors=[str(e) for e in (item.get("errors") or [])],
-                )
-            )
+            q_scores.append(_score_from_judge_item(case, item))
         except (TypeError, ValueError):
             continue
 
