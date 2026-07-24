@@ -33,16 +33,26 @@ Pinned in [`benchmark/models.yaml`](benchmark/models.yaml):
 
 ## Scoring (LLM judge)
 
-- Same structured Q&A for every candidate; judge is **blind** (Candidate 1/2/…).
-- **Section weights** are fixed per case (e.g. diagnosis / safety / tests…).
-- Per-section score is **continuous** and **host-enforced**:
-  - `100 × (0.45·must + 0.20·acceptable + 0.25·quality + 0.10·stem_specificity)`
-  - item cap **96.5**, run cap **97** → a literal **100% is not used**
-  - synonyms OK; `must_not` / safety traps hard-cap that section
-  - final accuracies are **always distinct** (tie-break: safety → quality → stem spec → diagnosis)
-- Final **accuracy** = weighted mean of section scores (no winner-to-100 rescale).
+Full write-up: **[benchmark/SCORING.md](benchmark/SCORING.md)**.
 
-Cases: **A** STEMI teaching · **B** mania+CKD teaching · **C** custom (your stem + gold checklist).
+**In short:**
+
+1. DeepSeek R1 scores each section blind (Candidate 1/2/…).  
+2. Host computes a **linear** section score (judge’s raw number is ignored):
+
+   `section = 100 × (0.45·must + 0.20·acceptable + 0.25·quality + 0.10·stem_spec)` → **cap 96.5**
+
+3. **Ranking %** = weighted mean of sections (weights fixed in the case; diagnosis/safety usually heaviest).  
+4. **100% is not used.** The four models always get **different** accuracies (tie-break: safety → quality → stem → diagnosis).
+
+| Parameter | Weight | Meaning |
+|-----------|--------|---------|
+| **must** | 45% | Required clinical concepts present (synonyms OK) |
+| **acceptable** | 20% | Extra checklist points from the rubric |
+| **quality** | 25% | How sound the *reasoning* is (correct call, coherent DDx/plan, case-specific, not dangerous) — **not** grammar/style |
+| **stem_spec** | 10% | How many stem/gold anchors appear in the answer (anti–generic paste) |
+
+**Quality** = clinical judgment quality on that question, not eloquence.
 
 ---
 

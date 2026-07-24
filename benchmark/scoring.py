@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import re
+from pathlib import Path
 from typing import Any, Dict, List, Sequence, Tuple
 
-from benchmark.schema import Case, CandidateAnswer, JudgeResult, QuestionScore
+from benchmark.schema import Case, JudgeResult, QuestionScore
 
 # Hard ceilings: a true 100% is not used in this benchmark.
 ITEM_SCORE_CAP = 96.5
@@ -206,6 +207,19 @@ def ensure_unique_accuracies(
     # Return in original candidate order
     by_key = {j.candidate_key: j for j in judgments}
     return [by_key[j.candidate_key] for j in judgments], notes
+
+
+def scoring_guide_markdown() -> str:
+    """Load canonical scoring explainer for UI / docs."""
+    path = Path(__file__).resolve().parent / "SCORING.md"
+    try:
+        return path.read_text(encoding="utf-8")
+    except OSError:
+        return (
+            "section = 100×(0.45·must + 0.20·acceptable + 0.25·quality + 0.10·stem_spec), "
+            "cap 96.5. Quality = clinical judgment (not style). "
+            "Accuracy = weighted mean of sections; 100% not used."
+        )
 
 
 def scoring_legend(case: Case) -> Dict[str, Any]:

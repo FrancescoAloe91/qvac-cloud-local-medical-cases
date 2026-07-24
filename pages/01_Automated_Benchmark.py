@@ -20,6 +20,7 @@ from benchmark.config import is_usable_openrouter_key, load_models_config
 from benchmark.cases_loader import list_case_ids, load_case
 from benchmark.config import ARTIFACTS_DIR
 from benchmark.judge import build_ranking, explain_run_scores, judge_candidates_parallel
+from benchmark.scoring import scoring_guide_markdown
 from benchmark.qvac_bridge import available as qvac_available
 from benchmark.qvac_bridge import ensure_sidecar as qvac_ensure_sidecar
 from benchmark.qvac_bridge import health as qvac_health
@@ -953,23 +954,11 @@ with exp_l:
         st.markdown("**User**")
         st.code(candidate_user(live_case))
 with exp_r:
-    with st.expander("How the judge scores (R1)", expanded=False):
-        st.markdown(
-            """
-Scores each question (`diagnosis`, `tests`, `urgency`, `safety`, `plan`) against the case rubric.
-
-You always see **real model names** in the ranking (ChatGPT, Claude, Gemini, QVAC).  
-DeepSeek scores **clinical meaning + quality** on a **linear** scale enforced in code:
-`100×(0.45·must + 0.20·acceptable + 0.25·quality + 0.10·stem_spec)`, item cap **96.5**
-(so **100% is not used**). Accuracies are forced unique (safety/quality/spec tie-break).
-
-Teaching A/B use built-in rubric + auto `gold_summary`. Case C uses your checklist gold.
-
-**Accuracy** = weighted mean. Temp 0. Judge: **DeepSeek R1**.
-"""
-        )
+    with st.expander("How ranking is calculated (must · acceptable · quality · stem)", expanded=True):
+        st.markdown(scoring_guide_markdown())
+        st.markdown("**This case — section weights**")
         for q in live_case.questions:
-            st.markdown(f"- **{q.id}** ({q.weight:.0%})")
+            st.markdown(f"- **{q.id}** ({q.weight:.0%}) · {q.kind}")
 
 # --- Models (compact chips) ---
 st.markdown(
@@ -1968,18 +1957,19 @@ if st.session_state.get("confirmed_run"):
         explain = explain_run_scores(case_obj, last_judgments)
         st.session_state["last_score_explain"] = explain
         with st.expander("Why these scores (formula · weights · discriminators)", expanded=True):
-            st.markdown(f"**Formula** · `{explain['formula']}`")
+            st.markdown(scoring_guide_markdown())
+            st.markdown("---")
+            st.markdown(f"**This run · formula** · `{explain['formula']}`")
             st.caption(explain.get("note") or "")
             st.markdown(
-                "**Section weights (fixed)** · "
+                "**Section weights** · "
                 + " · ".join(f"`{k}` {v:.0%}" for k, v in explain["section_weights"].items())
             )
             st.markdown(
                 "**Heaviest / discriminating** · "
                 + ", ".join(explain.get("heaviest_sections") or [])
                 + (
-                    f" · safety/discriminator ids: "
-                    f"{', '.join(explain.get('main_discriminators') or [])}"
+                    f" · ids: {', '.join(explain.get('main_discriminators') or [])}"
                     if explain.get("main_discriminators")
                     else ""
                 )
@@ -2003,9 +1993,9 @@ if st.session_state.get("confirmed_run"):
             if rows_ex:
                 st.dataframe(pd.DataFrame(rows_ex), use_container_width=True, hide_index=True)
             st.caption(
-                "Each model must land on a distinct accuracy. "
-                "If raw totals would tie, order is broken by safety → quality → "
-                "stem specificity → diagnosis (documented, not random)."
+                "**Quality** = clinical judgment on that section (correct call, coherent DDx/plan, "
+                "case-specific, safe) — not writing style. "
+                "Ties broken by safety → quality → stem specificity → diagnosis."
             )
 
     cost_rows = []
