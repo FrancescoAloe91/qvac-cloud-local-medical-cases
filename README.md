@@ -79,17 +79,31 @@ python -m benchmark run --case caseA --n 3
 
 ---
 
-## Local install
+## Local install (full: cloud + QVAC MedPsy)
+
+The MedPsy **GGUF (~2.5 GB) is not in git** (GitHub size limit).  
+`./install.sh` downloads it from Hugging Face and sets up the QVAC SDK sidecar.
 
 ```bash
 git clone https://github.com/FrancescoAloe91/qvac-vs-cloud-llms-health-test.git
 cd qvac-vs-cloud-llms-health-test
 chmod +x install.sh && ./install.sh
-# or: pip install -r requirements.txt && streamlit run app.py
+# edit .env → OPENROUTER_API_KEY=sk-or-v1-… (full key)
+
+# Terminal A
+cd sidecar && npm start
+
+# Terminal B
+source .venv/bin/activate && streamlit run app.py
+# → Automated Benchmark
 ```
 
-- QVAC path: `sidecar/` + `@qvac/sdk` + GGUF in `models/` (not committed)  
-- Never commit `.env`
+**Needs:** Python 3.10+, Node.js ≥ 22.17, network for the GGUF download.  
+**macOS:** OpenSSL 3 (handled by `setup_qvac_sidecar.sh`).
+
+Windows: `install.ps1` then `cd sidecar && npm start` + `streamlit run app.py`.
+
+See [`models/README.md`](models/README.md) for the GGUF source (`qvac/MedPsy-4B-GGUF`).
 
 ---
 
