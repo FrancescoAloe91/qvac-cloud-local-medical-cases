@@ -461,3 +461,47 @@ def fig_leaderboard(leaderboard_df, lang: str = "en", tier_labels: Optional[dict
     fig.update_yaxes(range=[0, max(leaderboard_df[wins_col].max() + 1, 3)], row=1, col=1)
     fig.update_yaxes(range=[0, 110], row=1, col=2)
     return fig
+
+
+def fig_judge_accuracy_bars(
+    ranking_rows: list,
+    *,
+    title: str = "Accuracy ranking (blind judge)",
+    height: int = 240,
+) -> go.Figure:
+    """Horizontal accuracy bars for Automated Benchmark (judge weighted %)."""
+    if not ranking_rows:
+        fig = go.Figure()
+        fig.update_layout(**_base_layout(title, height=height))
+        return fig
+
+    # Highest accuracy at top
+    rows = sorted(ranking_rows, key=lambda r: float(r.get("accuracy") or 0), reverse=True)
+    labels = []
+    for r in rows:
+        key = r.get("key") or ""
+        short = {"chatgpt": "ChatGPT", "claude": "Claude", "gemini": "Gemini", "qvac": "QVAC"}.get(
+            key, r.get("label") or key
+        )
+        labels.append(short)
+    accs = [float(r.get("accuracy") or 0) for r in rows]
+    colors = [MODEL_COLORS.get(r.get("key"), "#94a3b8") for r in rows]
+    ranks = [int(r.get("rank") or i + 1) for i, r in enumerate(rows)]
+
+    fig = go.Figure(
+        go.Bar(
+            y=labels[::-1],
+            x=accs[::-1],
+            orientation="h",
+            marker=dict(color=colors[::-1], line=dict(color="#1e293b", width=1)),
+            text=[f"#{r} · {a:.1f}%" for r, a in zip(ranks[::-1], accs[::-1])],
+            textposition="outside",
+            cliponaxis=False,
+        )
+    )
+    layout = _base_layout(title, height=height)
+    layout["margin"] = dict(l=56, r=72, t=48, b=28)
+    layout["xaxis"] = dict(range=[0, 110], title="Accuracy %")
+    layout["yaxis"] = dict(title="")
+    fig.update_layout(**layout)
+    return fig

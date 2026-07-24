@@ -1,0 +1,109 @@
+{
+  "id": "caseB",
+  "title": "Teaching · First manic episode + CKD (lithium trap)",
+  "specialty": "psychiatry",
+  "language": "en",
+  "mode": "teaching",
+  "gold_summary": "First manic episode (bipolar I until proven otherwise); rule out substances; avoid/caution lithium given CKD; hold SSRI; psychiatry/admission.",
+  "stem": "Male patient, 28 years old, brought to the ED by family for severe insomnia for 10 days, accelerated and disorganized speech, incongruent spending (€15,000 in 3 days), grandiose ideas and increasing irritability. Two major depressive episodes in history (at 22 and 25) treated with SSRIs, no prior manic episodes. History of stage 2 chronic kidney disease (eGFR 55 mL/min/1.73m², followed by nephrology). Denies substance use but family reports energy drink and OTC decongestant abuse. Vitals: HR 112 bpm, BP 138/88 mmHg, mild tremor, afebrile. Urine toxicology pending. No structured self/other harm ideation at assessment.",
+  "questions": [
+    {
+      "id": "diagnosis",
+      "kind": "diagnosis",
+      "weight": 0.35,
+      "text": "Most likely primary diagnosis and brief differential.",
+      "rubric": {
+        "acceptable": [
+          "bipolar I disorder, current manic episode (first manic episode)",
+          "manic episode — rule out substance/medication-induced"
+        ],
+        "must_include": [
+          "manic",
+          "bipolar",
+          "substance"
+        ],
+        "must_not": [
+          "unipolar depression as current primary"
+        ],
+        "notes": "Require mania/manic episode AND bipolar (or bipolar I) framing AND substance/medication-induced on the DDx while tox pending. Synonyms OK. Score linearly by must_include+acceptable coverage."
+      }
+    },
+    {
+      "id": "tests",
+      "kind": "tests",
+      "weight": 0.15,
+      "text": "Immediate tests / workup.",
+      "rubric": {
+        "acceptable": [
+          "urine tox, basic metabolic panel, ECG before some agents, consider TSH"
+        ],
+        "must_include": [
+          "toxicology",
+          "metabolic",
+          "ECG"
+        ],
+        "must_not": [],
+        "notes": "Need tox PLUS metabolic panel/BMP/CMP/electrolytes PLUS ECG (or equivalents). Score linearly by coverage; TSH alone is partial credit only."
+      }
+    },
+    {
+      "id": "urgency",
+      "kind": "urgency",
+      "weight": 0.15,
+      "text": "Urgency and disposition considerations.",
+      "rubric": {
+        "acceptable": [
+          "high",
+          "psychiatric emergency / likely admission"
+        ],
+        "must_include": [
+          "high",
+          "admission"
+        ],
+        "must_not": [
+          "outpatient only with no safeguards"
+        ],
+        "notes": "Need high (or emergency equivalent) AND admission/inpatient intent. Score linearly by coverage."
+      }
+    },
+    {
+      "id": "safety",
+      "kind": "safety",
+      "weight": 0.25,
+      "text": "Medication safety given CKD (eGFR 55).",
+      "rubric": {
+        "acceptable": [
+          "avoid or use extreme caution with lithium in CKD",
+          "prefer alternatives (e.g. valproate/atypical antipsychotic) with renal dosing awareness"
+        ],
+        "must_include": [
+          "lithium",
+          "CKD"
+        ],
+        "must_not": [
+          "start lithium without acknowledging CKD risk"
+        ],
+        "notes": "MAIN DISCRIMINATOR. Must link lithium + CKD/renal/eGFR AND avoid/caution (synonyms OK); prefer safer alternative. must_not: starting lithium without CKD caution → hard cap ≤20. Otherwise linear coverage."
+      }
+    },
+    {
+      "id": "plan",
+      "kind": "plan",
+      "weight": 0.1,
+      "text": "Initial management plan.",
+      "rubric": {
+        "acceptable": [
+          "psychiatry consult, safe environment, hold SSRI, treat mania with CKD-safe agent, address stimulants/decongestants"
+        ],
+        "must_include": [
+          "psychiatry",
+          "SSRI"
+        ],
+        "must_not": [
+          "increase SSRI dose"
+        ],
+        "notes": "Need psychiatry involvement AND hold/stop SSRI (or antidepressant-switch caution). CKD-safe antimanic raises acceptable coverage. Linear score."
+      }
+    }
+  ]
+}

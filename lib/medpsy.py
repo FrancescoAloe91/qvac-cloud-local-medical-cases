@@ -39,11 +39,23 @@ def quant_label() -> str:
 
 def runtime_tier_label() -> str:
     """Full on-device stack label for cards, charts and screenshot headers."""
+    try:
+        from benchmark.qvac_bridge import available as qvac_sdk_up
+    except Exception:
+        qvac_sdk_up = lambda: False  # noqa: E731
+    if qvac_sdk_up():
+        return f"MedPsy-4B-GGUF {quant_label()} · QVAC SDK · CPU"
     return f"MedPsy-4B-GGUF {quant_label()} · Ollama {OLLAMA_MODEL} · CPU"
 
 
 def runtime_header_chip() -> str:
     """Short label for the top header live chip."""
+    try:
+        from benchmark.qvac_bridge import available as qvac_sdk_up
+    except Exception:
+        qvac_sdk_up = lambda: False  # noqa: E731
+    if qvac_sdk_up():
+        return f"MedPsy-4B {quant_label()} · QVAC SDK · on-device"
     return f"MedPsy-4B {quant_label()} · Ollama {OLLAMA_MODEL} · on-device"
 
 # Inference uses Ollama Modelfile defaults only (temperature 0.6, top_k 20, top_p 0.95).

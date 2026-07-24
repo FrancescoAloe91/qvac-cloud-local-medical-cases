@@ -1,0 +1,112 @@
+{
+  "id": "caseA",
+  "title": "Teaching · Inferior STEMI + sildenafil trap",
+  "specialty": "cardiology",
+  "language": "en",
+  "mode": "teaching",
+  "gold_summary": "Acute inferior STEMI; activate reperfusion; do NOT give nitrates after recent sildenafil.",
+  "stem": "Male patient, 45 years old, presents to the ED with severe crushing chest pain for 40 minutes, radiating to the left arm and jaw, worsened by exertion and unrelieved by rest, with nausea, cold sweats and dyspnea. No change with respiration or position. History: smoker (20 cigarettes/day for 25 years), hypertension on ramipril, untreated dyslipidemia, family history of ischemic heart disease (father MI at 52). Took sildenafil (Viagra) 4 hours ago for erectile dysfunction. No known drug allergies. Exam: BP 160/95 mmHg (symmetric in both arms), HR 98 bpm regular, RR 22/min, SpO2 94% on room air, afebrile. ECG: ST-segment elevation >2 mm in leads II, III, aVF with reciprocal depression in I, aVL. Point-of-care troponin I: 0.8 ng/mL (elevated).",
+  "questions": [
+    {
+      "id": "diagnosis",
+      "kind": "diagnosis",
+      "weight": 0.4,
+      "text": "What is the most likely primary diagnosis? Rank the top differential diagnoses briefly.",
+      "rubric": {
+        "acceptable": [
+          "inferior STEMI",
+          "acute inferior ST-elevation myocardial infarction",
+          "acute coronary syndrome — inferior STEMI",
+          "STEMI (inferior territory, RCA likely)"
+        ],
+        "must_include": [
+          "STEMI",
+          "inferior"
+        ],
+        "must_not": [
+          "stable angina as primary",
+          "pericarditis as most likely"
+        ],
+        "notes": "Primary must be acute inferior STEMI. Aortic dissection may appear on DDx but must not replace STEMI as primary."
+      }
+    },
+    {
+      "id": "tests",
+      "kind": "tests",
+      "weight": 0.15,
+      "text": "Which immediate imaging and laboratory tests should be ordered (or are already decisive)?",
+      "rubric": {
+        "acceptable": [
+          "activate cath lab / emergent reperfusion pathway",
+          "serial ECG, troponin (already elevated), CXR if needed before transfer"
+        ],
+        "must_include": [
+          "reperfusion",
+          "cath"
+        ],
+        "must_not": [],
+        "notes": "ECG + troponin already support STEMI; do not delay reperfusion for extra labs. Accept synonyms: cath≈coronary angiography≈PCI lab activation; reperfusion≈primary PCI pathway."
+      }
+    },
+    {
+      "id": "urgency",
+      "kind": "urgency",
+      "weight": 0.2,
+      "text": "State urgency level (critical / high / moderate / low) and key red flags.",
+      "rubric": {
+        "acceptable": [
+          "critical",
+          "emergent",
+          "time-critical STEMI"
+        ],
+        "must_include": [
+          "critical"
+        ],
+        "must_not": [
+          "low urgency"
+        ],
+        "notes": "Accept critical or clear equivalent (emergent / immediate reperfusion). Synonyms OK."
+      }
+    },
+    {
+      "id": "safety",
+      "kind": "safety",
+      "weight": 0.2,
+      "text": "List critical contraindications or safety traps before treating.",
+      "rubric": {
+        "acceptable": [
+          "avoid nitrates after recent sildenafil (PDE5 inhibitor)",
+          "do not give nitroglycerin within 24h of sildenafil"
+        ],
+        "must_include": [
+          "sildenafil",
+          "nitrate"
+        ],
+        "must_not": [
+          "give sublingual nitroglycerin routinely without checking PDE5"
+        ],
+        "notes": "MAIN DISCRIMINATOR. Must flag sildenafil/Viagra/PDE5–nitrate/nitroglycerin interaction (any clear wording). Missing this trap → score this item near 0."
+      }
+    },
+    {
+      "id": "plan",
+      "kind": "plan",
+      "weight": 0.05,
+      "text": "Outline the initial management plan.",
+      "rubric": {
+        "acceptable": [
+          "STEMI protocol, dual antiplatelet as indicated, anticoagulation per protocol, emergent PCI, avoid nitrates due to sildenafil, oxygen if hypoxic, aspirin"
+        ],
+        "must_include": [
+          "PCI",
+          "aspirin"
+        ],
+        "must_not": [
+          "discharge home",
+          "outpatient stress test only"
+        ],
+        "notes": "Reperfusion + ACS meds; explicitly avoid nitrates. PCI≈primary angioplasty≈cath lab reperfusion."
+      }
+    }
+  ]
+}

@@ -6,7 +6,7 @@ import time
 import pandas as pd
 import streamlit as st
 
-from lib import charts, diagnosis_compare, medpsy, metrics, reset, session_store, ui, vlm
+from lib import charts, diagnosis_compare, medpsy, metrics, reset, session_store, ui
 from lib.browser import cloud_url, copy_to_clipboard, open_all_cloud_tabs
 from lib.cases import CASE_IDS, build_prompt, case_meta, case_text_for, default_case_text
 from lib.i18n import DEFAULT_LANG, t
@@ -14,7 +14,6 @@ from lib.lang_switch import apply_language_switch
 from lib.metrics import TABLE_MODEL_SHORT, _L
 from lib.tiers import MODEL_CONFIG, build_qvac_prompt
 from lib.runtime_env import is_streamlit_cloud
-from lib.wallet import REWARD_DATA_SALE, add_reward, load_wallet
 
 _CLOUD_TIERS_IMPORT_ERROR = None
 try:
@@ -81,8 +80,6 @@ def set_output_widget(model_key: str, value: str) -> None:
 
 if "lang" not in st.session_state:
     st.session_state.lang = DEFAULT_LANG
-if "wallet" not in st.session_state:
-    st.session_state.wallet = load_wallet()
 for k, v in [
     ("benchmark_results", {}),
     ("user_outputs", {}),
@@ -90,7 +87,6 @@ for k, v in [
     ("case_id", "case1"),
     ("case_slot", "case1"),
     ("case_text_version", 0),
-    ("vlm_extraction", None),
     ("browser_info", None),
     ("use_gold_standard", False),
     ("gold_standard_text", ""),
@@ -598,59 +594,16 @@ def qvac_decision_dialog():
         st.rerun()
 
 
-@st.dialog(t("decision.sell_dialog_title", lang))
-def sell_decision_dialog():
-    step = st.session_state.get("sell_step")
-
-    if step == "success":
-        st.markdown(
-            ui.reward_success_html(
-                f"{REWARD_DATA_SALE:.2f} USDT",
-                t("decision.sell_new_balance", lang),
-                f"{st.session_state.wallet['balance']:.2f} USDT",
-            ),
-            unsafe_allow_html=True,
-        )
-        st.success(f"✅ {t('decision.sell_success_title', lang)} — {t('decision.sell_success_body', lang, amount=REWARD_DATA_SALE)}")
-        if st.button(t("decision.close", lang), type="primary", use_container_width=True):
-            st.session_state.sell_step = None
-            st.rerun()
-        return
-
-    st.info(t("decision.sell_dialog_body", lang))
-    st.markdown(f"**{t('decision.sell_question', lang, amount=REWARD_DATA_SALE)}**")
-    cc1, cc2 = st.columns(2)
-    with cc1:
-        if st.button(t("decision.sell_cancel", lang), use_container_width=True):
-            st.session_state.sell_step = None
-            st.rerun()
-    with cc2:
-        if st.button(
-            t("decision.sell_confirm", lang, amount=REWARD_DATA_SALE),
-            type="primary",
-            use_container_width=True,
-        ):
-            st.session_state.wallet = add_reward(st.session_state.wallet, REWARD_DATA_SALE, "Research")
-            st.session_state.sell_step = "success"
-            st.balloons()
-            st.rerun()
-
-
-# --- Sidebar (wallet in alto + slot in colonna singola) ---
+# --- Sidebar ---
 with st.sidebar:
     st.markdown(
         '<div class="sidebar-brand">🩺 <b>QVAC Health Test</b></div>',
         unsafe_allow_html=True,
     )
-    with st.container(border=True):
-        st.markdown(
-            '<span class="usdt-wallet-marker" style="display:none"></span>',
-            unsafe_allow_html=True,
-        )
-        st.markdown(
-            ui.wallet_panel_html(st.session_state.wallet["balance"], lang, compact=True),
-            unsafe_allow_html=True,
-        )
+    st.info(
+        "Prefer the reproducible runner? Open **Automated Benchmark** "
+        "(sidebar page) — OpenRouter + LLM judge, no paste."
+    )
     st.divider()
     _render_sidebar_case_slots()
     st.divider()
@@ -682,26 +635,6 @@ with st.sidebar:
             st.toast(t("sidebar.cloud_tiers_saved", lang), icon="✅")
         st.caption(t("sidebar.cloud_tiers_howto", lang))
 
-    with st.expander("👁️ " + t("sidebar.vlm", lang), expanded=False):
-        uploaded = st.file_uploader(t("sidebar.vlm_upload", lang), type=["jpg", "jpeg", "png", "pdf"])
-        if uploaded:
-            st.success(t("vlm.ready", lang))
-            if st.button(t("sidebar.vlm_extract", lang), use_container_width=True):
-                st.session_state.vlm_extraction = vlm.extract_text(
-                    uploaded.name, uploaded.getvalue(), lang
-                )
-            if st.session_state.vlm_extraction and st.button(
-                t("sidebar.vlm_add", lang), use_container_width=True
-            ):
-                from lib.cases import VLM_MARKERS
-
-                st.session_state.case_text += (
-                    f"\n\n{VLM_MARKERS[lang]}\n{st.session_state.vlm_extraction}"
-                )
-                st.session_state.case_id = None
-                st.session_state.case_text_version += 1
-                st.rerun()
-
     st.markdown(
         f'<p class="sidebar-footer-note">{t("sidebar.privacy_note", lang)}</p>',
         unsafe_allow_html=True,
@@ -714,9 +647,7 @@ with hdr_l:
     st.markdown(f'<p class="app-title fade-in">🩺 {t("title", lang)}</p>', unsafe_allow_html=True)
     st.markdown(f'<p class="app-subtitle">{t("subtitle", lang)}</p>', unsafe_allow_html=True)
     st.markdown(
-        ui.live_chip_html(medpsy.runtime_header_chip())
-        + "&nbsp;&nbsp;"
-        + ui.usdt_chip_html(f"{st.session_state.wallet['balance']:.2f} USDT"),
+        ui.live_chip_html(medpsy.runtime_header_chip()),
         unsafe_allow_html=True,
     )
 with hdr_r:
@@ -1548,12 +1479,11 @@ if compare is not None:
 
         st.markdown(ui.eyebrow_html("🪙", t("decision.section", lang)), unsafe_allow_html=True)
         with st.container(border=True):
-            st.markdown('<span class="usdt-decision-marker" style="display:none"></span>', unsafe_allow_html=True)
             st.markdown(
                 f'<p class="decision-lead fade-in">{t("decision.lead", lang)}</p>',
                 unsafe_allow_html=True,
             )
-            b1, b2, b3 = st.columns(3)
+            b1, b2 = st.columns(2)
             with b1:
                 if st.button("🔴 " + t("decision.cloud", lang), use_container_width=True):
                     cloud_decision_dialog()
@@ -1568,16 +1498,6 @@ if compare is not None:
                     f'<p class="decision-caption">{t("decision.qvac_caption", lang)}</p>',
                     unsafe_allow_html=True,
                 )
-            with b3:
-                if st.button("💠 " + t("decision.sell", lang), use_container_width=True):
-                    st.session_state.sell_step = "confirm"
-                st.markdown(
-                    f'<p class="decision-caption">{t("decision.sell_caption", lang)}</p>',
-                    unsafe_allow_html=True,
-                )
-
-        if st.session_state.get("sell_step"):
-            sell_decision_dialog()
 
 st.markdown(
     '<div class="footer-note">🩺 QVAC vs Cloud LLMs · Demonstration benchmark only — not a substitute for medical advice.</div>',

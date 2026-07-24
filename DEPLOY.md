@@ -9,9 +9,15 @@
    - Branch: `main`
    - Main file: `app.py`
 4. Click **Deploy** — no credit card required
-5. Live URL for this project: **https://francescoaloe91-qvac-vs-cloud-llms-health-test-app-wihxyd.streamlit.app**
+5. Live URL: **https://francescoaloe91-qvac-vs-cloud-llms-health-test-app-wihxyd.streamlit.app**
 
-**On the cloud demo:** paste cloud answers + ranking work; **Run benchmark QVAC** only runs locally (Ollama). You can manually paste QVAC output generated on your Mac or Windows PC.
+**On the cloud demo:**
+
+- **Automated Benchmark** works with visitor **BYOK** OpenRouter (ChatGPT / Claude / Gemini + DeepSeek R1 judge).
+- **QVAC MedPsy** (on-device SDK sidecar) is **local-only** — skipped on Streamlit Cloud.
+- Legacy paste / ranking in `app.py` still works for manual pastes.
+
+Redeploy: push to `main` (Cloud watches the repo).
 
 ---
 
@@ -22,7 +28,7 @@
 3. Render reads `render.yaml` and starts the dashboard
 4. URL looks like `https://qvac-health-test.onrender.com`
 
-Same limits: no Ollama on the cloud host.
+Same limits: no QVAC sidecar on the free host.
 
 ---
 
@@ -34,9 +40,12 @@ Same limits: no Ollama on the cloud host.
 git clone https://github.com/FrancescoAloe91/qvac-vs-cloud-llms-health-test.git
 cd qvac-vs-cloud-llms-health-test
 ./install.sh
+./scripts/setup_qvac_sidecar.sh
+cd sidecar && npm start   # other terminal
+streamlit run app.py      # → Automated Benchmark
 ```
 
-Then double-click **QVAC Dashboard.app** or run `./launch_dashboard.sh` → `http://localhost:8501`
+Or `./launch_dashboard.sh` → `http://localhost:8501`
 
 **Windows**
 

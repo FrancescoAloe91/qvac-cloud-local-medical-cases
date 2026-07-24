@@ -58,13 +58,19 @@ h1, h2, h3, h4 { font-family: 'Sora', 'Inter', sans-serif !important; letter-spa
     opacity: 0.6;
 }
 
-.block-container { padding-top: 2.85rem; padding-bottom: 1.4rem; max-width: 1480px; }
-[data-testid="stMainBlockContainer"] { padding-top: 0.5rem; }
-header[data-testid="stHeader"] {
-    background: transparent !important;
+header[data-testid="stHeader"],
+.stApp > header {
+    display: none !important;
 }
+[data-testid="stToolbar"],
+[data-testid="stDecoration"],
+[data-testid="stStatusWidget"] {
+    display: none !important;
+}
+.block-container { padding-top: 1.4rem; padding-bottom: 1.4rem; max-width: 1480px; }
+[data-testid="stMainBlockContainer"] { padding-top: 0.5rem; }
 [data-testid="stAppViewContainer"] > section.main > div {
-    padding-top: 1rem;
+    padding-top: 0.75rem;
 }
 
 /* Global readable captions & secondary text */

@@ -1,0 +1,53 @@
+# Free-tier match profile (matches prior demo screens).
+# OpenRouter BYOK — you pay tokens; models mirror free-web class, not Opus/Pro.
+# Override judge: BENCHMARK_JUDGE_MODEL=...
+
+profile: free_tier_match
+
+candidates:
+  - key: chatgpt
+    label: ChatGPT
+    display_label: ChatGPT · OpenAI · GPT-5.5 Instant (API)
+    vendor: OpenAI
+    site: chatgpt.com
+    color: "#10a37f"
+    provider: openrouter
+    model: openai/gpt-5.5
+  - key: claude
+    label: Claude
+    display_label: Claude · Anthropic · Sonnet 4.6 (Extra-class)
+    vendor: Anthropic
+    site: claude.ai
+    color: "#d97706"
+    provider: openrouter
+    model: anthropic/claude-sonnet-4.6
+  - key: gemini
+    label: Gemini
+    display_label: Gemini · Google · 3.5 Flash
+    vendor: Google
+    site: gemini.google.com
+    color: "#8ab4f8"
+    provider: openrouter
+    model: google/gemini-3.5-flash
+  - key: qvac
+    label: QVAC MedPsy 4B
+    display_label: QVAC · on-device · MedPsy-4B via QVAC SDK
+    vendor: Tether QVAC
+    site: local (QVAC SDK)
+    color: "#00d09c"
+    provider: qvac
+    model: medpsy-4b
+
+judge:
+  # Independent vendor (not OpenAI/Anthropic/Google). Reasoning model ≈ free-tier class.
+  model: deepseek/deepseek-r1
+  display_label: Judge · DeepSeek · R1 (blind, independent)
+  temperature: 0
+  anonymize: true
+
+# Token assumptions for --dry-run (length-aware estimate also uses live case/gold chars)
+estimate:
+  candidate_input_tokens: 1800  # legacy CLI hint only; UI estimate uses real text length
+  candidate_output_tokens: 900
+  judge_input_tokens_per_question: 2800
+  judge_output_tokens_per_question: 400

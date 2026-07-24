@@ -1,6 +1,6 @@
 {
   "chatgpt": "5.5 Instant",
-  "claude": "Sonnet 5 · Extra",
-  "gemini": "3.5 Flash · extended thinking",
-  "qvac": "MedPsy-4B-GGUF Q4_K_M · Ollama medpsy-4b-cpu · CPU"
+  "claude": "Sonnet 4.6 Extra-class",
+  "gemini": "3.5 Flash",
+  "qvac": "MedPsy-4B-GGUF Q4_K_M · QVAC SDK · CPU"
 }

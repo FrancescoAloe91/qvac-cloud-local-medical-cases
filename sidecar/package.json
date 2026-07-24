@@ -1,0 +1,17 @@
+{
+  "name": "qvac-medpsy-sidecar",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Local HTTP sidecar wrapping @qvac/sdk for MedPsy inference",
+  "scripts": {
+    "start": "node qvac_server.mjs",
+    "health": "curl -s http://127.0.0.1:8787/health"
+  },
+  "engines": {
+    "node": ">=22.17"
+  },
+  "dependencies": {
+    "@qvac/sdk": "latest"
+  }
+}

@@ -7,6 +7,9 @@ data/wallet.json
 .case_snapshots.json
 .streamlit/secrets.toml
 .env
+artifacts/
+sidecar/node_modules/
+sidecar/vendor/
 
 # Local MedPsy inference engine (downloaded by scripts/setup_medpsy.sh, not committed)
 .ollama-bin/
@@ -16,3 +19,7 @@ models/.cache/
 
 # Local tooling (GitHub CLI binary etc.), not part of the project
 .local-bin/
+
+# Editor / agent junk
+.cursor/
+.streamlit/credentials.toml
