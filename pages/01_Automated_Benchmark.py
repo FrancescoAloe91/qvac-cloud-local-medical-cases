@@ -19,7 +19,7 @@ if str(ROOT) not in os.sys.path:
 from benchmark.config import is_usable_openrouter_key, load_models_config
 from benchmark.cases_loader import list_case_ids, load_case
 from benchmark.config import ARTIFACTS_DIR
-from benchmark.judge import build_ranking, judge_candidates_parallel
+from benchmark.judge import build_ranking, explain_run_scores, judge_candidates_parallel
 from benchmark.qvac_bridge import available as qvac_available
 from benchmark.qvac_bridge import ensure_sidecar as qvac_ensure_sidecar
 from benchmark.qvac_bridge import health as qvac_health
@@ -959,8 +959,9 @@ with exp_r:
 Scores each question (`diagnosis`, `tests`, `urgency`, `safety`, `plan`) against the case rubric.
 
 You always see **real model names** in the ranking (ChatGPT, Claude, Gemini, QVAC).  
-DeepSeek scores **clinical meaning** (synonyms OK) on a **linear 0–100** scale:
-coverage of `must_include` (70%) + `acceptable` (30%). No score bands/steps.
+DeepSeek scores **clinical meaning + quality** on a **linear** scale enforced in code:
+`100×(0.45·must + 0.20·acceptable + 0.25·quality + 0.10·stem_spec)`, item cap **96.5**
+(so **100% is not used**). Accuracies are forced unique (safety/quality/spec tie-break).
 
 Teaching A/B use built-in rubric + auto `gold_summary`. Case C uses your checklist gold.
 
@@ -1962,6 +1963,51 @@ if st.session_state.get("confirmed_run"):
             f"**Wall time** · collect {collect_s}s · judge {judge_s}s · "
             f"**total {total_s}s** (same as sidebar Run clock)"
         )
+
+    if last_judgments:
+        explain = explain_run_scores(case_obj, last_judgments)
+        st.session_state["last_score_explain"] = explain
+        with st.expander("Why these scores (formula · weights · discriminators)", expanded=True):
+            st.markdown(f"**Formula** · `{explain['formula']}`")
+            st.caption(explain.get("note") or "")
+            st.markdown(
+                "**Section weights (fixed)** · "
+                + " · ".join(f"`{k}` {v:.0%}" for k, v in explain["section_weights"].items())
+            )
+            st.markdown(
+                "**Heaviest / discriminating** · "
+                + ", ".join(explain.get("heaviest_sections") or [])
+                + (
+                    f" · safety/discriminator ids: "
+                    f"{', '.join(explain.get('main_discriminators') or [])}"
+                    if explain.get("main_discriminators")
+                    else ""
+                )
+            )
+            rows_ex = []
+            label_by_key = {
+                c["key"]: (c.get("display_label") or c.get("label") or c["key"])
+                for c in candidates_cfg
+            }
+            for pm in explain.get("per_model") or []:
+                rows_ex.append(
+                    {
+                        "Model": label_by_key.get(pm["key"], pm["key"]),
+                        "Acc %": pm["accuracy"],
+                        "Diagnosis": pm.get("diagnosis"),
+                        "Safety": pm.get("safety"),
+                        "Strongest": pm.get("strongest"),
+                        "Weakest": pm.get("weakest"),
+                    }
+                )
+            if rows_ex:
+                st.dataframe(pd.DataFrame(rows_ex), use_container_width=True, hide_index=True)
+            st.caption(
+                "Each model must land on a distinct accuracy. "
+                "If raw totals would tie, order is broken by safety → quality → "
+                "stem specificity → diagnosis (documented, not random)."
+            )
+
     cost_rows = []
     for c in last_collected:
         cost_rows.append(

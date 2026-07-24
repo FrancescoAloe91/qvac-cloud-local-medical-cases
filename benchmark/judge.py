@@ -10,6 +10,14 @@ from typing import Any, Dict, List, Optional
 from benchmark import openrouter
 from benchmark.prompts import judge_system, judge_user
 from benchmark.schema import Case, CandidateAnswer, JudgeResult, QuestionScore
+from benchmark.scoring import (
+    ITEM_SCORE_CAP,
+    WEIGHTED_CAP,
+    ensure_unique_accuracies,
+    linear_item_score,
+    scoring_legend,
+    stem_specificity,
+)
 
 
 def _extract_json(text: str) -> Dict[str, Any]:
@@ -40,27 +48,15 @@ def _weighted_accuracy(case: Case, scores: List[QuestionScore]) -> float:
         total_w += q.weight
     if total_w <= 0:
         return 0.0
-    return round(acc / total_w, 2)
+    return round(min(acc / total_w, WEIGHTED_CAP), 2)
 
 
-def _linear_item_score(
+def _score_from_judge_item(
+    case: Case,
+    item: Dict[str, Any],
     *,
-    m_hit: int,
-    m_total: int,
-    a_hit: int,
-    a_total: int,
-    quality: float,
-) -> float:
-    """Enforce continuous formula in Python (do not trust raw LLM score alone)."""
-    mt = max(int(m_total), 1)
-    at = max(int(a_total), 1)
-    m = min(max(int(m_hit), 0), mt) / mt
-    a = min(max(int(a_hit), 0), at) / at
-    q = min(max(float(quality), 0.0), 1.0)
-    return round(100.0 * (0.55 * m + 0.25 * a + 0.20 * q), 1)
-
-
-def _score_from_judge_item(case: Case, item: Dict[str, Any]) -> QuestionScore:
+    answer_text: str,
+) -> QuestionScore:
     qid = str(item.get("question_id", ""))
     qdef = next((q for q in case.questions if q.id == qid), None)
     m_total = len(qdef.rubric.must_include) if qdef else int(item.get("m_total") or 1)
@@ -71,8 +67,8 @@ def _score_from_judge_item(case: Case, item: Dict[str, Any]) -> QuestionScore:
     raw_errors = [str(e) for e in (item.get("errors") or [])]
     rationale = str(item.get("rationale") or "")
     evidence = str(item.get("evidence") or "")
+    spec = stem_specificity(case, answer_text)
 
-    # Prefer judge-reported hits; clamp to rubric lengths
     try:
         m_hit = int(item.get("m_hit"))
     except (TypeError, ValueError):
@@ -87,29 +83,32 @@ def _score_from_judge_item(case: Case, item: Dict[str, Any]) -> QuestionScore:
         quality = None
 
     if m_hit is None or a_hit is None or quality is None:
-        # Incomplete JSON: do not allow a free 100 from a bare "score" field
         try:
             fallback = float(item.get("score", 0))
         except (TypeError, ValueError):
             fallback = 0.0
-        # Cap anonymous fallback so checklist rubber-stamps cannot all be 100
-        score = round(min(max(fallback, 0.0), 92.0), 1)
+        score = round(min(max(fallback, 0.0), min(92.0, ITEM_SCORE_CAP)), 2)
         raw_errors = list(raw_errors) + ["incomplete_linear_fields"]
-        rationale = (rationale + " | fallback capped (missing m/a/quality)").strip(" |")
+        rationale = (
+            f"fallback≤{score} spec={spec:.2f} | {rationale}"
+        ).strip(" |")
     else:
-        score = _linear_item_score(
+        # Soft-calibrate: LLM quality rarely deserves 1.0
+        quality = min(float(quality), 0.92)
+        score = linear_item_score(
             m_hit=m_hit,
             m_total=m_total,
             a_hit=a_hit,
             a_total=a_total,
             quality=quality,
+            specificity=spec,
         )
         rationale = (
-            f"m={m_hit}/{m_total} a={a_hit}/{a_total} quality={quality:.2f} → {score}"
+            f"m={m_hit}/{m_total} a={a_hit}/{a_total} "
+            f"quality={quality:.2f} spec={spec:.2f} → {score}"
             + (f" | {rationale}" if rationale else "")
         )
 
-    # must_not soft enforcement if judge listed trap errors
     trap_hints = ("must_not", "safety trap", "nitrate", "lithium without", "ignored")
     if any(any(h in e.lower() for h in trap_hints) for e in raw_errors):
         if qdef and qdef.kind in ("safety", "diagnosis") and score > 20:
@@ -190,11 +189,12 @@ def judge_candidate(
     q_scores: List[QuestionScore] = []
     for item in data.get("question_scores") or []:
         try:
-            q_scores.append(_score_from_judge_item(case, item))
+            qid = str(item.get("question_id", ""))
+            ans = (candidate.answers or {}).get(qid) or candidate.raw_response or ""
+            q_scores.append(_score_from_judge_item(case, item, answer_text=ans))
         except (TypeError, ValueError):
             continue
 
-    # Ensure every question has a score
     have = {s.question_id for s in q_scores}
     for q in case.questions:
         if q.id not in have:
@@ -227,7 +227,7 @@ def judge_candidates_parallel(
     gold_reference: str = "",
     max_workers: Optional[int] = None,
 ) -> List[JudgeResult]:
-    """Score all candidates in parallel (OpenRouter calls overlap)."""
+    """Score all candidates in parallel; enforce unique accuracies."""
     if not candidates:
         return []
 
@@ -255,7 +255,9 @@ def judge_candidates_parallel(
         for fut in as_completed(futs):
             cand = futs[fut]
             by_key[cand.candidate_key] = fut.result()
-    return [by_key[c.candidate_key] for c in candidates if c.candidate_key in by_key]
+    ordered = [by_key[c.candidate_key] for c in candidates if c.candidate_key in by_key]
+    unique, _notes = ensure_unique_accuracies(case, ordered)
+    return unique
 
 
 def build_ranking(judgments: List[JudgeResult]) -> List[Dict[str, Any]]:
@@ -271,3 +273,36 @@ def build_ranking(judgments: List[JudgeResult]) -> List[Dict[str, Any]]:
     for i, row in enumerate(rows, 1):
         row["rank"] = i
     return rows
+
+
+def explain_run_scores(case: Case, judgments: List[JudgeResult]) -> Dict[str, Any]:
+    """Human-readable scoring explanation for the Results KPI panel."""
+    legend = scoring_legend(case)
+    per_model = []
+    for j in judgments:
+        by_q = {qs.question_id: qs for qs in j.question_scores}
+        weakest = min(j.question_scores, key=lambda qs: qs.score) if j.question_scores else None
+        strongest = max(j.question_scores, key=lambda qs: qs.score) if j.question_scores else None
+        per_model.append(
+            {
+                "key": j.candidate_key,
+                "accuracy": j.weighted_accuracy,
+                "weakest": (
+                    f"{weakest.question_id}={weakest.score}" if weakest else "—"
+                ),
+                "strongest": (
+                    f"{strongest.question_id}={strongest.score}" if strongest else "—"
+                ),
+                "safety": by_q["safety"].score if "safety" in by_q else None,
+                "diagnosis": by_q["diagnosis"].score if "diagnosis" in by_q else None,
+            }
+        )
+    per_model.sort(key=lambda r: r["accuracy"], reverse=True)
+    return {
+        **legend,
+        "per_model": per_model,
+        "note": (
+            f"100% is not used (item cap {ITEM_SCORE_CAP}, run cap {WEIGHTED_CAP}). "
+            "Ties broken by safety → quality → stem specificity → diagnosis."
+        ),
+    }

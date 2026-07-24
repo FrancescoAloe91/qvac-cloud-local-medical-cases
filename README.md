@@ -35,10 +35,11 @@ Pinned in [`benchmark/models.yaml`](benchmark/models.yaml):
 
 - Same structured Q&A for every candidate; judge is **blind** (Candidate 1/2/…).
 - **Section weights** are fixed per case (e.g. diagnosis / safety / tests…).
-- Per-section score is **continuous linear 0–100** (enforced in code):
-  - `score = 100 × (0.55×must_include + 0.25×acceptable + 0.20×quality)`
-  - synonyms count; `must_not` / safety traps hard-cap that section
-  - full checklist alone is **not** automatic 100 (needs high quality)
+- Per-section score is **continuous** and **host-enforced**:
+  - `100 × (0.45·must + 0.20·acceptable + 0.25·quality + 0.10·stem_specificity)`
+  - item cap **96.5**, run cap **97** → a literal **100% is not used**
+  - synonyms OK; `must_not` / safety traps hard-cap that section
+  - final accuracies are **always distinct** (tie-break: safety → quality → stem spec → diagnosis)
 - Final **accuracy** = weighted mean of section scores (no winner-to-100 rescale).
 
 Cases: **A** STEMI teaching · **B** mania+CKD teaching · **C** custom (your stem + gold checklist).
