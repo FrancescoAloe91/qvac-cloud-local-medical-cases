@@ -159,10 +159,9 @@ div[data-testid="stDialog"] [role="dialog"] {
   margin-right: auto !important;
 }
 
-/* Spend confirm: custom modal portaled to body (small card, full dim backdrop) */
+/* Spend confirm: full-viewport overlay (card + Cancel/Yes), not an inline row */
 .spend-modal-marker { display: none; }
-body > .spend-modal-portal,
-[data-testid="stVerticalBlock"].spend-modal-portal {
+#qvac-spend-portal {
   position: fixed !important;
   inset: 0 !important;
   left: 0 !important;
@@ -171,42 +170,52 @@ body > .spend-modal-portal,
   height: 100vh !important;
   max-width: none !important;
   z-index: 2147483000 !important;
-  background: rgba(2, 6, 23, 0.78) !important;
+  background: rgba(2, 6, 23, 0.82) !important;
   display: flex !important;
   flex-direction: column !important;
   align-items: center !important;
   justify-content: center !important;
-  padding: 1.25rem !important;
-  gap: 0.55rem !important;
+  padding: 1.5rem !important;
+  gap: 0.65rem !important;
   margin: 0 !important;
   box-sizing: border-box !important;
 }
-body > .spend-modal-portal > div,
-[data-testid="stVerticalBlock"].spend-modal-portal > div {
-  width: min(420px, 94vw) !important;
-  max-width: 420px !important;
+#qvac-spend-portal > [data-testid="stVerticalBlock"] {
+  width: min(440px, 94vw) !important;
+  max-width: 440px !important;
+  background: transparent !important;
+}
+#qvac-spend-portal [data-testid="stHorizontalBlock"] {
+  gap: 0.55rem !important;
+}
+#qvac-spend-portal [data-testid="stButton"] button {
+  min-height: 2.4rem !important;
+  font-size: 0.95rem !important;
+  font-weight: 700 !important;
 }
 .spend-modal-card {
   background: #111827;
   border: 1px solid #475569;
   border-radius: 14px;
-  padding: 1.15rem 1.25rem 0.35rem;
+  padding: 1.25rem 1.35rem 1rem;
   box-shadow: 0 24px 64px rgba(0,0,0,0.55);
+  width: 100%;
+  box-sizing: border-box;
 }
 .spend-modal-card h3 {
   margin: 0 0 0.55rem 0 !important;
-  font-size: 1.08rem !important;
+  font-size: 1.12rem !important;
   font-weight: 700 !important;
   color: #f8fafc !important;
 }
 .spend-modal-card p {
   margin: 0 0 0.45rem 0 !important;
-  font-size: 0.86rem !important;
+  font-size: 0.88rem !important;
   line-height: 1.45 !important;
   color: #cbd5e1 !important;
 }
 .spend-modal-card .muted {
-  font-size: 0.72rem !important;
+  font-size: 0.74rem !important;
   color: #94a3b8 !important;
 }
 div[data-testid="stDialog"] [data-testid="stMarkdownContainer"],
@@ -252,7 +261,9 @@ div[data-testid="stDialog"] code {
 /* Timer sits in normal flow at the END of the sidebar — never sticky/fixed overlay */
 .sidebar-timer-dock {
   margin-top: 0.5rem !important;
+  margin-bottom: 0.85rem !important;
   padding-top: 0.75rem !important;
+  padding-bottom: 0.35rem !important;
   border-top: 1px solid #334155 !important;
   background: #070b14 !important;
   position: relative !important;
@@ -267,11 +278,16 @@ div[data-testid="stDialog"] code {
 }
 [data-testid="stSidebar"] {
   overflow-x: hidden !important;
+  overflow-y: auto !important;
+  height: 100vh !important;
+  max-height: 100vh !important;
 }
 [data-testid="stSidebar"] iframe {
   max-width: 100% !important;
   width: 100% !important;
   margin: 0 !important;
+  /* Multi-run clock has an extra "this run" row — do not clip the bottom */
+  overflow: visible !important;
 }
 /* Collapsed sidebar must not leave a timer iframe over the main left column */
 section[data-testid="stSidebar"][aria-expanded="false"] iframe,
@@ -361,9 +377,11 @@ section[data-testid="stSidebar"][aria-expanded="false"] iframe,
 }
 [data-testid="stSidebar"] > div:first-child {
   padding-top: 0.55rem !important;
-  padding-bottom: 1rem !important;
+  padding-bottom: 1.75rem !important;
   padding-left: 0.65rem !important;
   padding-right: 0.65rem !important;
+  min-height: 100% !important;
+  box-sizing: border-box !important;
 }
 /* Breathing room between sidebar blocks (was 0.18rem → text sat under dropdowns) */
 [data-testid="stSidebar"] [data-testid="stVerticalBlock"] {
@@ -703,8 +721,8 @@ div[data-testid="stAlert"] { padding: 0.35rem 0.55rem !important; }
 </style>
 <script>
 (function () {
-  if (window.__qvacFsPortalBound) return;
-  window.__qvacFsPortalBound = true;
+  if (window.__qvacUiPortalV2) return;
+  window.__qvacUiPortalV2 = true;
   function overlayFor(ck) {
     if (ck._qvacOverlay && ck._qvacOverlay.isConnected) return ck._qvacOverlay;
     var o = ck.nextElementSibling;
@@ -771,23 +789,61 @@ div[data-testid="stAlert"] { padding: 0.35rem 0.55rem !important; }
     true
   );
 
-  /* Spend confirm: park the Streamlit block on body so it is a real desktop modal
-     (not a phone-wide strip inside a column). Unmounts cleanly — no sticky grey. */
+  /* Spend confirm: move the WHOLE confirm block (card + Cancel/Yes) into a
+     body-level overlay. closest() alone parks only the markdown row and leaves
+     buttons as a confusing strip under Step 3. */
+  function findSpendBlock(marker) {
+    var node = marker.parentElement;
+    var fallback = null;
+    while (node && node !== document.body) {
+      if (
+        node.getAttribute &&
+        node.getAttribute("data-testid") === "stVerticalBlock"
+      ) {
+        fallback = fallback || node;
+        if (
+          node.querySelector('[data-testid="stButton"]') ||
+          node.querySelector("button")
+        ) {
+          return node;
+        }
+      }
+      node = node.parentElement;
+    }
+    return fallback;
+  }
   function parkSpendModal() {
     var marker = document.querySelector(".spend-modal-marker");
-    if (!marker) return;
-    var block = marker.closest('[data-testid="stVerticalBlock"]');
+    var portal = document.getElementById("qvac-spend-portal");
+    if (!marker) {
+      if (portal && portal.parentNode) portal.parentNode.removeChild(portal);
+      return;
+    }
+    if (portal && portal.contains(marker)) return;
+    var block = findSpendBlock(marker);
     if (!block || block.dataset.qvacSpendParked === "1") return;
-    block.classList.add("spend-modal-portal");
+    if (!portal) {
+      portal = document.createElement("div");
+      portal.id = "qvac-spend-portal";
+      document.body.appendChild(portal);
+    }
     block.dataset.qvacSpendParked = "1";
-    document.body.appendChild(block);
+    portal.appendChild(block);
+    document.body.style.overflow = "hidden";
+  }
+  function clearSpendPortalIfGone() {
+    if (!document.querySelector(".spend-modal-marker")) {
+      var portal = document.getElementById("qvac-spend-portal");
+      if (portal && portal.parentNode) portal.parentNode.removeChild(portal);
+      document.body.style.overflow = "";
+    }
   }
   parkSpendModal();
   try {
-    new MutationObserver(parkSpendModal).observe(document.body, {
-      childList: true,
-      subtree: true,
-    });
+    new MutationObserver(function () {
+      parkSpendModal();
+      clearSpendPortalIfGone();
+    }).observe(document.body, { childList: true, subtree: true });
   } catch (err) {}
 })();
 </script>
@@ -1064,11 +1120,11 @@ def _render_spend_confirm_modal() -> None:
             f"""
 <div class="spend-modal-marker"></div>
 <div class="spend-modal-card">
-  <h3>Confirm OpenRouter spend</h3>
-  <p>Estimated range <b>${est:.4f} – ${est_hi:.4f}</b> for <b>{n}</b> run(s)
+  <h3>Confirm before starting</h3>
+  <p>Estimated OpenRouter spend <b>${est:.4f} – ${est_hi:.4f}</b> for <b>{n}</b> run(s)
   (cloud models + DeepSeek R1 judge). QVAC = $0 if included.</p>
-  <p class="muted">Lower ≈ token estimate; upper ≈ 2× (conservative — long answers / judge
-  tokens often exceed the base estimate). Actual bill is what OpenRouter reports.</p>
+  <p class="muted">Click <b>Yes, continue</b> to start the run, or <b>Cancel</b> to go back.
+  Upper ≈ 2× the token estimate (long answers / judge). Actual bill is what OpenRouter reports.</p>
 </div>
 """,
             unsafe_allow_html=True,
@@ -2233,23 +2289,34 @@ setTimeout(function() {{
 
 
 def _paint_run_timer(
-    slot, inner_html: str, *, height: int = 160, live: bool | None = None
+    slot,
+    inner_html: str,
+    *,
+    height: int = 160,
+    live: bool | None = None,
+    multi: bool = False,
 ) -> None:
     """
     Idle / stopped: plain HTML docked at bottom of left sidebar (no iframe).
-    Live ticking: compact iframe only (scripts need it) — never tall enough to
-    bleed over the main CASE / STEP 1 column.
+    Live ticking: iframe for setInterval. Multi-run needs extra height for the
+    "this run" row so the clock bottom is not clipped.
     """
     if live is None:
         live = "setInterval" in (inner_html or "")
-    # Hard cap — old height=220/280 iframes covered the main left column
-    height = min(int(height or 160), 168)
+    # Multi adds a "this run" row — allow taller iframe; keep single compact
+    if multi or 'style="display:flex"' in (inner_html or ""):
+        height = max(int(height or 200), 210)
+        height = min(height, 240)
+    else:
+        height = min(int(height or 160), 178)
     docked = f'<div class="sidebar-timer-dock">{inner_html}</div>'
     with slot:
         if live:
             doc = (
                 "<!DOCTYPE html><html><head><meta charset='utf-8'>"
-                f"<style>{_TIMER_IFRAME_CSS}html,body{{overflow:hidden;}}</style>"
+                f"<style>{_TIMER_IFRAME_CSS}"
+                "html,body{margin:0;padding:0;overflow:visible !important;height:auto;}"
+                ".run-timer-panel{margin:0;}</style>"
                 f"</head><body>{inner_html}</body></html>"
             )
             st.markdown(
@@ -2429,19 +2496,21 @@ with st.sidebar:
     timer_slot = st.empty()
     _pending = st.session_state.get("confirmed_run") or {}
     if _pending:
+        _pn = int(_pending.get("n") or 1)
         _paint_run_timer(
             timer_slot,
             _run_timer_live(
                 "Starting…",
-                n_runs=int(_pending.get("n") or 1),
+                n_runs=_pn,
                 elapsed_total=0,
                 elapsed_this=0,
                 collect_base=0,
                 judge_base=0,
                 bucket="collect",
             ),
-            height=160,
+            height=210 if _pn > 1 else 168,
             live=True,
+            multi=_pn > 1,
         )
     else:
         _paint_run_timer(
@@ -2618,6 +2687,8 @@ if st.session_state.get("confirmed_run"):
             judge_base=0,
             bucket="collect",
         ),
+        height=210 if n_runs > 1 else 168,
+        multi=n_runs > 1,
     )
 
     def _abort_run(msg: str, *, phase: str = "Stopped · fix the issue and retry") -> None:
@@ -2922,6 +2993,8 @@ if st.session_state.get("confirmed_run"):
                     judge_base=int(round(judge_s_acc)),
                     bucket="collect",
                 ),
+                height=210 if n_runs > 1 else 168,
+                multi=n_runs > 1,
             )
             collected = []
             bufs = {c["key"]: "" for c in candidates_cfg}
@@ -3028,7 +3101,8 @@ if st.session_state.get("confirmed_run"):
                     judge_base=int(round(judge_s_acc)),
                     bucket="judge",
                 ),
-                height=280,
+                height=230 if n_runs > 1 else 178,
+                multi=n_runs > 1,
             )
             judgments = []
             with st.status(f"DeepSeek R1 judge · parallel · run {run_i}", expanded=(n_runs == 1)):
