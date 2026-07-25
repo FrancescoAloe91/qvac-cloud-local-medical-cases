@@ -18,7 +18,8 @@ from benchmark.scoring import (
 )
 
 # Multi-run mean reliability from CV% = 100 × std / mean
-CV_HIGH_MAX = 15.0  # High if CV ≤ 15%
+# High and Medium ceilings are 10 percentage points apart.
+CV_HIGH_MAX = 20.0  # High if CV ≤ 20%
 CV_MEDIUM_MAX = 30.0  # Medium if CV ≤ 30%; else Low
 
 

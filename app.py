@@ -1143,7 +1143,7 @@ def _reliability_table_html(ranking_mean: list) -> str:
         + "".join(rows_html)
         + "</tbody></table></div>"
         "<div style='font-size:0.78rem;color:#94a3b8;margin-bottom:0.5rem'>"
-        f"{reliability_badge('high')} CV ≤ 15% &nbsp; "
+        f"{reliability_badge('high')} CV ≤ 20% &nbsp; "
         f"{reliability_badge('medium')} CV ≤ 30% &nbsp; "
         f"{reliability_badge('low')} CV &gt; 30% &nbsp;·&nbsp; "
         "lower CV = stabler mean</div>"
@@ -1340,7 +1340,7 @@ def scoring_guide_dialog():
 |-------|------|
 | **Section weights** | Fixed in the case JSON (diagnosis usually heaviest) |
 | **Tie-break** | safety → quality → stem → diagnosis |
-| **Multi reliability** | CV% = std/mean · High ≤15% · Medium ≤30% · else Low |
+| **Multi reliability** | CV% = std/mean · High ≤20% · Medium ≤30% · else Low |
 
 **Flow:** same prompt → answers → blind semantic judge → host formula → ranking.
 """
