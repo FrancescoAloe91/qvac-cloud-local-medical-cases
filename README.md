@@ -140,7 +140,7 @@ app.py                 # Automated Benchmark (only Streamlit entry)
 benchmark/             # cases, OpenRouter, judge, runner, CLI
 benchmark/workspace.py # per-API-key private artifact folders
 benchmark/models.yaml  # free_tier_match model IDs
-benchmark/cases/       # caseA / caseB / caseC rubrics
+benchmark/cases/       # Custom (caseC) + Demo 1/2 (caseA/B) — ids kept for History
 sidecar/               # QVAC SDK HTTP bridge (npm; no node_modules in git)
 artifacts/             # gitignored — owners/<fingerprint>/ per key
 OLD/                   # unused legacy dashboard (not launched)
