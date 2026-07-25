@@ -194,14 +194,37 @@ div[data-testid="stVerticalBlock"]:has(.spend-modal-marker) > div {
   border: 1px solid #f59e0b !important;
   color: #fde68a !important;
   font-family: "IBM Plex Mono", ui-monospace, monospace !important;
-  padding: 0.55rem 0.65rem 0.5rem !important;
-  border-radius: 12px !important;
-  box-shadow: 0 6px 16px rgba(0,0,0,0.28) !important;
-  margin: 0.35rem 0 0.5rem 0 !important;
+  padding: 0.5rem 0.6rem 0.45rem !important;
+  border-radius: 10px !important;
+  box-shadow: none !important;
+  margin: 0 !important;
+  width: 100% !important;
+  box-sizing: border-box !important;
+}
+/* Dock: last block in left sidebar — never floats over main CASE / STEP 1 */
+.sidebar-timer-dock {
+  margin-top: 0.85rem !important;
+  padding-top: 0.45rem !important;
+  border-top: 1px solid #334155 !important;
+  background: #070b14 !important;
+  position: sticky !important;
+  bottom: 0 !important;
+  z-index: 6 !important;
+}
+[data-testid="stSidebar"] {
+  overflow-x: hidden !important;
 }
 [data-testid="stSidebar"] iframe {
-  /* Streamlit components.html leaves a tall blank iframe that covered History text */
-  margin-bottom: 0.25rem !important;
+  max-width: 100% !important;
+  width: 100% !important;
+  margin: 0 !important;
+}
+/* Collapsed sidebar must not leave a timer iframe over the main left column */
+section[data-testid="stSidebar"][aria-expanded="false"] iframe,
+[data-testid="stSidebar"][aria-expanded="false"] iframe {
+  display: none !important;
+  height: 0 !important;
+  visibility: hidden !important;
 }
 .run-timer-panel .t-title {
   font-size: 0.72rem !important;
@@ -1910,15 +1933,33 @@ setTimeout(function() {{
     )
 
 
-def _paint_run_timer(slot, inner_html: str, *, height: int = 188) -> None:
-    """Render timer in an iframe so <script> ticks (st.html DOMPurify strips scripts)."""
-    doc = (
-        "<!DOCTYPE html><html><head><meta charset='utf-8'>"
-        f"<style>{_TIMER_IFRAME_CSS}</style></head><body>"
-        f"{inner_html}</body></html>"
-    )
+def _paint_run_timer(
+    slot, inner_html: str, *, height: int = 160, live: bool | None = None
+) -> None:
+    """
+    Idle / stopped: plain HTML docked at bottom of left sidebar (no iframe).
+    Live ticking: compact iframe only (scripts need it) — never tall enough to
+    bleed over the main CASE / STEP 1 column.
+    """
+    if live is None:
+        live = "setInterval" in (inner_html or "")
+    # Hard cap — old height=220/280 iframes covered the main left column
+    height = min(int(height or 160), 168)
+    docked = f'<div class="sidebar-timer-dock">{inner_html}</div>'
     with slot:
-        components.html(doc, height=height, scrolling=False)
+        if live:
+            doc = (
+                "<!DOCTYPE html><html><head><meta charset='utf-8'>"
+                f"<style>{_TIMER_IFRAME_CSS}html,body{{overflow:hidden;}}</style>"
+                f"</head><body>{inner_html}</body></html>"
+            )
+            st.markdown(
+                '<div class="sidebar-timer-dock" aria-hidden="true"></div>',
+                unsafe_allow_html=True,
+            )
+            components.html(doc, height=height, scrolling=False)
+        else:
+            st.markdown(docked, unsafe_allow_html=True)
 
 
 def _run_timer_live(
@@ -2021,33 +2062,9 @@ def _run_timer_stop(
 """
 
 
-# --- Sidebar: compact Run clock, then History (timer iframe must not cover labels) ---
+# --- Sidebar: History first, Run clock pinned at the very bottom of the left column ---
 with st.sidebar:
     st.markdown("---")
-    st.caption("Run clock")
-    timer_slot = st.empty()
-    _pending = st.session_state.get("confirmed_run") or {}
-    if _pending:
-        _paint_run_timer(
-            timer_slot,
-            _run_timer_live(
-                "Starting…",
-                n_runs=int(_pending.get("n") or 1),
-                elapsed_total=0,
-                elapsed_this=0,
-                collect_base=0,
-                judge_base=0,
-                bucket="collect",
-            ),
-            height=188,
-        )
-    else:
-        _paint_run_timer(
-            timer_slot,
-            _run_timer_idle(st.session_state.get("last_run_timings")),
-            height=168,
-        )
-
     _hist_paths = list_run_artifacts(WORKSPACE_DIR)[:12]
     st.caption(
         f"Private history · {short_owner_label()}"
@@ -2109,6 +2126,31 @@ with st.sidebar:
             st.rerun()
     else:
         st.caption("No runs in History yet for this key.")
+
+    # LAST widget in left column = Run clock (bottom-left of sidebar)
+    timer_slot = st.empty()
+    _pending = st.session_state.get("confirmed_run") or {}
+    if _pending:
+        _paint_run_timer(
+            timer_slot,
+            _run_timer_live(
+                "Starting…",
+                n_runs=int(_pending.get("n") or 1),
+                elapsed_total=0,
+                elapsed_this=0,
+                collect_base=0,
+                judge_base=0,
+                bucket="collect",
+            ),
+            height=160,
+            live=True,
+        )
+    else:
+        _paint_run_timer(
+            timer_slot,
+            _run_timer_idle(st.session_state.get("last_run_timings")),
+            live=False,
+        )
 
 # --- Live response panels ---
 roster = list(cfg.get("candidates") or [])
