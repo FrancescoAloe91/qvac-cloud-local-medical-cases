@@ -2,11 +2,20 @@
 
 from __future__ import annotations
 
+import re
 import statistics
 from pathlib import Path
-from typing import Dict, List
+from typing import Any, Dict, List, Optional, Tuple
 
+from benchmark.cases_loader import load_case
+from benchmark.prompts import use_gold_ground_truth
 from benchmark.schema import MultiRunSummary, RunArtifact
+from benchmark.scoring import (
+    WEIGHTED_CAP,
+    linear_item_score,
+    semantic_item_score,
+    soft_alignment_from_checklist,
+)
 
 
 def write_artifact(artifact: RunArtifact, out_dir: Path) -> Path:
@@ -41,6 +50,14 @@ def summarize_runs(artifacts: List[RunArtifact]) -> MultiRunSummary:
         mean = statistics.fmean(vals)
         std = statistics.pstdev(vals) if len(vals) > 1 else 0.0
         med = statistics.median(vals)
+        # Coefficient of variation (%) — simple reliability signal for the mean
+        cv_pct = round(100.0 * std / mean, 1) if mean > 1e-6 else 0.0
+        if cv_pct <= 8:
+            reliability = "high"
+        elif cv_pct <= 18:
+            reliability = "medium"
+        else:
+            reliability = "low"
         if len(vals) >= 4:
             q1, _, q3 = statistics.quantiles(vals, n=4)
             iqr = q3 - q1
@@ -53,6 +70,8 @@ def summarize_runs(artifacts: List[RunArtifact]) -> MultiRunSummary:
             "mean": round(mean, 2),
             "median": round(med, 2),
             "std": round(std, 2),
+            "cv_pct": cv_pct,
+            "reliability": reliability,
             "iqr": round(iqr, 2),
             "min": round(min(vals), 2),
             "max": round(max(vals), 2),
@@ -60,7 +79,9 @@ def summarize_runs(artifacts: List[RunArtifact]) -> MultiRunSummary:
         }
         # Flag high variance
         if len(vals) >= 3 and std > 15:
-            outliers.append(f"{key}: high variance std={std:.1f}")
+            outliers.append(f"{key}: high variance std={std:.1f} (CV {cv_pct}%)")
+        if reliability == "low" and len(vals) >= 2:
+            outliers.append(f"{key}: mean less reliable (CV {cv_pct}%)")
         # Flag bimodal-ish: large gap mid sorted
         if len(vals) >= 4:
             s = sorted(vals)
@@ -74,7 +95,11 @@ def summarize_runs(artifacts: List[RunArtifact]) -> MultiRunSummary:
             "accuracy_mean": v["mean"],
             "median": v["median"],
             "std": v["std"],
+            "cv_pct": v["cv_pct"],
+            "reliability": v["reliability"],
             "iqr": v["iqr"],
+            "min": v["min"],
+            "max": v["max"],
         }
         for k, v in stats.items()
     ]
@@ -97,20 +122,40 @@ def summarize_runs(artifacts: List[RunArtifact]) -> MultiRunSummary:
 def print_summary_table(summary: MultiRunSummary) -> str:
     lines = [
         f"Case {summary.case_id} · N={summary.n} · cost≈${summary.total_cost_usd:.4f}",
-        f"{'Rank':<6}{'Model':<16}{'Mean%':>8}{'Med%':>8}{'Std':>8}{'IQR':>8}",
-        "-" * 56,
+        f"{'Rank':<6}{'Model':<12}{'Mean%':>7}{'±Std':>7}{'CV%':>6}{'Rel':>8}{'Med%':>7}",
+        "-" * 60,
     ]
     for row in summary.ranking_mean:
         lines.append(
-            f"{row['rank']:<6}{row['key']:<16}"
-            f"{row['accuracy_mean']:>8.1f}{row.get('median', 0):>8.1f}"
-            f"{row['std']:>8.1f}{row.get('iqr', 0):>8.1f}"
+            f"{row['rank']:<6}{row['key']:<12}"
+            f"{row['accuracy_mean']:>7.1f}{row['std']:>7.1f}"
+            f"{row.get('cv_pct', 0):>6.1f}{str(row.get('reliability', '—')):>8}"
+            f"{row.get('median', 0):>7.1f}"
         )
     if summary.outliers:
-        lines.append("Outliers / warnings:")
+        lines.append("Reliability notes:")
         for o in summary.outliers:
             lines.append(f"  - {o}")
     return "\n".join(lines)
+
+
+def reliability_caption(summary: MultiRunSummary) -> str:
+    """One-line plain-language guide for the multi-run mean."""
+    if summary.n < 2:
+        return "Single run — no variance yet."
+    cvs = [float(r.get("cv_pct") or 0) for r in summary.ranking_mean]
+    worst = max(cvs) if cvs else 0.0
+    if worst <= 8:
+        band = "High confidence"
+    elif worst <= 18:
+        band = "Moderate confidence"
+    else:
+        band = "Lower confidence — means jump between runs"
+    return (
+        f"{band} across N={summary.n} · "
+        f"CV% = std/mean (lower = stabler mean) · "
+        f"error bars = ±1 std"
+    )
 
 
 def list_run_artifacts(out_dir: Path) -> List[Path]:
@@ -128,3 +173,190 @@ def list_run_artifacts(out_dir: Path) -> List[Path]:
 
 def load_artifact(path: Path) -> RunArtifact:
     return RunArtifact.model_validate_json(path.read_text(encoding="utf-8"))
+
+
+def _parse_rationale_metrics(rationale: str) -> Optional[Dict[str, float]]:
+    """Extract align/m/a/quality/spec from stored judge rationale lines."""
+    text = rationale or ""
+    al = re.search(r"align=([0-9.]+)", text)
+    q = re.search(r"quality=([0-9.]+)", text)
+    s = re.search(r"spec=([0-9.]+)", text)
+    m = re.search(r"m=(\d+)/(\d+)", text)
+    a = re.search(r"a=(\d+)/(\d+)", text)
+    if al and q and s:
+        return {
+            "alignment": float(al.group(1)),
+            "quality": float(q.group(1)),
+            "spec": float(s.group(1)),
+        }
+    if m and a and q and s:
+        return {
+            "m_hit": float(m.group(1)),
+            "m_total": float(m.group(2)),
+            "a_hit": float(a.group(1)),
+            "a_total": float(a.group(2)),
+            "quality": float(q.group(1)),
+            "spec": float(s.group(1)),
+        }
+    return None
+
+
+def rescore_artifact_current_formula(art: RunArtifact) -> Dict[str, Any]:
+    """
+    Recompute section scores + weighted accuracy with the *current* host formula.
+
+    Uses metrics embedded in stored rationales (no API). Gold runs → semantic
+    50/30/20; rubric runs → checklist+quality weights. Returns a lightweight
+    ranking dict suitable for summarize_runs / charts.
+    """
+    cfg = art.models_config or {}
+    gold_ref = str(cfg.get("gold_reference") or "")
+    gold_mode = use_gold_ground_truth(gold_ref)
+    try:
+        case = load_case(art.case_id)
+        section_w = {q.id: q.weight for q in case.questions}
+    except Exception:
+        section_w = {}
+
+    ranking_rows: List[Dict[str, Any]] = []
+    per_model_sections: Dict[str, Dict[str, float]] = {}
+
+    for j in art.judgments:
+        secs: Dict[str, float] = {}
+        for qs in j.question_scores:
+            parsed = _parse_rationale_metrics(qs.rationale or "")
+            if not parsed:
+                secs[qs.question_id] = float(qs.score)
+                continue
+            q = float(parsed["quality"])
+            spec = float(parsed["spec"])
+            if "alignment" in parsed:
+                align = float(parsed["alignment"])
+                secs[qs.question_id] = semantic_item_score(
+                    alignment=align, quality=q, specificity=spec
+                )
+            elif gold_mode:
+                align = soft_alignment_from_checklist(
+                    m_hit=int(parsed["m_hit"]),
+                    m_total=int(parsed["m_total"]),
+                    a_hit=int(parsed["a_hit"]),
+                    a_total=max(int(parsed["a_total"]), 1),
+                    quality=q,
+                )
+                secs[qs.question_id] = semantic_item_score(
+                    alignment=align, quality=q, specificity=spec
+                )
+            else:
+                secs[qs.question_id] = linear_item_score(
+                    m_hit=int(parsed["m_hit"]),
+                    m_total=int(parsed["m_total"]),
+                    a_hit=int(parsed["a_hit"]),
+                    a_total=max(int(parsed["a_total"]), 1),
+                    quality=q,
+                    specificity=spec,
+                )
+        per_model_sections[j.candidate_key] = secs
+        if section_w:
+            keys = [k for k in section_w if k in secs]
+            tw = sum(section_w[k] for k in keys) or 1.0
+            acc = sum(secs[k] * section_w[k] for k in keys) / tw
+        else:
+            acc = (
+                sum(secs.values()) / len(secs) if secs else float(j.weighted_accuracy)
+            )
+        ranking_rows.append(
+            {
+                "key": j.candidate_key,
+                "accuracy": round(min(acc, WEIGHTED_CAP), 2),
+                "label": j.candidate_key,
+            }
+        )
+
+    ranking_rows.sort(key=lambda r: -float(r["accuracy"]))
+    for i, row in enumerate(ranking_rows, 1):
+        row["rank"] = i
+
+    return {
+        "run_id": art.run_id,
+        "case_id": art.case_id,
+        "n_index": art.n_index,
+        "gold_mode": gold_mode,
+        "ranking": ranking_rows,
+        "sections": per_model_sections,
+        "stored_ranking": list(art.ranking or []),
+    }
+
+
+def artifacts_for_case(
+    out_dir: Path, case_id: str, *, limit: Optional[int] = None
+) -> List[Tuple[Path, RunArtifact]]:
+    """Newest-first artifacts for one case that have judgments/ranking."""
+    out: List[Tuple[Path, RunArtifact]] = []
+    for p in list_run_artifacts(out_dir):
+        try:
+            art = load_artifact(p)
+        except Exception:
+            continue
+        if art.case_id != case_id:
+            continue
+        if not art.judgments and not art.ranking:
+            continue
+        out.append((p, art))
+        if limit is not None and len(out) >= limit:
+            break
+    return out
+
+
+def rebuild_multi_from_history(
+    out_dir: Path,
+    case_id: str,
+    *,
+    n: int = 5,
+) -> Dict[str, Any]:
+    """
+    Offline Multi×N: take the N newest runs for case_id, rescore with the
+    current formula, return summarize_runs-compatible summary + per-run rows.
+    Zero API cost.
+    """
+    n = max(2, min(int(n), 20))
+    pairs = artifacts_for_case(out_dir, case_id, limit=n)
+    if len(pairs) < 2:
+        return {
+            "ok": False,
+            "reason": f"Need at least 2 saved runs for {case_id} (found {len(pairs)}).",
+            "available": len(pairs),
+        }
+
+    rescored_arts: List[RunArtifact] = []
+    per_run: List[Dict[str, Any]] = []
+    for path, art in pairs:
+        scored = rescore_artifact_current_formula(art)
+        # Minimal RunArtifact clone with new ranking accuracies
+        clone = art.model_copy(deep=True)
+        clone.ranking = scored["ranking"]
+        # Keep judgments but update weighted_accuracy for consistency
+        by_key = {r["key"]: r["accuracy"] for r in scored["ranking"]}
+        for j in clone.judgments:
+            if j.candidate_key in by_key:
+                j.weighted_accuracy = float(by_key[j.candidate_key])
+        rescored_arts.append(clone)
+        per_run.append(
+            {
+                "path": str(path),
+                "run_id": art.run_id,
+                "finished_at": art.finished_at,
+                "ranking": scored["ranking"],
+                "gold_mode": scored["gold_mode"],
+            }
+        )
+
+    summary = summarize_runs(rescored_arts)
+    return {
+        "ok": True,
+        "available": len(pairs),
+        "n_used": len(rescored_arts),
+        "summary": summary,
+        "per_run": per_run,
+        "formula": "gold 50/30/20 semantic · or rubric quality-weighted (current code)",
+        "api_cost_usd": 0.0,
+    }

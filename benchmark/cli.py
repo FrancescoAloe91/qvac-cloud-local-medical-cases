@@ -59,19 +59,22 @@ def cmd_run(args: argparse.Namespace) -> int:
         )
         return 2
 
+    from benchmark.workspace import scoped_artifacts_dir
+
+    out = Path(args.out) if args.out else scoped_artifacts_dir()
     arts, summary = run_n(
         args.case,
         n=args.n,
         models_path=Path(args.models) if args.models else None,
         skip_qvac=args.skip_qvac,
-        out_dir=Path(args.out) if args.out else None,
+        out_dir=out,
         seed=args.seed,
     )
     print(print_summary_table(summary))
     for a in arts:
         if a.notes:
             print(f"note ({a.run_id}): {a.notes}")
-        print(f"artifact: artifacts/{a.run_id}.json  cost=${a.total_cost_usd:.4f}")
+        print(f"artifact: {out / (a.run_id + '.json')}  cost=${a.total_cost_usd:.4f}")
     return 0
 
 

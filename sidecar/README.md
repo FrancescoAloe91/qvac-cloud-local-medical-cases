@@ -45,7 +45,7 @@ npm start
 ```
 
 Model **warm-loads at startup** (set `QVAC_WARM_LOAD=0` to defer).  
-`QVAC_PREDICT` caps max new tokens (default 1200) for faster demo runs.
+`QVAC_PREDICT` caps max new tokens (default 3000, aligned with cloud candidates).
 
 ### macOS dependency
 

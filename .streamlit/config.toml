@@ -12,6 +12,8 @@ enableXsrfProtection = true
 [client]
 showErrorDetails = true
 toolbarMode = "viewer"
+# Single-app entry (Automated Benchmark). Legacy UI lives under OLD/ unused.
+showSidebarNavigation = false
 
 [theme]
 base = "dark"

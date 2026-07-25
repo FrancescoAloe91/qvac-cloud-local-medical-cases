@@ -10,9 +10,18 @@ from typing import Any, Callable, Dict, List, Optional, Sequence
 
 from benchmark import openrouter, qvac_bridge
 from benchmark.cases_loader import load_case
-from benchmark.config import ARTIFACTS_DIR, load_models_config
-from benchmark.judge import build_ranking, judge_candidates_parallel
-from benchmark.prompts import candidate_system, candidate_user, parse_candidate_answers
+from benchmark.config import load_models_config
+from benchmark.judge import (
+    build_ranking,
+    judge_candidates_parallel,
+    systemic_judge_failure,
+)
+from benchmark.prompts import (
+    CANDIDATE_MAX_OUTPUT_TOKENS,
+    candidate_system,
+    candidate_user,
+    parse_candidate_answers,
+)
 from benchmark.report import summarize_runs, write_artifact, write_summary
 from benchmark.schema import (
     CandidateAnswer,
@@ -246,7 +255,7 @@ def _collect_candidate(
             model_id,
             messages,
             temperature=0.3,
-            max_tokens=2048,
+            max_tokens=CANDIDATE_MAX_OUTPUT_TOKENS,
             on_token=on_token,
             display_label=display,
         )
@@ -623,7 +632,12 @@ def run_n(
     gold_reference: str = "",
     case_stem_override: str = "",
 ) -> tuple[List[RunArtifact], MultiRunSummary]:
-    out = out_dir or ARTIFACTS_DIR
+    if out_dir is None:
+        from benchmark.workspace import scoped_artifacts_dir
+
+        out = scoped_artifacts_dir()
+    else:
+        out = out_dir
     out.mkdir(parents=True, exist_ok=True)
     artifacts: List[RunArtifact] = []
     base_seed = seed if seed is not None else random.randint(0, 10**9)
@@ -641,6 +655,21 @@ def run_n(
         )
         write_artifact(art, out)
         artifacts.append(art)
+        if n > 1 and systemic_judge_failure(art.judgments):
+            art.notes = (
+                (art.notes + " | " if art.notes else "")
+                + f"Multi aborted after run {i}/{n}: systemic judge failure"
+            )
+            write_artifact(art, out)
+            _emit(
+                on_event,
+                {
+                    "type": "phase",
+                    "phase": "aborted",
+                    "message": art.notes,
+                },
+            )
+            break
     summary = summarize_runs(artifacts)
     write_summary(summary, out)
     return artifacts, summary

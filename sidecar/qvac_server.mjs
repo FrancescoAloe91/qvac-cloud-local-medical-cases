@@ -8,7 +8,7 @@
  *   QVAC_DEVICE         "gpu" (default) | "cpu"
  *   QVAC_GPU_LAYERS     default 99 (0 = CPU-only layers)
  *   QVAC_CTX_SIZE       default 4096
- *   QVAC_PREDICT        max new tokens, default 1200 (demo speed)
+ *   QVAC_PREDICT        max new tokens, default 3000 (aligned with cloud candidates)
  *   QVAC_MAIN_GPU       optional: "dedicated" | "integrated" | "0"
  *   QVAC_WARM_LOAD      "1" (default) preload model at startup
  */
@@ -68,7 +68,7 @@ const GPU_LAYERS = Number(
   process.env.QVAC_GPU_LAYERS ?? (DEVICE === "cpu" ? 0 : 99)
 );
 const CTX_SIZE = Number(process.env.QVAC_CTX_SIZE || 4096);
-const PREDICT = Number(process.env.QVAC_PREDICT || 1200);
+const PREDICT = Number(process.env.QVAC_PREDICT || 3000);
 const WARM_LOAD = (process.env.QVAC_WARM_LOAD || "1") !== "0";
 
 function buildModelConfig() {
@@ -171,6 +171,24 @@ async function ensureModel() {
   return modelId;
 }
 
+/** Extract plain text from SDK token chunks (never emit "[object Object]"). */
+function extractTokenText(item) {
+  if (item == null) return "";
+  if (typeof item === "string") return item;
+  if (typeof item === "number" || typeof item === "boolean") return String(item);
+  if (typeof item !== "object") return "";
+  if (item.__done) return "";
+  const keys = ["token", "text", "content", "delta", "value"];
+  for (const k of keys) {
+    const v = item[k];
+    if (typeof v === "string" && v) return v;
+  }
+  if (item.message && typeof item.message.content === "string") {
+    return item.message.content;
+  }
+  return "";
+}
+
 async function* tokenStream(prompt) {
   const id = await ensureModel();
   const history = [{ role: "user", content: prompt }];
@@ -182,11 +200,12 @@ async function* tokenStream(prompt) {
   const result = sdk.completion({ modelId: id, history, stream: true });
 
   const mark = (tok) => {
-    if (!tok) return null;
+    const text = extractTokenText(tok);
+    if (!text) return null;
     if (ttftMs == null) ttftMs = Date.now() - t0;
-    content += tok;
+    content += text;
     tokenCount += 1;
-    return tok;
+    return text;
   };
 
   if (typeof result === "string") {
@@ -335,7 +354,8 @@ const server = http.createServer(async (req, res) => {
             const { __done, ...meta } = item;
             writeNdjson(res, { type: "done", ...meta });
           } else {
-            writeNdjson(res, { type: "token", token: String(item) });
+            const tok = extractTokenText(item);
+            if (tok) writeNdjson(res, { type: "token", token: tok });
           }
         }
       } catch (err) {

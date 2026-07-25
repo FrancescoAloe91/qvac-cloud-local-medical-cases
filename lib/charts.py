@@ -505,3 +505,74 @@ def fig_judge_accuracy_bars(
     layout["yaxis"] = dict(title="")
     fig.update_layout(**layout)
     return fig
+
+
+def fig_judge_mean_accuracy_bars(
+    ranking_mean_rows: list,
+    *,
+    title: str = "Multi-run mean accuracy ± std",
+    height: int = 280,
+) -> go.Figure:
+    """Mean accuracy with ±1 std error bars (multi-run summary)."""
+    if not ranking_mean_rows:
+        fig = go.Figure()
+        fig.update_layout(**_base_layout(title, height=height))
+        return fig
+
+    rows = sorted(
+        ranking_mean_rows,
+        key=lambda r: float(r.get("accuracy_mean") or 0),
+        reverse=True,
+    )
+    short = {
+        "chatgpt": "ChatGPT",
+        "claude": "Claude",
+        "gemini": "Gemini",
+        "qvac": "QVAC",
+    }
+    labels = [short.get(r.get("key"), r.get("key") or "?") for r in rows]
+    means = [float(r.get("accuracy_mean") or 0) for r in rows]
+    stds = [float(r.get("std") or 0) for r in rows]
+    cvs = [float(r.get("cv_pct") or 0) for r in rows]
+    colors = [MODEL_COLORS.get(r.get("key"), "#94a3b8") for r in rows]
+    ranks = [int(r.get("rank") or i + 1) for i, r in enumerate(rows)]
+
+    # Keep bar labels short so ±std whiskers do not cover the numbers.
+    # Full Mean / ±Std / CV / Reliability live in the table under the chart.
+    fig = go.Figure(
+        go.Bar(
+            y=labels[::-1],
+            x=means[::-1],
+            orientation="h",
+            marker=dict(color=colors[::-1], line=dict(color="#1e293b", width=1)),
+            error_x=dict(
+                type="data",
+                array=stds[::-1],
+                visible=True,
+                color="rgba(148,163,184,0.85)",
+                thickness=1.2,
+                width=5,
+            ),
+            text=[f"{m:.1f}%" for m in means[::-1]],
+            textposition="inside",
+            insidetextanchor="middle",
+            textfont=dict(color="#0f172a", size=13, family="Inter, system-ui, sans-serif"),
+            hovertemplate=(
+                "%{y}<br>Mean %{x:.1f}% ± %{customdata[0]:.1f}"
+                "<br>CV %{customdata[1]:.0f}%<extra></extra>"
+            ),
+            customdata=list(zip(stds[::-1], cvs[::-1])),
+            cliponaxis=False,
+        )
+    )
+    layout = _base_layout(title, height=height)
+    layout["margin"] = dict(l=72, r=28, t=48, b=36)
+    xmax = max(means[i] + stds[i] for i in range(len(means))) if means else 100
+    layout["xaxis"] = dict(
+        range=[0, min(110, max(40, xmax * 1.12))],
+        title="Mean accuracy %  (±1 std whiskers)",
+        gridcolor="rgba(51,65,85,0.5)",
+    )
+    layout["yaxis"] = dict(title="")
+    fig.update_layout(**layout)
+    return fig

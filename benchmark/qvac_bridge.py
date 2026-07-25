@@ -231,8 +231,11 @@ def generate_streaming(
                     continue
                 et = evt.get("type")
                 if et == "token":
-                    tok = evt.get("token") or ""
-                    if tok:
+                    tok = evt.get("token")
+                    if not isinstance(tok, str):
+                        # Reject object leftovers ("[object Object]") — not scorable text
+                        continue
+                    if tok and tok != "[object Object]":
                         content_parts.append(tok)
                         if on_token:
                             on_token(tok)

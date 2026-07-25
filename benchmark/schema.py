@@ -97,8 +97,8 @@ class RunArtifact(BaseModel):
 class MultiRunSummary(BaseModel):
     case_id: str
     n: int
-    candidate_stats: Dict[str, Dict[str, float]] = Field(default_factory=dict)
-    # key -> {mean, std, min, max, n}
+    candidate_stats: Dict[str, Dict[str, Any]] = Field(default_factory=dict)
+    # key -> {mean, std, cv_pct, reliability, min, max, n}
     ranking_mean: List[Dict[str, Any]] = Field(default_factory=list)
     run_ids: List[str] = Field(default_factory=list)
     total_cost_usd: float = 0.0

@@ -12,11 +12,16 @@ from benchmark.schema import Case, JudgeResult, QuestionScore
 ITEM_SCORE_CAP = 96.5
 WEIGHTED_CAP = 97.0
 
-# Continuous mix: checklist + clinical quality + stem specificity
-W_MUST = 0.45
+# Rubric mode (no gold): checklist still exists, but quality dominates.
+W_MUST = 0.30
 W_ACCEPT = 0.20
-W_QUALITY = 0.25
+W_QUALITY = 0.40
 W_SPEC = 0.10
+
+# Gold mode: semantic closeness to the gold thesis — no checklist atomization.
+W_ALIGN = 0.50
+W_GOLD_QUALITY = 0.30
+W_GOLD_SPEC = 0.20
 
 
 def linear_item_score(
@@ -28,6 +33,7 @@ def linear_item_score(
     quality: float,
     specificity: float,
 ) -> float:
+    """Rubric-mode score: soft checklist + clinical quality + stem specificity."""
     mt = max(int(m_total), 1)
     at = max(int(a_total), 1)
     m = min(max(int(m_hit), 0), mt) / mt
@@ -36,6 +42,47 @@ def linear_item_score(
     s = min(max(float(specificity), 0.0), 1.0)
     raw = 100.0 * (W_MUST * m + W_ACCEPT * a + W_QUALITY * q + W_SPEC * s)
     return round(min(raw, ITEM_SCORE_CAP), 2)
+
+
+def semantic_item_score(
+    *,
+    alignment: float,
+    quality: float,
+    specificity: float,
+) -> float:
+    """
+    Gold-mode score: how close the answer is *in clinical meaning* to the gold.
+
+    alignment = holistic semantic match for that section (diagnosis thesis,
+    workup intent, safety advice, next steps) — synonyms and near-equivalent
+    formulations count; exact wording / acronyms do not.
+    """
+    al = min(max(float(alignment), 0.0), 1.0)
+    q = min(max(float(quality), 0.0), 1.0)
+    s = min(max(float(specificity), 0.0), 1.0)
+    raw = 100.0 * (W_ALIGN * al + W_GOLD_QUALITY * q + W_GOLD_SPEC * s)
+    return round(min(raw, ITEM_SCORE_CAP), 2)
+
+
+def soft_alignment_from_checklist(
+    *,
+    m_hit: int,
+    m_total: int,
+    a_hit: int,
+    a_total: int,
+    quality: float,
+) -> float:
+    """
+    Bridge when an older judge payload has m/a but no alignment field.
+    Blends checklist coverage with quality so near-miss meaning is not zeroed.
+    """
+    mt = max(int(m_total), 1)
+    at = max(int(a_total), 1)
+    m = min(max(int(m_hit), 0), mt) / mt
+    a = min(max(int(a_hit), 0), at) / at
+    q = min(max(float(quality), 0.0), 1.0)
+    # Quality carries semantic credit; checklist is a soft hint, not a veto.
+    return round(min(1.0, 0.40 * m + 0.15 * a + 0.45 * q), 3)
 
 
 def stem_anchor_terms(case: Case) -> List[str]:
@@ -216,9 +263,9 @@ def scoring_guide_markdown() -> str:
         return path.read_text(encoding="utf-8")
     except OSError:
         return (
-            "section = 100×(0.45·must + 0.20·acceptable + 0.25·quality + 0.10·stem_spec), "
-            "cap 96.5. Quality = clinical judgment (not style). "
-            "Accuracy = weighted mean of sections; 100% not used."
+            "Gold: section = 100×(0.50·alignment + 0.30·quality + 0.20·stem_spec). "
+            "Rubric: section = 100×(0.30·must + 0.20·acceptable + 0.40·quality + 0.10·stem_spec). "
+            "Cap 96.5. Quality = clinical judgment (not style). 100% not used."
         )
 
 
@@ -227,8 +274,10 @@ def scoring_legend(case: Case) -> Dict[str, Any]:
     top = sorted(weights.items(), key=lambda kv: kv[1], reverse=True)
     return {
         "formula": (
-            f"item = 100×({W_MUST}·must + {W_ACCEPT}·acceptable + "
-            f"{W_QUALITY}·quality + {W_SPEC}·stem_specificity), "
+            f"gold: 100×({W_ALIGN}·alignment + {W_GOLD_QUALITY}·quality + "
+            f"{W_GOLD_SPEC}·stem_spec); "
+            f"rubric: 100×({W_MUST}·must + {W_ACCEPT}·acceptable + "
+            f"{W_QUALITY}·quality + {W_SPEC}·stem_specificity); "
             f"capped at {ITEM_SCORE_CAP}; weighted mean capped at {WEIGHTED_CAP} "
             "(100% not used)."
         ),
