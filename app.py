@@ -148,8 +148,8 @@ header[data-testid="stHeader"],
 }
 div[data-testid="stVerticalBlock"] > div { gap: 0.2rem !important; }
 
-/* Streamlit dialogs: compact + centered by default (boot / spend confirm).
-   Do NOT force all dialogs to full width — width="small"|"large" must work.
+/* Streamlit dialogs: compact + centered (boot only). Never use st.dialog for
+   spend confirm — it sticks grey and ✕ aborts in-flight runs.
    True fullscreen reading = .fs-overlay (LLM Full screen / How ranking / Setup). */
 div[data-testid="stDialog"] {
   z-index: 1000000 !important;
@@ -157,6 +157,57 @@ div[data-testid="stDialog"] {
 div[data-testid="stDialog"] [role="dialog"] {
   margin-left: auto !important;
   margin-right: auto !important;
+}
+
+/* Spend confirm: custom modal portaled to body (small card, full dim backdrop) */
+.spend-modal-marker { display: none; }
+body > .spend-modal-portal,
+[data-testid="stVerticalBlock"].spend-modal-portal {
+  position: fixed !important;
+  inset: 0 !important;
+  left: 0 !important;
+  top: 0 !important;
+  width: 100vw !important;
+  height: 100vh !important;
+  max-width: none !important;
+  z-index: 2147483000 !important;
+  background: rgba(2, 6, 23, 0.78) !important;
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: center !important;
+  justify-content: center !important;
+  padding: 1.25rem !important;
+  gap: 0.55rem !important;
+  margin: 0 !important;
+  box-sizing: border-box !important;
+}
+body > .spend-modal-portal > div,
+[data-testid="stVerticalBlock"].spend-modal-portal > div {
+  width: min(420px, 94vw) !important;
+  max-width: 420px !important;
+}
+.spend-modal-card {
+  background: #111827;
+  border: 1px solid #475569;
+  border-radius: 14px;
+  padding: 1.15rem 1.25rem 0.35rem;
+  box-shadow: 0 24px 64px rgba(0,0,0,0.55);
+}
+.spend-modal-card h3 {
+  margin: 0 0 0.55rem 0 !important;
+  font-size: 1.08rem !important;
+  font-weight: 700 !important;
+  color: #f8fafc !important;
+}
+.spend-modal-card p {
+  margin: 0 0 0.45rem 0 !important;
+  font-size: 0.86rem !important;
+  line-height: 1.45 !important;
+  color: #cbd5e1 !important;
+}
+.spend-modal-card .muted {
+  font-size: 0.72rem !important;
+  color: #94a3b8 !important;
 }
 div[data-testid="stDialog"] [data-testid="stMarkdownContainer"],
 div[data-testid="stDialog"] [data-testid="stMarkdownContainer"] p,
@@ -719,6 +770,25 @@ div[data-testid="stAlert"] { padding: 0.35rem 0.55rem !important; }
     },
     true
   );
+
+  /* Spend confirm: park the Streamlit block on body so it is a real desktop modal
+     (not a phone-wide strip inside a column). Unmounts cleanly — no sticky grey. */
+  function parkSpendModal() {
+    var marker = document.querySelector(".spend-modal-marker");
+    if (!marker) return;
+    var block = marker.closest('[data-testid="stVerticalBlock"]');
+    if (!block || block.dataset.qvacSpendParked === "1") return;
+    block.classList.add("spend-modal-portal");
+    block.dataset.qvacSpendParked = "1";
+    document.body.appendChild(block);
+  }
+  parkSpendModal();
+  try {
+    new MutationObserver(parkSpendModal).observe(document.body, {
+      childList: true,
+      subtree: true,
+    });
+  } catch (err) {}
 })();
 </script>
 """
@@ -975,11 +1045,6 @@ def _on_rebuild_n_pick_change() -> None:
     _clear_all_kpi_popups()
 
 
-def _dismiss_spend_confirm() -> None:
-    """✕ / Esc on spend dialog = cancel (run has not started yet)."""
-    st.session_state.pop("pending_run", None)
-
-
 def _dlg_full_text(text: str) -> None:
     """Show full answer text in dialogs without clipping line starts/ends."""
     st.markdown(
@@ -988,45 +1053,52 @@ def _dlg_full_text(text: str) -> None:
     )
 
 
-@st.dialog("Confirm OpenRouter spend", width="small", on_dismiss=_dismiss_spend_confirm)
-def spend_confirm_dialog():
-    """Compact centered confirm (not fullscreen — that is for LLM / guides only)."""
+def _render_spend_confirm_modal() -> None:
+    """Custom confirm modal — NOT st.dialog (avoids sticky grey + ✕ aborting runs)."""
     pr = st.session_state.get("pending_run") or {}
     n = int(pr.get("n") or 1)
     est = float(pr.get("est") or 0)
     est_hi = est * 2
-    st.markdown(
-        f"Estimated range **${est:.4f} – ${est_hi:.4f}** for **{n}** run(s) "
-        "(cloud models + DeepSeek R1 judge). QVAC = $0 if included."
-    )
-    st.caption(
-        "Lower ≈ token estimate; upper ≈ 2× (conservative — long answers / judge "
-        "tokens often exceed the base estimate). Actual bill is what OpenRouter reports."
-    )
-    if not has_key:
-        st.error("No usable OpenRouter key — paste a full sk-or-v1-… key in the sidebar.")
-        if st.button("Close", use_container_width=True, key="spend_close_nokey"):
-            st.session_state.pop("pending_run", None)
-            st.session_state.pop("confirmed_run", None)
-            st.rerun()
-        return
-    a, b = st.columns(2)
-    with a:
-        if st.button("Cancel", use_container_width=True, key="spend_cancel"):
-            st.session_state.pop("pending_run", None)
-            st.session_state.pop("confirmed_run", None)
-            st.rerun()
-    with b:
-        if st.button(
-            "Yes, continue",
-            type="primary",
-            use_container_width=True,
-            key="spend_yes",
-        ):
-            pending = st.session_state.pop("pending_run", None)
-            if pending:
-                st.session_state["confirmed_run"] = pending
-            st.rerun()
+    with st.container():
+        st.markdown(
+            f"""
+<div class="spend-modal-marker"></div>
+<div class="spend-modal-card">
+  <h3>Confirm OpenRouter spend</h3>
+  <p>Estimated range <b>${est:.4f} – ${est_hi:.4f}</b> for <b>{n}</b> run(s)
+  (cloud models + DeepSeek R1 judge). QVAC = $0 if included.</p>
+  <p class="muted">Lower ≈ token estimate; upper ≈ 2× (conservative — long answers / judge
+  tokens often exceed the base estimate). Actual bill is what OpenRouter reports.</p>
+</div>
+""",
+            unsafe_allow_html=True,
+        )
+        if not has_key:
+            st.error(
+                "No usable OpenRouter key — paste a full sk-or-v1-… key in the sidebar."
+            )
+            if st.button("Close", use_container_width=True, key="spend_close_nokey"):
+                st.session_state.pop("pending_run", None)
+                st.session_state.pop("confirmed_run", None)
+                st.rerun()
+        else:
+            a, b = st.columns(2)
+            with a:
+                if st.button("Cancel", use_container_width=True, key="spend_cancel"):
+                    st.session_state.pop("pending_run", None)
+                    st.session_state.pop("confirmed_run", None)
+                    st.rerun()
+            with b:
+                if st.button(
+                    "Yes, continue",
+                    type="primary",
+                    use_container_width=True,
+                    key="spend_yes",
+                ):
+                    pending = st.session_state.pop("pending_run", None)
+                    if pending:
+                        st.session_state["confirmed_run"] = pending
+                    st.rerun()
 
 
 @st.dialog("QVAC SDK + MedPsy setup guide")
@@ -1550,9 +1622,9 @@ _armed = st.session_state.get("kpi_dialog_armed")
 _pending_spend = bool(
     st.session_state.get("pending_run") and not st.session_state.get("confirmed_run")
 )
+# Spend confirm FIRST (custom modal, not st.dialog) — then other dialogs.
 if _pending_spend and not _busy_boot:
-    # Native Streamlit dialog = full desktop modal (old CSS strip looked like phone portrait)
-    spend_confirm_dialog()
+    _render_spend_confirm_modal()
     st.stop()
 elif not _busy_boot:
     if _armed == "multi_run" and st.session_state.get("multi_run_popup_path"):
