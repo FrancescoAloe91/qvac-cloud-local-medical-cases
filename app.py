@@ -159,65 +159,6 @@ div[data-testid="stDialog"] [role="dialog"] {
   margin-right: auto !important;
 }
 
-/* Spend confirm: full-viewport overlay (card + Cancel/Yes), not an inline row */
-.spend-modal-marker { display: none; }
-#qvac-spend-portal {
-  position: fixed !important;
-  inset: 0 !important;
-  left: 0 !important;
-  top: 0 !important;
-  width: 100vw !important;
-  height: 100vh !important;
-  max-width: none !important;
-  z-index: 2147483000 !important;
-  background: rgba(2, 6, 23, 0.82) !important;
-  display: flex !important;
-  flex-direction: column !important;
-  align-items: center !important;
-  justify-content: center !important;
-  padding: 1.5rem !important;
-  gap: 0.65rem !important;
-  margin: 0 !important;
-  box-sizing: border-box !important;
-}
-#qvac-spend-portal > [data-testid="stVerticalBlock"] {
-  width: min(440px, 94vw) !important;
-  max-width: 440px !important;
-  background: transparent !important;
-}
-#qvac-spend-portal [data-testid="stHorizontalBlock"] {
-  gap: 0.55rem !important;
-}
-#qvac-spend-portal [data-testid="stButton"] button {
-  min-height: 2.4rem !important;
-  font-size: 0.95rem !important;
-  font-weight: 700 !important;
-}
-.spend-modal-card {
-  background: #111827;
-  border: 1px solid #475569;
-  border-radius: 14px;
-  padding: 1.25rem 1.35rem 1rem;
-  box-shadow: 0 24px 64px rgba(0,0,0,0.55);
-  width: 100%;
-  box-sizing: border-box;
-}
-.spend-modal-card h3 {
-  margin: 0 0 0.55rem 0 !important;
-  font-size: 1.12rem !important;
-  font-weight: 700 !important;
-  color: #f8fafc !important;
-}
-.spend-modal-card p {
-  margin: 0 0 0.45rem 0 !important;
-  font-size: 0.88rem !important;
-  line-height: 1.45 !important;
-  color: #cbd5e1 !important;
-}
-.spend-modal-card .muted {
-  font-size: 0.74rem !important;
-  color: #94a3b8 !important;
-}
 div[data-testid="stDialog"] [data-testid="stMarkdownContainer"],
 div[data-testid="stDialog"] [data-testid="stMarkdownContainer"] p,
 div[data-testid="stDialog"] [data-testid="stText"],
@@ -564,6 +505,12 @@ span[data-testid="stIconMaterial"],
   box-shadow: 0 20px 50px rgba(0,0,0,0.45) !important;
   overflow: hidden !important;
 }
+.fs-card .guide-body {
+  flex: 1 1 auto !important;
+  min-height: 0 !important;
+  overflow-y: auto !important;
+  -webkit-overflow-scrolling: touch;
+}
 .fs-bar {
   display: flex; justify-content: space-between; align-items: center;
   gap: 0.75rem; padding: 0.65rem 0.85rem; flex-shrink: 0;
@@ -577,7 +524,12 @@ span[data-testid="stIconMaterial"],
 }
 .fs-close:hover { background: #7f1d1d; border-color: #ef4444; }
 .fs-pre {
-  flex: 1 1 auto !important; overflow: auto !important; margin: 0 !important;
+  flex: 1 1 auto !important;
+  min-height: 0 !important;
+  overflow-x: hidden !important;
+  overflow-y: scroll !important;
+  -webkit-overflow-scrolling: touch;
+  margin: 0 !important;
   padding: 1rem 1.25rem !important;
   white-space: pre-wrap !important; word-break: break-word !important;
   overflow-wrap: anywhere !important;
@@ -721,8 +673,8 @@ div[data-testid="stAlert"] { padding: 0.35rem 0.55rem !important; }
 </style>
 <script>
 (function () {
-  if (window.__qvacUiPortalV2) return;
-  window.__qvacUiPortalV2 = true;
+  if (window.__qvacUiPortalV3) return;
+  window.__qvacUiPortalV3 = true;
   function overlayFor(ck) {
     if (ck._qvacOverlay && ck._qvacOverlay.isConnected) return ck._qvacOverlay;
     var o = ck.nextElementSibling;
@@ -789,62 +741,30 @@ div[data-testid="stAlert"] { padding: 0.35rem 0.55rem !important; }
     true
   );
 
-  /* Spend confirm: move the WHOLE confirm block (card + Cancel/Yes) into a
-     body-level overlay. closest() alone parks only the markdown row and leaves
-     buttons as a confusing strip under Step 3. */
-  function findSpendBlock(marker) {
-    var node = marker.parentElement;
-    var fallback = null;
-    while (node && node !== document.body) {
-      if (
-        node.getAttribute &&
-        node.getAttribute("data-testid") === "stVerticalBlock"
-      ) {
-        fallback = fallback || node;
-        if (
-          node.querySelector('[data-testid="stButton"]') ||
-          node.querySelector("button")
-        ) {
-          return node;
-        }
+  /* Keep fullscreen LLM text live while collecting: stream-out updates → fs-pre */
+  function syncOpenFullscreenText() {
+    document.querySelectorAll(".stream-wrap").forEach(function (wrap) {
+      var ck = wrap.querySelector(".fs-ck");
+      if (!ck || !ck.checked) return;
+      var overlay = overlayFor(ck);
+      var src = wrap.querySelector(".stream-out");
+      var pre = overlay && overlay.querySelector(".fs-pre");
+      if (!src || !pre) return;
+      if (pre.getAttribute("data-qvac-src") !== src.innerHTML) {
+        var nearBottom =
+          pre.scrollHeight - pre.scrollTop - pre.clientHeight < 80;
+        pre.innerHTML = src.innerHTML;
+        pre.setAttribute("data-qvac-src", src.innerHTML);
+        if (nearBottom) pre.scrollTop = pre.scrollHeight;
       }
-      node = node.parentElement;
-    }
-    return fallback;
+    });
   }
-  function parkSpendModal() {
-    var marker = document.querySelector(".spend-modal-marker");
-    var portal = document.getElementById("qvac-spend-portal");
-    if (!marker) {
-      if (portal && portal.parentNode) portal.parentNode.removeChild(portal);
-      return;
-    }
-    if (portal && portal.contains(marker)) return;
-    var block = findSpendBlock(marker);
-    if (!block || block.dataset.qvacSpendParked === "1") return;
-    if (!portal) {
-      portal = document.createElement("div");
-      portal.id = "qvac-spend-portal";
-      document.body.appendChild(portal);
-    }
-    block.dataset.qvacSpendParked = "1";
-    portal.appendChild(block);
-    document.body.style.overflow = "hidden";
-  }
-  function clearSpendPortalIfGone() {
-    if (!document.querySelector(".spend-modal-marker")) {
-      var portal = document.getElementById("qvac-spend-portal");
-      if (portal && portal.parentNode) portal.parentNode.removeChild(portal);
-      document.body.style.overflow = "";
-    }
-  }
-  parkSpendModal();
   try {
     new MutationObserver(function () {
-      parkSpendModal();
-      clearSpendPortalIfGone();
-    }).observe(document.body, { childList: true, subtree: true });
+      syncOpenFullscreenText();
+    }).observe(document.body, { childList: true, subtree: true, characterData: true });
   } catch (err) {}
+  setInterval(syncOpenFullscreenText, 400);
 })();
 </script>
 """
@@ -1109,58 +1029,56 @@ def _dlg_full_text(text: str) -> None:
     )
 
 
-def _render_spend_confirm_modal() -> None:
-    """Custom confirm modal — NOT st.dialog (avoids sticky grey + ✕ aborting runs)."""
+def _dismiss_spend_confirm() -> None:
+    """✕ / Esc before the run starts = cancel only (run not in flight)."""
+    st.session_state.pop("pending_run", None)
+
+
+@st.dialog("Confirm before starting", width="small", on_dismiss=_dismiss_spend_confirm)
+def spend_confirm_dialog():
+    """Same centered Streamlit dialog style as API key / QVAC boot popups."""
     pr = st.session_state.get("pending_run") or {}
     n = int(pr.get("n") or 1)
     est = float(pr.get("est") or 0)
     est_hi = est * 2
-    with st.container():
-        st.markdown(
-            f"""
-<div class="spend-modal-marker"></div>
-<div class="spend-modal-card">
-  <h3>Confirm before starting</h3>
-  <p>Estimated OpenRouter spend <b>${est:.4f} – ${est_hi:.4f}</b> for <b>{n}</b> run(s)
-  (cloud models + DeepSeek R1 judge). QVAC = $0 if included.</p>
-  <p class="muted">Click <b>Yes, continue</b> to start the run, or <b>Cancel</b> to go back.
-  Upper ≈ 2× the token estimate (long answers / judge). Actual bill is what OpenRouter reports.</p>
-</div>
-""",
-            unsafe_allow_html=True,
-        )
-        if not has_key:
-            st.error(
-                "No usable OpenRouter key — paste a full sk-or-v1-… key in the sidebar."
+    st.markdown(
+        f"Estimated OpenRouter spend **${est:.4f} – ${est_hi:.4f}** for **{n}** run(s) "
+        "(cloud models + DeepSeek R1 judge). QVAC = $0 if included."
+    )
+    st.caption(
+        "Yes, continue starts the run. Cancel / ✕ goes back. "
+        "Upper ≈ 2× token estimate (long answers / judge)."
+    )
+    if not has_key:
+        st.error("No usable OpenRouter key — paste a full sk-or-v1-… key in the sidebar.")
+        if st.button("Close", use_container_width=True, key="spend_close_nokey"):
+            st.session_state.pop("pending_run", None)
+            st.session_state.pop("confirmed_run", None)
+            st.rerun()
+        return
+    a, b = st.columns(2)
+    with a:
+        if st.button("Cancel", use_container_width=True, key="spend_cancel"):
+            st.session_state.pop("pending_run", None)
+            st.session_state.pop("confirmed_run", None)
+            st.rerun()
+    with b:
+        if st.button(
+            "Yes, continue",
+            type="primary",
+            use_container_width=True,
+            key="spend_yes",
+        ):
+            st.session_state["_persist_case_stem"] = (
+                st.session_state.get("demo_case_stem") or ""
             )
-            if st.button("Close", use_container_width=True, key="spend_close_nokey"):
-                st.session_state.pop("pending_run", None)
-                st.session_state.pop("confirmed_run", None)
-                st.rerun()
-        else:
-            a, b = st.columns(2)
-            with a:
-                if st.button("Cancel", use_container_width=True, key="spend_cancel"):
-                    st.session_state.pop("pending_run", None)
-                    st.session_state.pop("confirmed_run", None)
-                    st.rerun()
-            with b:
-                if st.button(
-                    "Yes, continue",
-                    type="primary",
-                    use_container_width=True,
-                    key="spend_yes",
-                ):
-                    st.session_state["_persist_case_stem"] = (
-                        st.session_state.get("demo_case_stem") or ""
-                    )
-                    st.session_state["_persist_gold_ref"] = (
-                        st.session_state.get("demo_gold_ref") or ""
-                    )
-                    pending = st.session_state.pop("pending_run", None)
-                    if pending:
-                        st.session_state["confirmed_run"] = pending
-                    st.rerun()
+            st.session_state["_persist_gold_ref"] = (
+                st.session_state.get("demo_gold_ref") or ""
+            )
+            pending = st.session_state.pop("pending_run", None)
+            if pending:
+                st.session_state["confirmed_run"] = pending
+            st.rerun()
 
 
 @st.dialog("QVAC SDK + MedPsy setup guide")
@@ -1404,11 +1322,13 @@ def run_done_dialog():
 
 
 def _reliability_table_html(ranking_mean: list) -> str:
-    """Colored High / Medium / Low reliability table for mean-KPI popup."""
+    """Colored Super High → Very Low reliability table for mean-KPI popup."""
     rel_style = {
+        "super_high": ("#064e3b", "#6ee7b7", "SUPER HIGH"),
         "high": ("#14532d", "#86efac", "HIGH"),
         "medium": ("#713f12", "#fde047", "MEDIUM"),
-        "low": ("#7f1d1d", "#fca5a5", "LOW"),
+        "low": ("#9a3412", "#fdba74", "LOW"),
+        "very_low": ("#7f1d1d", "#fca5a5", "VERY LOW"),
     }
     rows_html = []
     for r in ranking_mean or []:
@@ -1452,11 +1372,14 @@ def _reliability_table_html(ranking_mean: list) -> str:
         + "".join(rows_html)
         + "</tbody></table></div>"
         "<div style='font-size:0.78rem;color:#94a3b8;margin-bottom:0.5rem'>"
+        f"{reliability_badge('super_high')} CV ≤ 3% &nbsp; "
         f"{reliability_badge('high')} CV ≤ 10% &nbsp; "
-        f"{reliability_badge('medium')} CV ≤ 30% &nbsp; "
-        f"{reliability_badge('low')} CV &gt; 30% &nbsp;·&nbsp; "
-        "lower CV = stabler mean</div>"
+        f"{reliability_badge('medium')} CV ≤ 20% &nbsp; "
+        f"{reliability_badge('low')} CV ≤ 30% &nbsp; "
+        f"{reliability_badge('very_low')} CV &gt; 30% &nbsp;·&nbsp; "
+        "lower CV = stabler mean · prefer Multi ×5</div>"
     )
+
 
 
 @st.dialog(
@@ -1653,7 +1576,7 @@ def scoring_guide_dialog():
 |-------|------|
 | **Section weights** | Fixed in the case JSON (diagnosis usually heaviest) |
 | **Tie-break** | safety → quality → stem → diagnosis |
-| **Multi reliability** | CV% = std/mean · High ≤10% · Medium ≤30% · else Low |
+| **Multi reliability** | CV% · Super High ≤3% · High ≤10% · Med ≤20% · Low ≤30% · else Very Low · prefer ×5 |
 
 **Flow:** same prompt → answers → blind semantic judge → host formula → ranking.
 """
@@ -1979,7 +1902,7 @@ opt_a, opt_b = st.columns([2, 1])
 with opt_a:
     skip_qvac = st.checkbox("Cloud-only (skip QVAC)", value=False)
 with opt_b:
-    n_multi = st.number_input("Multi N", min_value=2, max_value=10, value=3)
+    n_multi = st.number_input("Multi N", min_value=2, max_value=10, value=5)
 if skip_qvac:
     include_qvac = False
 
@@ -2036,7 +1959,7 @@ with col_s:
         type="secondary",
         use_container_width=True,
         disabled=not has_key,
-        help="Quick one-shot. For published-style comparison prefer Multi ×3.",
+        help="Quick one-shot. For published-style comparison prefer Multi ×5.",
     )
     st.markdown(_fmt_cost_single(bd), unsafe_allow_html=True)
 with col_m:
@@ -2045,7 +1968,7 @@ with col_m:
         type="primary",
         use_container_width=True,
         disabled=not has_key,
-        help="Official demo path: mean/median/std across N runs (default 3).",
+        help="Official path: mean/median/std across N runs (default 5 for reliability).",
     )
     st.markdown(_fmt_cost_multi(bd_multi, int(n_multi)), unsafe_allow_html=True)
 with col_q:
@@ -2061,7 +1984,8 @@ with col_q:
         unsafe_allow_html=True,
     )
 st.caption(
-    "**Recommended:** Multi ×3 for stable ranking. Single run stays available for a fast check. "
+    "**Recommended:** Multi ×5 for stable ranking / CV reliability. "
+    "Single run stays available for a fast check. "
     "Judge scores clinical meaning + synonyms on a linear 0–100 coverage scale. "
     "QVAC only = local rehearsal, no judge."
 )
@@ -2087,13 +2011,13 @@ if qvac_only_clicked:
     st.session_state["confirmed_run"] = {"n": 1, "est": 0.0, "mode": "qvac_only"}
     st.rerun()
 
-# Custom spend modal AFTER case/gold widgets (keeps widget keys alive). Not st.dialog.
+# Spend confirm AFTER case/gold widgets (keeps widget keys alive). Same dialog style as boot.
 if (
     st.session_state.get("pending_run")
     and not st.session_state.get("confirmed_run")
     and not st.session_state.get("benchmark_running")
 ):
-    _render_spend_confirm_modal()
+    spend_confirm_dialog()
     st.stop()
 
 

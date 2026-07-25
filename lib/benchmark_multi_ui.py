@@ -216,9 +216,11 @@ def client_toast_run_done(run_i: int, n_total: int, ranking: List[Dict[str, Any]
 
 def reliability_badge(level: str) -> str:
     colors = {
+        "super_high": ("#064e3b", "#6ee7b7", "Super High"),
         "high": ("#14532d", "#86efac", "High"),
         "medium": ("#713f12", "#fde047", "Medium"),
-        "low": ("#7f1d1d", "#fca5a5", "Low"),
+        "low": ("#9a3412", "#fdba74", "Low"),
+        "very_low": ("#7f1d1d", "#fca5a5", "Very Low"),
     }
     bg, fg, lab = colors.get(level, ("#1e293b", "#94a3b8", level or "—"))
     return (

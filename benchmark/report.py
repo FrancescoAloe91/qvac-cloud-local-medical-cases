@@ -18,18 +18,24 @@ from benchmark.scoring import (
 )
 
 # Multi-run mean reliability from CV% = 100 × std / mean
-# High↔Medium = 10pp · Medium↔Low = 20pp (High ≤10%, Medium ≤30%, else Low)
-CV_HIGH_MAX = 10.0  # High if CV ≤ 10%
-CV_MEDIUM_MAX = 30.0  # Medium if CV ≤ 30%; else Low
+# Five bands (ceilings): Super High ≤3 · High ≤10 · Medium ≤20 · Low ≤30 · else Very Low
+CV_SUPER_HIGH_MAX = 3.0
+CV_HIGH_MAX = 10.0
+CV_MEDIUM_MAX = 20.0
+CV_LOW_MAX = 30.0
 
 
 def reliability_from_cv(cv_pct: float) -> str:
-    """Map coefficient of variation (%) → high / medium / low."""
+    """Map coefficient of variation (%) → super_high / high / medium / low / very_low."""
+    if cv_pct <= CV_SUPER_HIGH_MAX:
+        return "super_high"
     if cv_pct <= CV_HIGH_MAX:
         return "high"
     if cv_pct <= CV_MEDIUM_MAX:
         return "medium"
-    return "low"
+    if cv_pct <= CV_LOW_MAX:
+        return "low"
+    return "very_low"
 
 
 def write_artifact(artifact: RunArtifact, out_dir: Path) -> Path:
@@ -86,11 +92,11 @@ def summarize_runs(artifacts: List[RunArtifact]) -> MultiRunSummary:
             "max": round(max(vals), 2),
             "n": float(len(vals)),
         }
-        # Flag high variance
+        # Flag high variance (prefer N≥5 for stable CV reads)
         if len(vals) >= 3 and std > 15:
             outliers.append(f"{key}: high variance std={std:.1f} (CV {cv_pct}%)")
-        if reliability == "low" and len(vals) >= 2:
-            outliers.append(f"{key}: mean less reliable (CV {cv_pct}%)")
+        if reliability in ("low", "very_low") and len(vals) >= 2:
+            outliers.append(f"{key}: mean less reliable (CV {cv_pct}% · {reliability})")
         # Flag bimodal-ish: large gap mid sorted
         if len(vals) >= 4:
             s = sorted(vals)
@@ -131,14 +137,14 @@ def summarize_runs(artifacts: List[RunArtifact]) -> MultiRunSummary:
 def print_summary_table(summary: MultiRunSummary) -> str:
     lines = [
         f"Case {summary.case_id} · N={summary.n} · cost≈${summary.total_cost_usd:.4f}",
-        f"{'Rank':<6}{'Model':<12}{'Mean%':>7}{'±Std':>7}{'CV%':>6}{'Rel':>8}{'Med%':>7}",
-        "-" * 60,
+        f"{'Rank':<6}{'Model':<12}{'Mean%':>7}{'±Std':>7}{'CV%':>6}{'Rel':>11}{'Med%':>7}",
+        "-" * 64,
     ]
     for row in summary.ranking_mean:
         lines.append(
             f"{row['rank']:<6}{row['key']:<12}"
             f"{row['accuracy_mean']:>7.1f}{row['std']:>7.1f}"
-            f"{row.get('cv_pct', 0):>6.1f}{str(row.get('reliability', '—')):>8}"
+            f"{row.get('cv_pct', 0):>6.1f}{str(row.get('reliability', '—')):>11}"
             f"{row.get('median', 0):>7.1f}"
         )
     if summary.outliers:
@@ -156,14 +162,18 @@ def reliability_caption(summary: MultiRunSummary) -> str:
     worst = max(cvs) if cvs else 0.0
     band_key = reliability_from_cv(worst)
     band = {
+        "super_high": "Super-high confidence",
         "high": "High confidence",
         "medium": "Moderate confidence",
         "low": "Lower confidence — means jump between runs",
-    }[band_key]
+        "very_low": "Very low confidence — unstable across runs",
+    }.get(band_key, band_key)
     return (
         f"{band} across N={summary.n} · "
-        f"CV% = std/mean (High ≤{CV_HIGH_MAX:.0f}% · Med ≤{CV_MEDIUM_MAX:.0f}% · else Low) · "
+        f"CV% Super High ≤{CV_SUPER_HIGH_MAX:.0f}% · High ≤{CV_HIGH_MAX:.0f}% · "
+        f"Med ≤{CV_MEDIUM_MAX:.0f}% · Low ≤{CV_LOW_MAX:.0f}% · else Very Low · "
         f"error bars = ±1 std"
+        + (" · prefer Multi ×5+" if summary.n < 5 else "")
     )
 
 
