@@ -1095,6 +1095,12 @@ def _render_spend_confirm_modal() -> None:
                     use_container_width=True,
                     key="spend_yes",
                 ):
+                    st.session_state["_persist_case_stem"] = (
+                        st.session_state.get("demo_case_stem") or ""
+                    )
+                    st.session_state["_persist_gold_ref"] = (
+                        st.session_state.get("demo_gold_ref") or ""
+                    )
                     pending = st.session_state.pop("pending_run", None)
                     if pending:
                         st.session_state["confirmed_run"] = pending
@@ -1622,11 +1628,10 @@ _armed = st.session_state.get("kpi_dialog_armed")
 _pending_spend = bool(
     st.session_state.get("pending_run") and not st.session_state.get("confirmed_run")
 )
-# Spend confirm FIRST (custom modal, not st.dialog) — then other dialogs.
-if _pending_spend and not _busy_boot:
-    _render_spend_confirm_modal()
-    st.stop()
-elif not _busy_boot:
+# Do NOT open spend confirm here with st.stop() — that skips Step 1/2 widgets and
+# Streamlit drops demo_case_stem / demo_gold_ref (see debug A→E). Spend modal is
+# rendered AFTER those widgets. Other dialogs skip while spend is pending.
+if not _busy_boot and not _pending_spend:
     if _armed == "multi_run" and st.session_state.get("multi_run_popup_path"):
         multi_run_detail_dialog(st.session_state["multi_run_popup_path"])
     elif _armed == "history" and st.session_state.get("history_popup_path"):
@@ -1823,10 +1828,17 @@ if is_custom_real:
     )
 
 # Sync stem when case changes. Demos: prefill stem, clear gold. Custom: empty both.
+# Restore from non-widget snapshot if Streamlit dropped widget keys (spend st.stop bug).
+if "demo_case_stem" not in st.session_state and st.session_state.get("_persist_case_stem") is not None:
+    st.session_state["demo_case_stem"] = st.session_state["_persist_case_stem"]
+if "demo_gold_ref" not in st.session_state and st.session_state.get("_persist_gold_ref") is not None:
+    st.session_state["demo_gold_ref"] = st.session_state["_persist_gold_ref"]
 if st.session_state.get("_stem_case_id") != case_id:
     st.session_state["demo_case_stem"] = preset.stem if not is_custom_real else ""
     st.session_state["demo_gold_ref"] = ""
     st.session_state["_stem_case_id"] = case_id
+    st.session_state.pop("_persist_case_stem", None)
+    st.session_state.pop("_persist_gold_ref", None)
 
 col_case, col_gold = st.columns([3, 2], gap="small")
 with col_case:
@@ -1865,6 +1877,9 @@ with col_gold:
         disabled=False,
         on_change=_on_case_fields_edit,
     )
+    # Keep non-widget copies so spend-confirm st.stop cannot erase case/gold.
+    st.session_state["_persist_case_stem"] = st.session_state.get("demo_case_stem") or ""
+    st.session_state["_persist_gold_ref"] = st.session_state.get("demo_gold_ref") or ""
     if is_custom_real:
         st.caption(
             "Custom Case: scores are **0–100 against this gold** "
@@ -1995,11 +2010,15 @@ st.caption(
     "QVAC only = local rehearsal, no judge."
 )
 
-# Confirm flow via session state (rerun so spend dialog opens at top of next run)
+# Confirm flow via session state (rerun → spend modal AFTER Step 1/2 widgets render)
 if single_clicked:
+    st.session_state["_persist_case_stem"] = st.session_state.get("demo_case_stem") or ""
+    st.session_state["_persist_gold_ref"] = st.session_state.get("demo_gold_ref") or ""
     st.session_state["pending_run"] = {"n": 1, "est": bd["total_usd"], "mode": "full"}
     st.rerun()
 if multi_clicked:
+    st.session_state["_persist_case_stem"] = st.session_state.get("demo_case_stem") or ""
+    st.session_state["_persist_gold_ref"] = st.session_state.get("demo_gold_ref") or ""
     st.session_state["pending_run"] = {
         "n": int(n_multi),
         "est": bd_multi["total_usd_for_n"],
@@ -2011,6 +2030,15 @@ if qvac_only_clicked:
     st.session_state.pop("live_outputs", None)
     st.session_state["confirmed_run"] = {"n": 1, "est": 0.0, "mode": "qvac_only"}
     st.rerun()
+
+# Custom spend modal AFTER case/gold widgets (keeps widget keys alive). Not st.dialog.
+if (
+    st.session_state.get("pending_run")
+    and not st.session_state.get("confirmed_run")
+    and not st.session_state.get("benchmark_running")
+):
+    _render_spend_confirm_modal()
+    st.stop()
 
 
 phase_slot = st.empty()
