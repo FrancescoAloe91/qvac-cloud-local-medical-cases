@@ -854,6 +854,43 @@ If GPU load fails on some Macs, the sidecar retries on CPU automatically.
 """
 
 
+def _clear_all_kpi_popups() -> None:
+    """Drop every KPI / result dialog flag (editing case/gold / N-picker must never reopen them)."""
+    for k in (
+        "history_popup_path",
+        "multi_run_popup_path",
+        "show_run_done",
+        "show_history_mean_popup",
+        "kpi_dialog_armed",
+        "history_path",
+    ):
+        st.session_state.pop(k, None)
+
+
+def _arm_kpi_dialog(kind: str, *, path: str | None = None) -> None:
+    """Only Run-tab / History View / Rebuild-mean buttons may open KPI popups."""
+    st.session_state["kpi_dialog_armed"] = kind
+    if kind == "multi_run" and path:
+        st.session_state["multi_run_popup_path"] = path
+    elif kind == "history" and path:
+        st.session_state["history_popup_path"] = path
+        st.session_state["history_path"] = path
+    elif kind == "rebuild":
+        st.session_state["show_history_mean_popup"] = True
+    elif kind == "run_done":
+        st.session_state["show_run_done"] = True
+
+
+def _on_case_fields_edit() -> None:
+    """Blur/edit on Step 1 / Step 2 — never show KPI popups."""
+    _clear_all_kpi_popups()
+
+
+def _on_rebuild_n_pick_change() -> None:
+    """Changing 'Average over N runs' must not open any KPI popup."""
+    _clear_all_kpi_popups()
+
+
 @st.dialog("QVAC SDK + MedPsy setup guide")
 def qvac_setup_guide_dialog():
     st.markdown(QVAC_SETUP_GUIDE)
@@ -971,7 +1008,7 @@ def key_welcome_dialog():
                 )
 
 
-@st.dialog("Saved run results", width="large")
+@st.dialog("Saved run results", width="large", on_dismiss=_clear_all_kpi_popups)
 def history_run_dialog(path_str: str):
     """Popup review of a past artifact (from sidebar History)."""
     _hp = Path(path_str)
@@ -1150,7 +1187,11 @@ def _reliability_table_html(ranking_mean: list) -> str:
     )
 
 
-@st.dialog("Rebuild mean · N runs · 50/30/20 · $0", width="large")
+@st.dialog(
+    "Rebuild mean · N runs · 50/30/20 · $0",
+    width="large",
+    on_dismiss=_clear_all_kpi_popups,
+)
 def history_mean_rebuild_dialog():
     """Popup: offline mean KPIs after rescoring saved runs with current formula."""
     from benchmark.schema import MultiRunSummary as _MRS
@@ -1213,7 +1254,7 @@ def history_mean_rebuild_dialog():
         st.rerun()
 
 
-@st.dialog("Single run KPIs", width="large")
+@st.dialog("Single run KPIs", width="large", on_dismiss=_clear_all_kpi_popups)
 def multi_run_detail_dialog(path_str: str):
     """Popup KPIs for one finished run inside a Multi ×N batch."""
     _mp = Path(path_str)
@@ -1360,45 +1401,13 @@ def scoring_guide_dialog():
         st.rerun()
 
 
-def _clear_all_kpi_popups() -> None:
-    """Drop every KPI / result dialog flag (editing case/gold must never reopen them)."""
-    for k in (
-        "history_popup_path",
-        "multi_run_popup_path",
-        "show_run_done",
-        "show_history_mean_popup",
-        "kpi_dialog_armed",
-        "history_path",
-    ):
-        st.session_state.pop(k, None)
-
-
-def _arm_kpi_dialog(kind: str, *, path: str | None = None) -> None:
-    """Only Run-tab / History / Rebuild buttons may open KPI popups."""
-    st.session_state["kpi_dialog_armed"] = kind
-    if kind == "multi_run" and path:
-        st.session_state["multi_run_popup_path"] = path
-    elif kind == "history" and path:
-        st.session_state["history_popup_path"] = path
-        st.session_state["history_path"] = path
-    elif kind == "rebuild":
-        st.session_state["show_history_mean_popup"] = True
-    elif kind == "run_done":
-        st.session_state["show_run_done"] = True
-
-
-def _on_case_fields_edit() -> None:
-    """Blur/edit on Step 1 / Step 2 — never show KPI popups."""
-    _clear_all_kpi_popups()
-
-
 # Prefer the setup guide when requested from the sidebar (so online users
 # can always re-open the install steps they only see when the sidecar is offline).
 _busy_boot = bool(
     st.session_state.get("benchmark_running") or st.session_state.get("confirmed_run")
 )
 # ONE dialog max per script run. KPI popups require kpi_dialog_armed (set only by
-# Run-tab / History / Rebuild clicks) — editing stem/gold clears the arm.
+# Run-tab / History View / Rebuild-mean clicks) — N-picker / stem/gold clear the arm.
 _armed = st.session_state.get("kpi_dialog_armed")
 if not _busy_boot:
     if _armed == "multi_run" and st.session_state.get("multi_run_popup_path"):
@@ -3430,11 +3439,12 @@ _avail_n = len(_hist_for_case)
 _n_options = [3, 5, 10]
 _rb1, _rb2 = st.columns([1, 2])
 with _rb1:
-    _default_idx = 1 if _avail_n >= 5 else 0  # prefer 5 when possible
+    # Default once — do not pass index= every rerun (fights session state / reopens dialogs)
+    if "history_rebuild_n_pick" not in st.session_state:
+        st.session_state["history_rebuild_n_pick"] = 5 if _avail_n >= 5 else 3
     _rebuild_n = st.selectbox(
         "Average over N runs",
         options=_n_options,
-        index=_default_idx,
         format_func=lambda n: (
             f"{n} runs"
             + (" · recommended" if n == 5 else "")
@@ -3442,7 +3452,9 @@ with _rb1:
             + (f"  (only {_avail_n} saved)" if _avail_n < n else "")
         ),
         key="history_rebuild_n_pick",
-        help="Tiers: 3 · 5 · 10. If fewer runs are saved, rebuild uses all available.",
+        on_change=_on_rebuild_n_pick_change,
+        help="Tiers: 3 · 5 · 10. If fewer runs are saved, rebuild uses all available. "
+        "Selecting N alone does not open a popup — use Rebuild mean.",
     )
 with _rb2:
     st.caption(f"Saved runs for {case_display_name(case_id)}: **{_avail_n}**")
