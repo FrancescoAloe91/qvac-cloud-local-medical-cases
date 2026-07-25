@@ -148,44 +148,40 @@ header[data-testid="stHeader"],
 }
 div[data-testid="stVerticalBlock"] > div { gap: 0.2rem !important; }
 
-/* Custom spend confirm modal (NOT st.dialog — those stick grey + X aborts in-flight API calls) */
-.spend-modal-marker { display: none; }
-div[data-testid="stVerticalBlock"]:has(.spend-modal-marker) {
-  position: fixed !important;
-  inset: 0 !important;
-  z-index: 100000 !important;
-  background: rgba(2, 6, 23, 0.78) !important;
-  display: flex !important;
-  flex-direction: column !important;
-  align-items: center !important;
-  justify-content: center !important;
-  padding: 1.25rem !important;
-  gap: 0.55rem !important;
-  margin: 0 !important;
-  max-width: none !important;
+/* Streamlit dialogs: desktop-wide, full text readable (not a phone strip) */
+div[data-testid="stDialog"] {
+  z-index: 1000000 !important;
 }
-div[data-testid="stVerticalBlock"]:has(.spend-modal-marker) > div {
-  width: min(440px, 94vw) !important;
-  max-width: 440px !important;
+div[data-testid="stDialog"] > div,
+div[data-testid="stDialog"] [role="dialog"] {
+  width: min(1080px, 96vw) !important;
+  max-width: min(1080px, 96vw) !important;
 }
-.spend-modal-card {
-  background: #111827;
-  border: 1px solid #475569;
-  border-radius: 14px;
-  padding: 1.15rem 1.25rem 0.35rem;
-  box-shadow: 0 24px 64px rgba(0,0,0,0.55);
+div[data-testid="stDialog"] [data-testid="stMarkdownContainer"],
+div[data-testid="stDialog"] [data-testid="stMarkdownContainer"] p,
+div[data-testid="stDialog"] [data-testid="stText"],
+div[data-testid="stDialog"] pre,
+div[data-testid="stDialog"] code {
+  white-space: pre-wrap !important;
+  word-break: break-word !important;
+  overflow-wrap: anywhere !important;
+  max-width: 100% !important;
 }
-.spend-modal-card h3 {
-  margin: 0 0 0.55rem 0 !important;
-  font-size: 1.08rem !important;
-  font-weight: 700 !important;
-  color: #f8fafc !important;
-}
-.spend-modal-card p {
-  margin: 0 0 0.45rem 0 !important;
-  font-size: 0.86rem !important;
+.dlg-pre {
+  white-space: pre-wrap !important;
+  word-break: break-word !important;
+  overflow-wrap: anywhere !important;
+  overflow: auto !important;
+  max-height: min(70vh, 720px) !important;
+  margin: 0.25rem 0 0.75rem !important;
+  padding: 0.75rem 0.9rem !important;
+  background: #020617 !important;
+  color: #e2e8f0 !important;
+  border: 1px solid #334155 !important;
+  border-radius: 8px !important;
+  font-family: "IBM Plex Mono", ui-monospace, monospace !important;
+  font-size: 0.82rem !important;
   line-height: 1.45 !important;
-  color: #cbd5e1 !important;
 }
 .run-timer-panel {
   position: relative !important;
@@ -305,11 +301,6 @@ section[data-testid="stSidebar"][aria-expanded="false"] iframe,
 .run-timer-panel.idle .phase { color: #64748b !important; }
 /* legacy class kept for stop markup compatibility */
 .run-timer-overlay { /* unused floating mode */ display: none !important; }
-.spend-modal-card .muted {
-
-  font-size: 0.72rem !important;
-  color: #94a3b8 !important;
-}
 
 [data-testid="stSidebar"] {
   background: #070b14 !important;
@@ -477,21 +468,32 @@ span[data-testid="stIconMaterial"],
 }
 .stream-fs-lab:hover { border-color: #2dd4bf; color: #a5f3fc !important; }
 .fs-ck { position: absolute !important; opacity: 0 !important; pointer-events: none !important; width: 0 !important; height: 0 !important; }
+/* Fullscreen overlays: portaled to document.body via JS (column-fixed clips text) */
 .fs-overlay {
-  display: none; position: fixed; inset: 0; z-index: 100000;
-  background: rgba(2, 6, 23, 0.88); padding: 1rem;
-  align-items: stretch; justify-content: center;
+  display: none; position: fixed !important;
+  inset: 0 !important; left: 0 !important; top: 0 !important;
+  width: 100vw !important; height: 100vh !important;
+  max-width: none !important; max-height: none !important;
+  z-index: 2147483000 !important;
+  background: rgba(2, 6, 23, 0.9) !important; padding: 1.25rem !important;
+  align-items: stretch !important; justify-content: center !important;
+  box-sizing: border-box !important; margin: 0 !important;
 }
+.fs-overlay.qvac-fs-open { display: flex !important; }
 .fs-ck:checked + .fs-overlay { display: flex !important; }
 .fs-card {
-  flex: 1; max-width: 1100px; margin: 0 auto;
-  background: #0f172a; border: 1px solid #334155; border-radius: 12px;
-  display: flex; flex-direction: column; min-height: 0; max-height: 100%;
-  box-shadow: 0 20px 50px rgba(0,0,0,0.45);
+  flex: 1 1 auto !important; width: min(1100px, 96vw) !important;
+  max-width: min(1100px, 96vw) !important; margin: 0 auto !important;
+  background: #0f172a !important; border: 1px solid #334155 !important;
+  border-radius: 12px !important;
+  display: flex !important; flex-direction: column !important;
+  min-height: 0 !important; max-height: 100% !important;
+  box-shadow: 0 20px 50px rgba(0,0,0,0.45) !important;
+  overflow: hidden !important;
 }
 .fs-bar {
   display: flex; justify-content: space-between; align-items: center;
-  gap: 0.75rem; padding: 0.65rem 0.85rem;
+  gap: 0.75rem; padding: 0.65rem 0.85rem; flex-shrink: 0;
   border-bottom: 1px solid #334155; color: #e2e8f0;
   font-size: 0.85rem; font-weight: 700;
 }
@@ -502,11 +504,14 @@ span[data-testid="stIconMaterial"],
 }
 .fs-close:hover { background: #7f1d1d; border-color: #ef4444; }
 .fs-pre {
-  flex: 1; overflow: auto; margin: 0; padding: 1rem 1.1rem;
-  white-space: pre-wrap; word-break: break-word;
+  flex: 1 1 auto !important; overflow: auto !important; margin: 0 !important;
+  padding: 1rem 1.25rem !important;
+  white-space: pre-wrap !important; word-break: break-word !important;
+  overflow-wrap: anywhere !important;
   font-family: "IBM Plex Mono", ui-monospace, monospace !important;
-  font-size: 0.85rem !important; line-height: 1.45 !important;
+  font-size: 0.88rem !important; line-height: 1.5 !important;
   color: #e2e8f0 !important; background: #020617 !important;
+  max-width: 100% !important; box-sizing: border-box !important;
 }
 /* Sidebar / inline openers for client-side guides (no Streamlit rerun) */
 label.guide-open-btn {
@@ -637,6 +642,77 @@ div[data-testid="stAlert"] { padding: 0.35rem 0.55rem !important; }
 }
 [data-testid="stWidgetLabel"] p { color: #cbd5e1 !important; }
 </style>
+<script>
+(function () {
+  if (window.__qvacFsPortalBound) return;
+  window.__qvacFsPortalBound = true;
+  function overlayFor(ck) {
+    if (ck._qvacOverlay && ck._qvacOverlay.isConnected) return ck._qvacOverlay;
+    var o = ck.nextElementSibling;
+    if (o && o.classList && o.classList.contains("fs-overlay")) {
+      ck._qvacOverlay = o;
+      return o;
+    }
+    return ck._qvacOverlay || null;
+  }
+  function park(overlay) {
+    if (!overlay || overlay.dataset.qvacParked === "1") return;
+    var ph = document.createComment("qvac-fs-ph");
+    if (overlay.parentNode) overlay.parentNode.insertBefore(ph, overlay);
+    document.body.appendChild(overlay);
+    overlay.dataset.qvacParked = "1";
+    overlay._qvacPh = ph;
+  }
+  function unpark(overlay) {
+    if (!overlay || overlay.dataset.qvacParked !== "1") return;
+    var ph = overlay._qvacPh;
+    if (ph && ph.parentNode) {
+      ph.parentNode.insertBefore(overlay, ph);
+      ph.parentNode.removeChild(ph);
+    }
+    overlay.dataset.qvacParked = "0";
+    overlay._qvacPh = null;
+  }
+  function sync(ck) {
+    var overlay = overlayFor(ck);
+    if (!overlay) return;
+    if (ck.checked) {
+      park(overlay);
+      overlay.classList.add("qvac-fs-open");
+      overlay.style.display = "flex";
+    } else {
+      overlay.classList.remove("qvac-fs-open");
+      overlay.style.display = "none";
+      unpark(overlay);
+    }
+  }
+  document.addEventListener(
+    "change",
+    function (e) {
+      var t = e.target;
+      if (t && t.classList && t.classList.contains("fs-ck")) sync(t);
+    },
+    true
+  );
+  document.addEventListener(
+    "click",
+    function (e) {
+      var closeLab = e.target && e.target.closest
+        ? e.target.closest("label.fs-close")
+        : null;
+      if (!closeLab) return;
+      var id = closeLab.getAttribute("for");
+      if (!id) return;
+      var ck = document.getElementById(id);
+      if (ck && ck.classList.contains("fs-ck")) {
+        ck.checked = false;
+        sync(ck);
+      }
+    },
+    true
+  );
+})();
+</script>
 """
 )
 
@@ -891,6 +967,60 @@ def _on_rebuild_n_pick_change() -> None:
     _clear_all_kpi_popups()
 
 
+def _dismiss_spend_confirm() -> None:
+    """✕ / Esc on spend dialog = cancel (run has not started yet)."""
+    st.session_state.pop("pending_run", None)
+
+
+def _dlg_full_text(text: str) -> None:
+    """Show full answer text in dialogs without clipping line starts/ends."""
+    st.markdown(
+        f'<pre class="dlg-pre">{html.escape(text or "")}</pre>',
+        unsafe_allow_html=True,
+    )
+
+
+@st.dialog("Confirm OpenRouter spend", width="large", on_dismiss=_dismiss_spend_confirm)
+def spend_confirm_dialog():
+    """Desktop-width confirm — used instead of the old column-fixed strip modal."""
+    pr = st.session_state.get("pending_run") or {}
+    n = int(pr.get("n") or 1)
+    est = float(pr.get("est") or 0)
+    est_hi = est * 2
+    st.markdown(
+        f"Estimated range **${est:.4f} – ${est_hi:.4f}** for **{n}** run(s) "
+        "(cloud models + DeepSeek R1 judge). QVAC = $0 if included."
+    )
+    st.caption(
+        "Lower ≈ token estimate; upper ≈ 2× (conservative — long answers / judge "
+        "tokens often exceed the base estimate). Actual bill is what OpenRouter reports."
+    )
+    if not has_key:
+        st.error("No usable OpenRouter key — paste a full sk-or-v1-… key in the sidebar.")
+        if st.button("Close", use_container_width=True, key="spend_close_nokey"):
+            st.session_state.pop("pending_run", None)
+            st.session_state.pop("confirmed_run", None)
+            st.rerun()
+        return
+    a, b = st.columns(2)
+    with a:
+        if st.button("Cancel", use_container_width=True, key="spend_cancel"):
+            st.session_state.pop("pending_run", None)
+            st.session_state.pop("confirmed_run", None)
+            st.rerun()
+    with b:
+        if st.button(
+            "Yes, continue",
+            type="primary",
+            use_container_width=True,
+            key="spend_yes",
+        ):
+            pending = st.session_state.pop("pending_run", None)
+            if pending:
+                st.session_state["confirmed_run"] = pending
+            st.rerun()
+
+
 @st.dialog("QVAC SDK + MedPsy setup guide")
 def qvac_setup_guide_dialog():
     st.markdown(QVAC_SETUP_GUIDE)
@@ -1095,11 +1225,11 @@ def history_run_dialog(path_str: str):
                 )
             if c.raw_response:
                 st.markdown("**Full answer**")
-                st.text(c.raw_response[:12000])
+                _dlg_full_text(c.raw_response)
             elif c.answers:
                 for qid, ans in c.answers.items():
                     st.markdown(f"**{qid}**")
-                    st.text((ans or "")[:4000])
+                    _dlg_full_text(ans or "")
             if j:
                 st.markdown("**Judge**")
                 for qs in j.question_scores:
@@ -1110,7 +1240,7 @@ def history_run_dialog(path_str: str):
         st.rerun()
 
 
-@st.dialog("Run complete")
+@st.dialog("Run complete", width="large")
 def run_done_dialog():
     """Notify when judge finishes — Streamlit auto-scroll is unreliable."""
     multi_n = int(st.session_state.get("last_multi_n") or 1)
@@ -1180,7 +1310,7 @@ def _reliability_table_html(ranking_mean: list) -> str:
         + "".join(rows_html)
         + "</tbody></table></div>"
         "<div style='font-size:0.78rem;color:#94a3b8;margin-bottom:0.5rem'>"
-        f"{reliability_badge('high')} CV ≤ 20% &nbsp; "
+        f"{reliability_badge('high')} CV ≤ 10% &nbsp; "
         f"{reliability_badge('medium')} CV ≤ 30% &nbsp; "
         f"{reliability_badge('low')} CV &gt; 30% &nbsp;·&nbsp; "
         "lower CV = stabler mean</div>"
@@ -1381,7 +1511,7 @@ def scoring_guide_dialog():
 |-------|------|
 | **Section weights** | Fixed in the case JSON (diagnosis usually heaviest) |
 | **Tie-break** | safety → quality → stem → diagnosis |
-| **Multi reliability** | CV% = std/mean · High ≤20% · Medium ≤30% · else Low |
+| **Multi reliability** | CV% = std/mean · High ≤10% · Medium ≤30% · else Low |
 
 **Flow:** same prompt → answers → blind semantic judge → host formula → ranking.
 """
@@ -1409,7 +1539,14 @@ _busy_boot = bool(
 # ONE dialog max per script run. KPI popups require kpi_dialog_armed (set only by
 # Run-tab / History View / Rebuild-mean clicks) — N-picker / stem/gold clear the arm.
 _armed = st.session_state.get("kpi_dialog_armed")
-if not _busy_boot:
+_pending_spend = bool(
+    st.session_state.get("pending_run") and not st.session_state.get("confirmed_run")
+)
+if _pending_spend and not _busy_boot:
+    # Native Streamlit dialog = full desktop modal (old CSS strip looked like phone portrait)
+    spend_confirm_dialog()
+    st.stop()
+elif not _busy_boot:
     if _armed == "multi_run" and st.session_state.get("multi_run_popup_path"):
         multi_run_detail_dialog(st.session_state["multi_run_popup_path"])
     elif _armed == "history" and st.session_state.get("history_popup_path"):
@@ -1778,68 +1915,23 @@ st.caption(
     "QVAC only = local rehearsal, no judge."
 )
 
-# Confirm flow via session state
+# Confirm flow via session state (rerun so spend dialog opens at top of next run)
 if single_clicked:
     st.session_state["pending_run"] = {"n": 1, "est": bd["total_usd"], "mode": "full"}
+    st.rerun()
 if multi_clicked:
     st.session_state["pending_run"] = {
         "n": int(n_multi),
         "est": bd_multi["total_usd_for_n"],
         "mode": "full",
     }
+    st.rerun()
 if qvac_only_clicked:
     # Clear stale failed snapshot (e.g. old 404) so the live panels reset.
     st.session_state.pop("live_outputs", None)
     st.session_state["confirmed_run"] = {"n": 1, "est": 0.0, "mode": "qvac_only"}
     st.rerun()
 
-
-# Custom modal (looks like a popup, fully unmounts on Yes/Cancel — no stuck grey,
-# no Streamlit dialog X that aborts in-flight OpenRouter/QVAC calls).
-if st.session_state.get("pending_run") and not st.session_state.get("confirmed_run"):
-    pr = st.session_state["pending_run"]
-    n = int(pr.get("n") or 1)
-    est = float(pr.get("est") or 0)
-    est_hi = est * 2
-    with st.container():
-        st.markdown(
-            f"""
-<div class="spend-modal-marker"></div>
-<div class="spend-modal-card">
-  <h3>Confirm OpenRouter spend</h3>
-  <p>Estimated range <b>${est:.4f} – ${est_hi:.4f}</b> for <b>{n}</b> run(s)
-  (cloud models + DeepSeek R1 judge). QVAC = $0 if included.</p>
-  <p class="muted">Lower ≈ token estimate; upper ≈ 2× (conservative — long answers / judge
-  tokens often exceed the base estimate). Actual bill is what OpenRouter reports.</p>
-</div>
-""",
-            unsafe_allow_html=True,
-        )
-        if not has_key:
-            st.error("No usable OpenRouter key — paste a full sk-or-v1-… key in the sidebar.")
-            if st.button("Close", use_container_width=True, key="spend_close_nokey"):
-                st.session_state.pop("pending_run", None)
-                st.session_state.pop("confirmed_run", None)
-                st.rerun()
-        else:
-            a, b = st.columns(2)
-            with a:
-                if st.button("Cancel", use_container_width=True, key="spend_cancel"):
-                    st.session_state.pop("pending_run", None)
-                    st.session_state.pop("confirmed_run", None)
-                    st.rerun()
-            with b:
-                if st.button(
-                    "Yes, continue",
-                    type="primary",
-                    use_container_width=True,
-                    key="spend_yes",
-                ):
-                    pending = st.session_state.pop("pending_run", None)
-                    if pending:
-                        st.session_state["confirmed_run"] = pending
-                    st.rerun()
-    st.stop()
 
 phase_slot = st.empty()
 
@@ -3613,11 +3705,11 @@ else:
                     )
                 if c.raw_response:
                     st.markdown("**Full answer**")
-                    st.text(c.raw_response[:12000])
+                    _dlg_full_text(c.raw_response)
                 elif c.answers:
                     for qid, ans in c.answers.items():
                         st.markdown(f"**{qid}**")
-                        st.text((ans or "")[:4000])
+                        _dlg_full_text(ans or "")
                 if j:
                     st.markdown("**Judge**")
                     for qs in j.question_scores:
