@@ -17,6 +17,19 @@ from benchmark.scoring import (
     soft_alignment_from_checklist,
 )
 
+# Multi-run mean reliability from CV% = 100 × std / mean
+CV_HIGH_MAX = 10.0  # High if CV ≤ 10%
+CV_MEDIUM_MAX = 25.0  # Medium if CV ≤ 25%; else Low
+
+
+def reliability_from_cv(cv_pct: float) -> str:
+    """Map coefficient of variation (%) → high / medium / low."""
+    if cv_pct <= CV_HIGH_MAX:
+        return "high"
+    if cv_pct <= CV_MEDIUM_MAX:
+        return "medium"
+    return "low"
+
 
 def write_artifact(artifact: RunArtifact, out_dir: Path) -> Path:
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -52,12 +65,7 @@ def summarize_runs(artifacts: List[RunArtifact]) -> MultiRunSummary:
         med = statistics.median(vals)
         # Coefficient of variation (%) — simple reliability signal for the mean
         cv_pct = round(100.0 * std / mean, 1) if mean > 1e-6 else 0.0
-        if cv_pct <= 8:
-            reliability = "high"
-        elif cv_pct <= 18:
-            reliability = "medium"
-        else:
-            reliability = "low"
+        reliability = reliability_from_cv(cv_pct)
         if len(vals) >= 4:
             q1, _, q3 = statistics.quantiles(vals, n=4)
             iqr = q3 - q1
@@ -145,15 +153,15 @@ def reliability_caption(summary: MultiRunSummary) -> str:
         return "Single run — no variance yet."
     cvs = [float(r.get("cv_pct") or 0) for r in summary.ranking_mean]
     worst = max(cvs) if cvs else 0.0
-    if worst <= 8:
-        band = "High confidence"
-    elif worst <= 18:
-        band = "Moderate confidence"
-    else:
-        band = "Lower confidence — means jump between runs"
+    band_key = reliability_from_cv(worst)
+    band = {
+        "high": "High confidence",
+        "medium": "Moderate confidence",
+        "low": "Lower confidence — means jump between runs",
+    }[band_key]
     return (
         f"{band} across N={summary.n} · "
-        f"CV% = std/mean (lower = stabler mean) · "
+        f"CV% = std/mean (High ≤{CV_HIGH_MAX:.0f}% · Med ≤{CV_MEDIUM_MAX:.0f}% · else Low) · "
         f"error bars = ±1 std"
     )
 
