@@ -17,7 +17,7 @@ if str(ROOT) not in os.sys.path:
     os.sys.path.insert(0, str(ROOT))
 
 from benchmark.config import is_usable_openrouter_key, load_models_config
-from benchmark.cases_loader import list_case_ids, load_case
+from benchmark.cases_loader import case_display_name, list_case_ids, load_case
 from benchmark.workspace import (
     assert_path_in_workspace,
     maybe_claim_legacy_root_artifacts,
@@ -748,8 +748,8 @@ Accuracy = Σ (section_weight × section_score) · run cap ≈ 97%</pre>
 <p>Judge scores <b>clinical meaning</b> — not exact keywords or acronyms.</p>
 <h3>Gold vs rubric</h3>
 <ul>
-  <li><b>GOLD pasted</b> (Case C always; A/B optional) → 0–100 vs that diagnosis thesis</li>
-  <li><b>Gold empty</b> → teaching rubric in the case JSON wins</li>
+  <li><b>GOLD pasted</b> (Custom Case required; Demo 1/2 optional) → 0–100 vs that diagnosis thesis</li>
+  <li><b>Gold empty</b> (Demo cases) → teaching rubric in the case JSON wins</li>
 </ul>
 <p>Strong answers can land ~80–95%. Tie-break: safety → quality → stem → diagnosis.
 Multi ×N / Rebuild mean: Mean ± std, CV% reliability (High / Medium / Low).</p>
@@ -924,10 +924,13 @@ def history_run_dialog(path_str: str):
         return
 
     when = (hist.finished_at or hist.started_at or "")[:19].replace("T", " ")
-    st.caption(f"{hist.case_id} · {when} · ${hist.total_cost_usd:.4f} · `{Path(path_str).name}`")
+    st.caption(
+        f"{case_display_name(hist.case_id)} · {when} · ${hist.total_cost_usd:.4f} · "
+        f"`{Path(path_str).name}`"
+    )
 
     m1, m2, m3 = st.columns(3)
-    m1.metric("Case", hist.case_id)
+    m1.metric("Case", case_display_name(hist.case_id))
     m2.metric("Models", str(len(hist.candidates)))
     m3.metric("Cost $", f"{hist.total_cost_usd:.3f}")
 
@@ -1104,7 +1107,7 @@ def history_mean_rebuild_dialog():
         return
 
     st.success(
-        f"**{summary.case_id}** · mean over **N={summary.n}** runs · "
+        f"**{case_display_name(summary.case_id)}** · mean over **N={summary.n}** runs · "
         f"rescored **50% alignment / 30% quality / 20% stem** · "
         f"**$0 API** (no OpenRouter / DeepSeek calls)"
     )
@@ -1117,7 +1120,7 @@ def history_mean_rebuild_dialog():
     st.plotly_chart(
         fig_judge_mean_accuracy_bars(
             summary.ranking_mean,
-            title=f"Mean accuracy · {summary.case_id} · N={summary.n}",
+            title=f"Mean accuracy · {case_display_name(summary.case_id)} · N={summary.n}",
             height=260,
         ),
         use_container_width=True,
@@ -1163,7 +1166,8 @@ def multi_run_detail_dialog(path_str: str):
         return
 
     st.caption(
-        f"Run {hist.n_index} · {hist.case_id} · ${hist.total_cost_usd:.4f} · "
+        f"Run {hist.n_index} · {case_display_name(hist.case_id)} · "
+        f"${hist.total_cost_usd:.4f} · "
         f"`{Path(path_str).name}`"
     )
     if hist.ranking:
@@ -1336,7 +1340,7 @@ st.markdown(
     unsafe_allow_html=True,
 )
 st.caption(
-    "**Naming:** Steps 1–3 = workflow · **Case A/B/C** = clinical scenario · "
+    "**Naming:** Steps 1–3 = workflow · **Custom Case** (main) or **Demo Case 1/2** · "
     "ranking uses real model names (ChatGPT / Claude / Gemini / QVAC)."
 )
 
@@ -1443,7 +1447,10 @@ with st.sidebar:
                 top = ""
                 if art.ranking:
                     top = f" · {art.ranking[0].get('accuracy')}%"
-                label = f"{art.case_id} · {when} · ${art.total_cost_usd:.2f}{top}"
+                label = (
+                    f"{case_display_name(art.case_id)} · {when} · "
+                    f"${art.total_cost_usd:.2f}{top}"
+                )
             except Exception:
                 label = p.stem
             base = label
@@ -1485,17 +1492,18 @@ with st.sidebar:
             st.rerun()
 
 # --- Steps 1–2 side by side (less scroll) ---
+# Internal ids stay caseA/caseB/caseC so saved History (esp. Custom = caseC) keeps working.
 CASE_PICKER = {
-    "caseA": "Case A · Teaching — STEMI + sildenafil",
-    "caseB": "Case B · Teaching — Mania + CKD",
-    "caseC": "Case C · CUSTOM — your real anonymized case",
+    "caseC": "Custom Case · your anonymized real case (main)",
+    "caseA": "Demo Case 1 · STEMI + sildenafil (teaching)",
+    "caseB": "Demo Case 2 · Mania + CKD (teaching)",
 }
-case_ids = [c for c in ("caseA", "caseB", "caseC") if c in set(list_case_ids())]
-st.markdown('<div class="sec-label">Case (A / B / C)</div>', unsafe_allow_html=True)
+case_ids = [c for c in ("caseC", "caseA", "caseB") if c in set(list_case_ids())]
+st.markdown('<div class="sec-label">Case</div>', unsafe_allow_html=True)
 
 
 def _on_case_change() -> None:
-    """Case A/B/C is for editing + RUN — never open a saved-run popup."""
+    """Case picker is for editing + RUN — never open a saved-run popup."""
     st.session_state.pop("history_popup_path", None)
     # Reset sidebar History to placeholder so it does not look "selected"
     opts = st.session_state.get("_hist_sidebar_opts") or {}
@@ -1503,30 +1511,32 @@ def _on_case_change() -> None:
     st.session_state["hist_sidebar_pick"] = placeholder
 
 
+_default_case_idx = case_ids.index("caseC") if "caseC" in case_ids else 0
 case_id = st.selectbox(
     "Case",
     case_ids,
-    index=0,
+    index=_default_case_idx,
     format_func=lambda cid: CASE_PICKER.get(cid, cid),
     label_visibility="collapsed",
     key="case_pick",
     on_change=_on_case_change,
 )
 st.caption(
-    "**Case A/B** = teaching vignette + built-in rubric (gold box can stay empty — "
-    "`gold_summary` is sent to the judge automatically). "
-    "**Case C** = you paste symptoms (step 1) + checklist gold (step 2); nothing auto-filled."
+    "**Custom Case** (main) = paste symptoms (step 1) + confirmed diagnosis (step 2). "
+    "**Demo Case 1 / 2** = recall a teaching vignette + built-in rubric "
+    "(gold box can stay empty)."
 )
 preset = load_case(case_id)
 is_custom_real = (preset.mode or "") == "custom_real"
 
 if is_custom_real:
     st.warning(
-        "**Case C · CUSTOM** — paste your anonymized clinical text (step 1) and confirmed "
-        "diagnosis / safety traps (step 2). No teaching answer grid."
+        "**Custom Case** — paste your anonymized clinical text (step 1) and confirmed "
+        "diagnosis / safety traps (step 2). No teaching answer grid. "
+        "Your previous Custom Case runs remain in History."
     )
 
-# Sync stem when case changes. A/B: prefill stem, clear gold. C: empty both.
+# Sync stem when case changes. Demos: prefill stem, clear gold. Custom: empty both.
 if st.session_state.get("_stem_case_id") != case_id:
     st.session_state["demo_case_stem"] = preset.stem if not is_custom_real else ""
     st.session_state["demo_gold_ref"] = ""
@@ -1546,9 +1556,9 @@ with col_gold:
     st.markdown(
         '<div class="sec-label">Step 2 · Confirmed diagnosis'
         + (
-            " (required · Case C · GOLD wins)"
+            " (required · Custom Case · GOLD wins)"
             if is_custom_real
-            else " (optional · empty = RUBRIC wins)"
+            else " (optional · Demo · empty = RUBRIC wins)"
         )
         + "</div>",
         unsafe_allow_html=True,
@@ -1557,7 +1567,7 @@ with col_gold:
         "gold",
         height=96 if not is_custom_real else 110,
         placeholder=(
-            "Case C · required gold (0–100 vs this thesis):\n"
+            "Custom Case · required gold (0–100 vs this thesis):\n"
             "PRIMARY + must-include / traps / plan cues…"
             if is_custom_real
             else "Optional. Leave empty → score vs teaching rubric. "
@@ -1568,15 +1578,18 @@ with col_gold:
         disabled=False,
     )
     if is_custom_real:
-        st.caption("Case C: scores are **0–100 against this gold** (rubric arrays stay empty on purpose).")
+        st.caption(
+            "Custom Case: scores are **0–100 against this gold** "
+            "(rubric arrays stay empty on purpose)."
+        )
     else:
         st.caption(
-            "**Empty** → RUBRIC wins (must/acceptable in the case). "
+            "**Empty** → RUBRIC wins (must/acceptable in the demo case). "
             "**Filled** → GOLD wins (same 0–100 scale against your diagnosis)."
         )
 
 live_case = preset.model_copy(update={"stem": (case_stem or "").strip() or preset.stem})
-# Only user-pasted gold counts. Empty A/B → rubric; Case C requires paste.
+# Only user-pasted gold counts. Empty demo → rubric; Custom Case requires paste.
 gold_reference = (gold_reference or "").strip()
 effective_gold = gold_reference
 
@@ -2267,7 +2280,7 @@ if st.session_state.get("confirmed_run"):
         if not case_stem.strip():
             _abort_run("Clinical case is empty.")
         if is_custom_real and not gold_reference.strip():
-            _abort_run("Case C · CUSTOM requires confirmed diagnosis in step 2.")
+            _abort_run("Custom Case requires confirmed diagnosis in step 2.")
         if not qvac_run_ok:
             _abort_run(
                 "QVAC SDK sidecar offline — start it: `cd sidecar && npm start` "
@@ -2456,7 +2469,7 @@ if st.session_state.get("confirmed_run"):
         _abort_run("Clinical case is empty.")
     if is_custom_real and not gold_reference.strip():
         _abort_run(
-            "Case C · CUSTOM requires confirmed diagnosis in step 2 "
+            "Custom Case requires confirmed diagnosis in step 2 "
             "(no teaching answer grid)."
         )
 
@@ -3238,7 +3251,7 @@ st.markdown(
     unsafe_allow_html=True,
 )
 st.caption(
-    f"Case **`{case_id}`** · take the N newest saved runs, **rescore every one** with "
+    f"**{case_display_name(case_id)}** · take the N newest saved runs, **rescore every one** with "
     "gold formula **50% alignment / 30% quality / 20% stem** (including older logs), "
     "then open a **popup** with table + chart. **No API calls** — local CPU only."
 )
@@ -3264,7 +3277,7 @@ with _rb1:
         help="Tiers: 3 · 5 · 10. If fewer runs are saved, rebuild uses all available.",
     )
 with _rb2:
-    st.caption(f"Saved runs for `{case_id}`: **{_avail_n}**")
+    st.caption(f"Saved runs for {case_display_name(case_id)}: **{_avail_n}**")
     _can_rebuild = _avail_n >= 2
     _do_rebuild = st.button(
         f"Rebuild mean · {_rebuild_n} runs · open KPI popup · $0",
@@ -3277,7 +3290,7 @@ with _rb2:
 
 if _avail_n < 2:
     st.info(
-        f"Need at least **2** saved runs for `{case_id}` "
+        f"Need at least **2** saved runs for {case_display_name(case_id)} "
         f"(found {_avail_n}). Run Single a few times, then rebuild the mean."
     )
 elif _do_rebuild:
@@ -3341,7 +3354,7 @@ if (
 st.markdown('<div class="sec-label">Run history</div>', unsafe_allow_html=True)
 st.caption(
     f"Private to your OpenRouter key ({short_owner_label()}). "
-    "Same key on this app = same History for Cases A/B/C (including Case C gold). "
+    "Same key on this app = same History for Custom Case + Demo 1/2. "
     "Other visitors with a different key cannot see your runs. "
     "Use **Rebuild mean across N runs** above for offline mean KPIs (formula 50/30/20)."
 )
@@ -3365,7 +3378,10 @@ else:
             if a.ranking:
                 top_row = a.ranking[0]
                 top = f" · #1 {top_row.get('key')} {top_row.get('accuracy')}%"
-            lab = f"{a.case_id} · {when} · ${a.total_cost_usd:.3f}{top} · {pth.name}"
+            lab = (
+                f"{case_display_name(a.case_id)} · {when} · "
+                f"${a.total_cost_usd:.3f}{top} · {pth.name}"
+            )
         except Exception:
             lab = pth.name
         _labels.append(lab)
@@ -3439,7 +3455,7 @@ else:
                 same_case.append(a)
         if len(same_case) >= 2:
             st.caption(
-                f"{len(same_case)} saved runs for `{hist.case_id}` — "
-                "use **Rebuild mean KPIs from history** above for the chart "
+                f"{len(same_case)} saved runs for {case_display_name(hist.case_id)} — "
+                "use **Rebuild mean across N runs** above for the chart "
                 "(current formula, $0 API)."
             )

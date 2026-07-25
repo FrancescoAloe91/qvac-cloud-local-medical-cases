@@ -11,8 +11,8 @@ It does **not** atomize the gold into keyword checklists or demand exact acronym
 
 | Situation | Ground truth | Effect |
 |-----------|--------------|--------|
-| **Confirmed diagnosis / gold pasted** (Case C always; A/B optional) | **GOLD wins** | Judge returns continuous `alignment` (semantic closeness to the gold thesis for that section) + `quality`. Empty teaching rubrics are ignored. |
-| **No gold pasted** (typical A/B) | **Rubric wins** | Soft checklist on `must_include[]` / `acceptable[]` by meaning + `quality`. |
+| **Confirmed diagnosis / gold pasted** (Custom Case required; Demo 1/2 optional) | **GOLD wins** | Judge returns continuous `alignment` (semantic closeness to the gold thesis for that section) + `quality`. Empty teaching rubrics are ignored. |
+| **No gold pasted** (typical Demo Case 1/2) | **Rubric wins** | Soft checklist on `must_include[]` / `acceptable[]` by meaning + `quality`. |
 
 Near-perfect alignment can land in the **80–95%** band; a literal **100%** is still unused (caps below).
 

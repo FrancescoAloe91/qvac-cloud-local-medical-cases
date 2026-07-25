@@ -10,11 +10,20 @@ from benchmark.schema import Case
 
 
 def list_case_ids() -> List[str]:
-    # Prefer A/B/C order when present
+    # Custom Case (caseC) first, then Demo 1 / Demo 2 — ids unchanged for History
     found = {p.stem for p in CASES_DIR.glob("case*.json")}
-    preferred = [c for c in ("caseA", "caseB", "caseC") if c in found]
+    preferred = [c for c in ("caseC", "caseA", "caseB") if c in found]
     rest = sorted(found - set(preferred))
     return preferred + rest
+
+
+def case_display_name(case_id: str) -> str:
+    """Human label; internal ids stay caseA/B/C so artifacts keep matching."""
+    return {
+        "caseC": "Custom Case",
+        "caseA": "Demo Case 1",
+        "caseB": "Demo Case 2",
+    }.get(case_id, case_id)
 
 
 def load_case(case_id: str) -> Case:

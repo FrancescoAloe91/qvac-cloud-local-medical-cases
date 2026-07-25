@@ -1,6 +1,6 @@
 {
   "id": "caseC",
-  "title": "CUSTOM · Your anonymized real case",
+  "title": "Custom Case · Your anonymized real case",
   "specialty": "custom",
   "language": "en",
   "mode": "custom_real",
@@ -16,7 +16,7 @@
         "acceptable": [],
         "must_include": [],
         "must_not": [],
-        "notes": "CUSTOM REAL case — no teaching grid. The judge uses YOUR gold diagnosis (step 2) as ground truth."
+        "notes": "Custom Case — no teaching grid. The judge uses YOUR gold diagnosis (step 2) as ground truth."
       }
     },
     {

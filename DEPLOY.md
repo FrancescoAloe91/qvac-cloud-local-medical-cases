@@ -16,7 +16,7 @@
 - **Automated Benchmark** (`app.py`) with visitor **BYOK** OpenRouter (ChatGPT / Claude / Gemini + DeepSeek R1 judge).
 - **BYOK in the UI only:** each visitor pastes their own OpenRouter key and clicks **Save**. The app remembers it for **that visitor’s IP** (prefilled on refresh). Other IPs start with an **empty** field.
 - **Do not** add `OPENROUTER_API_KEY` under Streamlit **Settings → Secrets**. That would load *your* key into the server for **every** visitor (they would all bill your account).
-- **Private History:** Case A / B / C runs are stored under `artifacts/owners/<hash of that visitor’s key>/`. Same key → same history; other keys cannot open those files.
+- **Private History:** Custom Case + Demo runs are stored under `artifacts/owners/<hash of that visitor’s key>/`. Same key → same history; other keys cannot open those files.
 - **QVAC MedPsy** (on-device SDK sidecar) is **local-only** — skipped on Streamlit Cloud.
 - Cloud disk may clear when the app sleeps; durable archives → run locally.
 

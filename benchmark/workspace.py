@@ -1,7 +1,7 @@
-"""Per-API-key private artifact workspaces (privacy login for Case A/B/C history).
+"""Per-API-key private artifact workspaces (privacy login for case history).
 
 Visitors who paste the same OpenRouter key see the same History / Rebuild mean.
-Different keys never share runs — especially important for Case C gold text.
+Different keys never share runs — especially important for Custom Case gold text.
 
 The raw API key is never written to disk; only a SHA-256 fingerprint is used
 as a directory name under artifacts/owners/<fingerprint>/.

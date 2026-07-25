@@ -26,7 +26,7 @@ Reproducible clinical benchmark: **ChatGPT / Claude / Gemini** (via [OpenRouter]
 
 **History (Cases A / B / C):**
 
-- Same OpenRouter key → same **History**, **Rebuild mean**, Case C gold/answers.  
+- Same OpenRouter key → same **History**, **Rebuild mean**, Custom Case gold/answers.  
 - Different key → cannot see another visitor’s runs.  
 - Artifacts: `artifacts/owners/<sha256(key)[:24]>/…` (key fingerprint only; raw key never in those JSON paths).  
 - Cloud disk may clear when the app sleeps; durable archives → local install.
@@ -102,7 +102,7 @@ See [`models/README.md`](models/README.md) for the GGUF source (`qvac/MedPsy-4B-
 ### What you see (screen recording)
 
 1. Paste **your** OpenRouter key (welcome / sidebar) — unlocks private History  
-2. Case A / B / C + optional gold / checklist (Case C = your anonymized real case)  
+2. **Custom Case** (main) or recall **Demo Case 1 / 2** + optional gold / checklist  
 3. Cost estimate under Single / Multi / QVAC-only  
 4. Confirm spend modal → live panels + KPIs  
 5. Ranking + matrix; artifacts under `artifacts/owners/<your-fingerprint>/`  
@@ -124,7 +124,7 @@ python -m benchmark run --case caseA --n 3
 Deploy from `main` / `app.py` — see **[DEPLOY.md](DEPLOY.md)**.
 
 - Visitors bring **their own** OpenRouter key (BYOK).  
-- History / Case C content is **per key**, not a public shared log.  
+- History / Custom Case content is **per key**, not a public shared log.  
 - QVAC MedPsy sidecar **cannot** run on Streamlit Cloud — use a local install for the full four-model demo.
 
 Live: https://francescoaloe91-qvac-vs-cloud-llms-health-test-app-wihxyd.streamlit.app  
