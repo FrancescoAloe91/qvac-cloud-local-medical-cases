@@ -25,6 +25,13 @@ from benchmark.workspace import (
     scoped_artifacts_dir,
     short_owner_label,
 )
+from lib.ip_key_store import (
+    client_identity,
+    identity_caption,
+    is_streamlit_cloud,
+    load_key_for_client,
+    save_key_for_client,
+)
 from benchmark.judge import (
     build_ranking,
     explain_run_scores,
@@ -91,6 +98,15 @@ if env_path.exists():
             continue
         if k not in os.environ:
             os.environ[k] = v
+
+# --- API key: never share one Streamlit Secret / .env key with every visitor ---
+# On Streamlit Cloud, strip any process-wide OPENROUTER_API_KEY so visitor B cannot
+# silently spend visitor A's credits. Prefill comes only from the per-IP vault
+# (or this browser session after Save). Local .env still helps the developer machine.
+_server_env_key = (os.environ.get("OPENROUTER_API_KEY") or "").strip()
+if is_streamlit_cloud():
+    os.environ.pop("OPENROUTER_API_KEY", None)
+    _server_env_key = ""
 
 # Use st.html (not st.markdown) so blank lines inside <style> cannot leak CSS as page text.
 st.html(
@@ -592,6 +608,22 @@ if not qvac_available() and not st.session_state.qvac_ensure_tried:
 qvac_ok = qvac_available()  # MedPsy loaded
 qvac_up = qvac_reachable()  # sidecar HTTP up (may still be loading)
 qvac_run_ok = bool(qvac_ok)
+
+# Per-IP remembered key (same PC/network → prefilled; other IP → empty)
+_ip_saved_key = load_key_for_client()
+if _ip_saved_key and is_usable_openrouter_key(_ip_saved_key):
+    if not st.session_state.get("or_key_session"):
+        st.session_state["or_key_session"] = _ip_saved_key
+elif (
+    (not is_streamlit_cloud())
+    and client_identity() == "local"
+    and is_usable_openrouter_key(_server_env_key)
+    and not st.session_state.get("or_key_session")
+    and not _ip_saved_key
+):
+    # Local install convenience: .env prefills only on this machine (identity=local)
+    st.session_state["or_key_session"] = _server_env_key
+
 _raw_key = (os.environ.get("OPENROUTER_API_KEY") or "").strip()
 # Drop unusable placeholders left in the process env
 if _raw_key and not is_usable_openrouter_key(_raw_key):
@@ -607,6 +639,12 @@ elif st.session_state.get("or_key_session") and not is_usable_openrouter_key(
     st.session_state["or_key_session"]
 ):
     st.session_state.pop("or_key_session", None)
+    os.environ.pop("OPENROUTER_API_KEY", None)
+    has_key = False
+else:
+    # No session key for this visitor — do not keep a leftover process env key
+    if not has_key:
+        os.environ.pop("OPENROUTER_API_KEY", None)
 
 # Private History: runs live under artifacts/owners/<sha256(key)[:24]>/
 # Same OpenRouter key → same history (login). Different key → empty / own runs only.
@@ -786,14 +824,22 @@ def qvac_status_dialog(online: bool, loaded: bool):
         _advance_boot("done")
 
 
+def _remember_openrouter_key(key: str) -> None:
+    """Activate key for this browser session and remember it for this IP only."""
+    key = (key or "").strip()
+    if not is_usable_openrouter_key(key):
+        return
+    os.environ["OPENROUTER_API_KEY"] = key
+    st.session_state["or_key_session"] = key
+    saved = save_key_for_client(key)
+    st.session_state["_ip_key_remembered"] = bool(saved)
+
+
 @st.dialog("OpenRouter API key")
 def key_welcome_dialog():
-    """Shown on every fresh page load — key field masked; prefilled if already known."""
-    existing = (
-        st.session_state.get("or_key_session")
-        or os.environ.get("OPENROUTER_API_KEY")
-        or ""
-    ).strip()
+    """Shown on every fresh page load — prefilled only if this IP saved a key before."""
+    # Prefer per-IP vault (survives refresh). Never prefill from a shared Cloud Secret.
+    existing = (load_key_for_client() or st.session_state.get("or_key_session") or "").strip()
     if existing and not is_usable_openrouter_key(existing):
         existing = ""
 
@@ -802,10 +848,14 @@ def key_welcome_dialog():
         "for cloud models + DeepSeek R1 judge. "
         "Or continue without a key to rehearse **Run QVAC only · $0** (no ranking)."
     )
+    st.caption(identity_caption())
     if existing:
-        st.info(f"Key on file (hidden): `{_mask_api_key(existing)}`")
+        st.info(f"Key remembered for this IP (hidden): `{_mask_api_key(existing)}`")
     else:
-        st.caption("No key saved yet for this session.")
+        st.caption(
+            "No key on file for this IP — field stays empty so other visitors "
+            "cannot use your OpenRouter credits."
+        )
     st.caption(
         "Field below hides characters (••••). Keys with `...` placeholders get HTTP 401. "
         "https://openrouter.ai/keys"
@@ -831,19 +881,21 @@ def key_welcome_dialog():
             disabled=not bool(existing),
             key="boot_key_keep",
         ):
-            os.environ["OPENROUTER_API_KEY"] = existing
-            st.session_state["or_key_session"] = existing
+            _remember_openrouter_key(existing)
             _advance_boot("qvac")
     with c3:
         if st.button("Save / update key", type="primary", use_container_width=True, key="boot_key_save"):
             typed = (k or "").strip()
             if is_usable_openrouter_key(typed):
-                os.environ["OPENROUTER_API_KEY"] = typed
-                st.session_state["or_key_session"] = typed
+                _remember_openrouter_key(typed)
+                if not st.session_state.get("_ip_key_remembered") and is_streamlit_cloud():
+                    st.warning(
+                        "Saved for this browser session only — could not bind to an IP "
+                        "(proxy). Other visitors still start with an empty field."
+                    )
                 _advance_boot("qvac")
             elif existing and (not typed or typed == existing):
-                os.environ["OPENROUTER_API_KEY"] = existing
-                st.session_state["or_key_session"] = existing
+                _remember_openrouter_key(existing)
                 _advance_boot("qvac")
             else:
                 st.error(
@@ -1310,18 +1362,18 @@ with st.sidebar:
         st.success("Key OK · cloud + R1")
     else:
         st.warning("No full key · Single/Multi off")
+    st.caption(identity_caption())
     key_in = st.text_input(
         "OPENROUTER_API_KEY",
         value="",
         type="password",
-        help="Full sk-or-v1-… from openrouter.ai/keys",
+        help="Full sk-or-v1-… from openrouter.ai/keys — remembered for this IP only",
         placeholder="sk-or-v1-…",
         label_visibility="collapsed",
     )
     if key_in:
         if is_usable_openrouter_key(key_in):
-            os.environ["OPENROUTER_API_KEY"] = key_in.strip()
-            st.session_state["or_key_session"] = key_in.strip()
+            _remember_openrouter_key(key_in.strip())
             has_key = True
         else:
             st.error("Key truncated / too short")

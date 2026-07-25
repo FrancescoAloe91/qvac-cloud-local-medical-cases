@@ -15,17 +15,21 @@ Reproducible clinical benchmark: **ChatGPT / Claude / Gemini** (via [OpenRouter]
 
 ---
 
-## Privacy: History = your API key (login)
+## Privacy: your key (BYOK) + private History
 
-Your OpenRouter key is the **session identity** for saved runs:
+**How the API key works (important):**
 
-- Same key → same **History**, **Rebuild mean**, and Case **A / B / C** artifacts (including Case C gold text and model answers).
-- Different key → **cannot** see another visitor’s runs.
-- The **raw key is never written** to disk. Runs are stored under  
-  `artifacts/owners/<sha256(key)[:24]>/…` (fingerprint only).
-- On Streamlit Cloud the disk can reset when the app sleeps; for durable private archives use a **local install**.
+1. Paste your OpenRouter key in the **welcome popup** → **Save / update key** (or sidebar).  
+2. That key is remembered **for your network IP only**. Refresh on the same PC/IP → field comes **pre-filled** (••••).  
+3. A visitor with a **different IP** sees an **empty** field — they cannot spend your credits.  
+4. Do **not** put `OPENROUTER_API_KEY` in Streamlit Cloud **Secrets**. A Secret is injected into the server for *every* visitor (shared wallet). BYOK in the UI is the correct path.
 
-Paste your key in the welcome dialog or sidebar. Without a usable key, cloud Single/Multi cannot start and History stays empty.
+**History (Cases A / B / C):**
+
+- Same OpenRouter key → same **History**, **Rebuild mean**, Case C gold/answers.  
+- Different key → cannot see another visitor’s runs.  
+- Artifacts: `artifacts/owners/<sha256(key)[:24]>/…` (key fingerprint only; raw key never in those JSON paths).  
+- Cloud disk may clear when the app sleeps; durable archives → local install.
 
 ---
 
