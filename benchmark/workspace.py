@@ -78,23 +78,18 @@ def assert_path_in_workspace(path: Path, workspace: Optional[Path] = None) -> bo
         return False
 
 
-def maybe_claim_legacy_root_artifacts() -> int:
+def claim_unscoped_root_artifacts(dest: Path | None = None) -> int:
     """
-    One-time local migration: if `artifacts/owners/` does not exist yet and
-    root-level `*.json` runs are present, move them into the *current* key's
-    private folder.
+    Move leftover ``artifacts/*.json`` (outside ``owners/``) into ``dest``.
 
-    Safe on Streamlit Cloud (gitignored artifacts/ starts empty). Avoids giving
-    the first visitor someone else's history once the owners/ layout exists.
+    Needed after the per-key layout shipped: older Custom Case / Demo runs still
+    sat in the root folder while History looked only under ``owners/<fp>/``.
+    On Streamlit Cloud the root is normally empty (gitignored).
     """
     if not ARTIFACTS_DIR.is_dir():
         return 0
-    owners = ARTIFACTS_DIR / OWNERS_DIRNAME
-    if owners.exists():
-        return 0
-    fp = owner_fingerprint(current_api_key())
-    if not fp:
-        return 0
+    dest = dest or scoped_artifacts_dir()
+    dest.mkdir(parents=True, exist_ok=True)
     root_files = [
         p
         for p in ARTIFACTS_DIR.glob("*.json")
@@ -102,8 +97,6 @@ def maybe_claim_legacy_root_artifacts() -> int:
     ]
     if not root_files:
         return 0
-    dest = ARTIFACTS_DIR / OWNERS_DIRNAME / fp
-    dest.mkdir(parents=True, exist_ok=True)
     moved = 0
     for p in root_files:
         target = dest / p.name
@@ -115,3 +108,20 @@ def maybe_claim_legacy_root_artifacts() -> int:
         except OSError:
             continue
     return moved
+
+
+def maybe_claim_legacy_root_artifacts() -> int:
+    """Compatibility wrapper — claim root runs into the current key workspace."""
+    if not owner_fingerprint(current_api_key()):
+        # Local machine without key: still recover history into _local_no_key
+        # so Custom Case Rebuild mean works after refresh.
+        if not ARTIFACTS_DIR.is_dir():
+            return 0
+        root_files = [
+            p
+            for p in ARTIFACTS_DIR.glob("*.json")
+            if p.is_file() and "-summary-" not in p.name
+        ]
+        if not root_files:
+            return 0
+    return claim_unscoped_root_artifacts()

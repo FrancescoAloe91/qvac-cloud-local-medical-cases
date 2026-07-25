@@ -188,22 +188,20 @@ div[data-testid="stVerticalBlock"]:has(.spend-modal-marker) > div {
   color: #cbd5e1 !important;
 }
 .run-timer-panel {
-  position: sticky !important;
-  bottom: 10px !important;
-  z-index: 40 !important;
+  position: relative !important;
+  z-index: 1 !important;
   background: linear-gradient(165deg, #1c1917 0%, #0f172a 55%, #111827 100%) !important;
   border: 1px solid #f59e0b !important;
   color: #fde68a !important;
   font-family: "IBM Plex Mono", ui-monospace, monospace !important;
-  padding: 0.7rem 0.75rem 0.65rem !important;
+  padding: 0.55rem 0.65rem 0.5rem !important;
   border-radius: 12px !important;
-  box-shadow: 0 10px 28px rgba(0,0,0,0.35) !important;
-  margin: 0.85rem 0 0.35rem 0 !important;
+  box-shadow: 0 6px 16px rgba(0,0,0,0.28) !important;
+  margin: 0.35rem 0 0.5rem 0 !important;
 }
-[data-testid="stSidebar"] .run-timer-panel {
-  position: relative !important;
-  bottom: auto !important;
-  margin-top: 0.75rem !important;
+[data-testid="stSidebar"] iframe {
+  /* Streamlit components.html leaves a tall blank iframe that covered History text */
+  margin-bottom: 0.25rem !important;
 }
 .run-timer-panel .t-title {
   font-size: 0.72rem !important;
@@ -648,9 +646,21 @@ else:
 
 # Private History: runs live under artifacts/owners/<sha256(key)[:24]>/
 # Same OpenRouter key → same history (login). Different key → empty / own runs only.
-if has_key and not st.session_state.get("_legacy_artifacts_claimed"):
-    maybe_claim_legacy_root_artifacts()
-    st.session_state["_legacy_artifacts_claimed"] = True
+# Always pull leftover root-level JSON (pre-owners layout) into this workspace —
+# that is where the ~6 Custom Case (caseC) runs still lived.
+WORKSPACE_DIR = scoped_artifacts_dir()
+_moved_legacy = maybe_claim_legacy_root_artifacts()
+if _moved_legacy and not st.session_state.get("_legacy_artifacts_toast"):
+    st.session_state["_legacy_artifacts_toast"] = True
+    try:
+        st.toast(
+            f"Restored {_moved_legacy} earlier run(s) into your History "
+            "(Custom Case / Demo).",
+            icon="📂",
+        )
+    except Exception:
+        pass
+# Refresh workspace path after claim (same dir, now populated)
 WORKSPACE_DIR = scoped_artifacts_dir()
 
 # --- Startup dialogs: every browser refresh starts a new session → show again ---
@@ -1430,67 +1440,6 @@ with st.sidebar:
         unsafe_allow_html=True,
     )
 
-    # Compact recent-run picker → popup ONLY when user changes this dropdown (or View)
-    _hist_paths = list_run_artifacts(WORKSPACE_DIR)[:12]
-    st.caption(
-        f"Private history · {short_owner_label()}"
-        + (" · enter API key to unlock" if not has_key else "")
-    )
-    if _hist_paths:
-        st.markdown("**History**")
-        _placeholder = "— select a run —"
-        _opts = {_placeholder: None}
-        for p in _hist_paths:
-            try:
-                art = load_artifact(p)
-                when = (art.finished_at or art.started_at or "")[5:16].replace("T", " ")
-                top = ""
-                if art.ranking:
-                    top = f" · {art.ranking[0].get('accuracy')}%"
-                label = (
-                    f"{case_display_name(art.case_id)} · {when} · "
-                    f"${art.total_cost_usd:.2f}{top}"
-                )
-            except Exception:
-                label = p.stem
-            base = label
-            n = 2
-            while label in _opts:
-                label = f"{base} ·{n}"
-                n += 1
-            _opts[label] = str(p)
-        st.session_state["_hist_sidebar_opts"] = _opts
-
-        def _on_sidebar_hist_change() -> None:
-            """Fires only when the user changes the sidebar History dropdown."""
-            opts = st.session_state.get("_hist_sidebar_opts") or {}
-            chosen = st.session_state.get("hist_sidebar_pick")
-            path = opts.get(chosen)
-            if path:
-                st.session_state["history_popup_path"] = path
-                st.session_state["history_path"] = path
-            else:
-                st.session_state.pop("history_popup_path", None)
-
-        pick = st.selectbox(
-            "Recent runs",
-            list(_opts.keys()),
-            label_visibility="collapsed",
-            key="hist_sidebar_pick",
-            on_change=_on_sidebar_hist_change,
-        )
-        sel_path = _opts.get(pick)
-        if st.button(
-            "View run results",
-            use_container_width=True,
-            disabled=not sel_path,
-            key="hist_sidebar_view",
-            help="Re-open ranking + answers for the selected sidebar run",
-        ):
-            st.session_state["history_popup_path"] = sel_path
-            st.session_state["history_path"] = sel_path
-            st.rerun()
-
 # --- Steps 1–2 side by side (less scroll) ---
 # Internal ids stay caseA/caseB/caseC so saved History (esp. Custom = caseC) keeps working.
 CASE_PICKER = {
@@ -1961,7 +1910,7 @@ setTimeout(function() {{
     )
 
 
-def _paint_run_timer(slot, inner_html: str, *, height: int = 280) -> None:
+def _paint_run_timer(slot, inner_html: str, *, height: int = 188) -> None:
     """Render timer in an iframe so <script> ticks (st.html DOMPurify strips scripts)."""
     doc = (
         "<!DOCTYPE html><html><head><meta charset='utf-8'>"
@@ -2072,9 +2021,10 @@ def _run_timer_stop(
 """
 
 
-# --- Always-visible Run clock in sidebar (bottom) ---
+# --- Sidebar: compact Run clock, then History (timer iframe must not cover labels) ---
 with st.sidebar:
     st.markdown("---")
+    st.caption("Run clock")
     timer_slot = st.empty()
     _pending = st.session_state.get("confirmed_run") or {}
     if _pending:
@@ -2089,13 +2039,76 @@ with st.sidebar:
                 judge_base=0,
                 bucket="collect",
             ),
+            height=188,
         )
     else:
         _paint_run_timer(
             timer_slot,
             _run_timer_idle(st.session_state.get("last_run_timings")),
-            height=220,
+            height=168,
         )
+
+    _hist_paths = list_run_artifacts(WORKSPACE_DIR)[:12]
+    st.caption(
+        f"Private history · {short_owner_label()}"
+        + (" · enter API key to unlock" if not has_key else "")
+    )
+    if _hist_paths:
+        st.markdown("**History**")
+        _placeholder = "— select a run —"
+        _opts = {_placeholder: None}
+        for p in _hist_paths:
+            try:
+                art = load_artifact(p)
+                when = (art.finished_at or art.started_at or "")[5:16].replace("T", " ")
+                top = ""
+                if art.ranking:
+                    top = f" · {art.ranking[0].get('accuracy')}%"
+                label = (
+                    f"{case_display_name(art.case_id)} · {when} · "
+                    f"${art.total_cost_usd:.2f}{top}"
+                )
+            except Exception:
+                label = p.stem
+            base = label
+            n = 2
+            while label in _opts:
+                label = f"{base} ·{n}"
+                n += 1
+            _opts[label] = str(p)
+        st.session_state["_hist_sidebar_opts"] = _opts
+
+        def _on_sidebar_hist_change() -> None:
+            """Fires only when the user changes the sidebar History dropdown."""
+            opts = st.session_state.get("_hist_sidebar_opts") or {}
+            chosen = st.session_state.get("hist_sidebar_pick")
+            path = opts.get(chosen)
+            if path:
+                st.session_state["history_popup_path"] = path
+                st.session_state["history_path"] = path
+            else:
+                st.session_state.pop("history_popup_path", None)
+
+        pick = st.selectbox(
+            "Recent runs",
+            list(_opts.keys()),
+            label_visibility="collapsed",
+            key="hist_sidebar_pick",
+            on_change=_on_sidebar_hist_change,
+        )
+        sel_path = _opts.get(pick)
+        if st.button(
+            "View run results",
+            use_container_width=True,
+            disabled=not sel_path,
+            key="hist_sidebar_view",
+            help="Re-open ranking + answers for the selected sidebar run",
+        ):
+            st.session_state["history_popup_path"] = sel_path
+            st.session_state["history_path"] = sel_path
+            st.rerun()
+    else:
+        st.caption("No runs in History yet for this key.")
 
 # --- Live response panels ---
 roster = list(cfg.get("candidates") or [])
