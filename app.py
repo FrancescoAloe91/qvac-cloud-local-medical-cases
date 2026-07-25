@@ -148,14 +148,15 @@ header[data-testid="stHeader"],
 }
 div[data-testid="stVerticalBlock"] > div { gap: 0.2rem !important; }
 
-/* Streamlit dialogs: desktop-wide, full text readable (not a phone strip) */
+/* Streamlit dialogs: compact + centered by default (boot / spend confirm).
+   Do NOT force all dialogs to full width — width="small"|"large" must work.
+   True fullscreen reading = .fs-overlay (LLM Full screen / How ranking / Setup). */
 div[data-testid="stDialog"] {
   z-index: 1000000 !important;
 }
-div[data-testid="stDialog"] > div,
 div[data-testid="stDialog"] [role="dialog"] {
-  width: min(1080px, 96vw) !important;
-  max-width: min(1080px, 96vw) !important;
+  margin-left: auto !important;
+  margin-right: auto !important;
 }
 div[data-testid="stDialog"] [data-testid="stMarkdownContainer"],
 div[data-testid="stDialog"] [data-testid="stMarkdownContainer"] p,
@@ -482,12 +483,15 @@ span[data-testid="stIconMaterial"],
 .fs-overlay.qvac-fs-open { display: flex !important; }
 .fs-ck:checked + .fs-overlay { display: flex !important; }
 .fs-card {
-  flex: 1 1 auto !important; width: min(1100px, 96vw) !important;
-  max-width: min(1100px, 96vw) !important; margin: 0 auto !important;
+  flex: 1 1 auto !important;
+  width: min(1200px, 96vw) !important;
+  max-width: min(1200px, 96vw) !important;
+  height: min(92vh, 100%) !important;
+  margin: auto !important;
   background: #0f172a !important; border: 1px solid #334155 !important;
   border-radius: 12px !important;
   display: flex !important; flex-direction: column !important;
-  min-height: 0 !important; max-height: 100% !important;
+  min-height: 0 !important; max-height: 92vh !important;
   box-shadow: 0 20px 50px rgba(0,0,0,0.45) !important;
   overflow: hidden !important;
 }
@@ -526,9 +530,13 @@ label.guide-open-btn:hover {
   border-color: #2dd4bf !important; color: #a5f3fc !important;
 }
 .guide-body {
-  flex: 1; overflow: auto; margin: 0; padding: 1rem 1.15rem 1.25rem;
-  color: #e2e8f0 !important; font-size: 0.88rem !important; line-height: 1.45 !important;
+  flex: 1 1 auto !important; overflow: auto !important; margin: 0 !important;
+  padding: 1rem 1.25rem 1.35rem !important;
+  color: #e2e8f0 !important; font-size: 0.9rem !important; line-height: 1.5 !important;
   background: #020617 !important;
+  white-space: normal !important; word-break: break-word !important;
+  overflow-wrap: anywhere !important; max-width: 100% !important;
+  box-sizing: border-box !important;
 }
 .guide-body h3 { color: #5eead4 !important; font-size: 1rem !important; margin: 0.9rem 0 0.35rem !important; }
 .guide-body h3:first-child { margin-top: 0 !important; }
@@ -980,9 +988,9 @@ def _dlg_full_text(text: str) -> None:
     )
 
 
-@st.dialog("Confirm OpenRouter spend", width="large", on_dismiss=_dismiss_spend_confirm)
+@st.dialog("Confirm OpenRouter spend", width="small", on_dismiss=_dismiss_spend_confirm)
 def spend_confirm_dialog():
-    """Desktop-width confirm — used instead of the old column-fixed strip modal."""
+    """Compact centered confirm (not fullscreen — that is for LLM / guides only)."""
     pr = st.session_state.get("pending_run") or {}
     n = int(pr.get("n") or 1)
     est = float(pr.get("est") or 0)
@@ -1033,7 +1041,7 @@ def qvac_setup_guide_dialog():
         st.rerun()
 
 
-@st.dialog("QVAC SDK / MedPsy status")
+@st.dialog("QVAC SDK / MedPsy status", width="small")
 def qvac_status_dialog(online: bool, loaded: bool):
     if loaded:
         st.success(
@@ -1069,7 +1077,7 @@ def _remember_openrouter_key(key: str) -> None:
     st.session_state["_ip_key_remembered"] = bool(saved)
 
 
-@st.dialog("OpenRouter API key")
+@st.dialog("OpenRouter API key", width="small")
 def key_welcome_dialog():
     """Shown on every fresh page load — prefilled only if this IP saved a key before."""
     # Prefer per-IP vault (survives refresh). Never prefill from a shared Cloud Secret.
@@ -1240,7 +1248,7 @@ def history_run_dialog(path_str: str):
         st.rerun()
 
 
-@st.dialog("Run complete", width="large")
+@st.dialog("Run complete", width="small")
 def run_done_dialog():
     """Notify when judge finishes — Streamlit auto-scroll is unreliable."""
     multi_n = int(st.session_state.get("last_multi_n") or 1)
