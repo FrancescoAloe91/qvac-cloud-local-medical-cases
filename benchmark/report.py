@@ -18,8 +18,8 @@ from benchmark.scoring import (
 )
 
 # Multi-run mean reliability from CV% = 100 × std / mean
-CV_HIGH_MAX = 10.0  # High if CV ≤ 10%
-CV_MEDIUM_MAX = 25.0  # Medium if CV ≤ 25%; else Low
+CV_HIGH_MAX = 15.0  # High if CV ≤ 15%
+CV_MEDIUM_MAX = 30.0  # Medium if CV ≤ 30%; else Low
 
 
 def reliability_from_cv(cv_pct: float) -> str:

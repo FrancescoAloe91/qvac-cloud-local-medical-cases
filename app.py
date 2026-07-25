@@ -203,8 +203,8 @@ div[data-testid="stVerticalBlock"]:has(.spend-modal-marker) > div {
 }
 /* Timer sits in normal flow at the END of the sidebar — never sticky/fixed overlay */
 .sidebar-timer-dock {
-  margin-top: 1.35rem !important;
-  padding-top: 0.65rem !important;
+  margin-top: 0.5rem !important;
+  padding-top: 0.75rem !important;
   border-top: 1px solid #334155 !important;
   background: #070b14 !important;
   position: relative !important;
@@ -213,8 +213,8 @@ div[data-testid="stVerticalBlock"]:has(.spend-modal-marker) > div {
   clear: both !important;
 }
 .sidebar-timer-spacer {
-  height: 0.75rem !important;
-  margin: 0 !important;
+  height: 1.1rem !important;
+  margin: 0.25rem 0 0 0 !important;
   padding: 0 !important;
 }
 [data-testid="stSidebar"] {
@@ -314,16 +314,17 @@ section[data-testid="stSidebar"][aria-expanded="false"] iframe,
 [data-testid="stSidebar"] {
   background: #070b14 !important;
   min-width: 220px !important;
-  max-width: 260px !important;
+  max-width: 280px !important;
 }
 [data-testid="stSidebar"] > div:first-child {
-  padding-top: 0.45rem !important;
-  padding-bottom: 0.5rem !important;
-  padding-left: 0.55rem !important;
-  padding-right: 0.55rem !important;
+  padding-top: 0.55rem !important;
+  padding-bottom: 1rem !important;
+  padding-left: 0.65rem !important;
+  padding-right: 0.65rem !important;
 }
+/* Breathing room between sidebar blocks (was 0.18rem → text sat under dropdowns) */
 [data-testid="stSidebar"] [data-testid="stVerticalBlock"] {
-  gap: 0.18rem !important;
+  gap: 0.55rem !important;
 }
 [data-testid="stSidebar"] .stMarkdown p,
 [data-testid="stSidebar"] label,
@@ -331,8 +332,31 @@ section[data-testid="stSidebar"][aria-expanded="false"] iframe,
 [data-testid="stSidebar"] [data-testid="stWidgetLabel"] p {
   color: #e2e8f0 !important;
   font-size: 0.72rem !important;
-  line-height: 1.25 !important;
-  margin: 0 !important;
+  line-height: 1.35 !important;
+  margin: 0.1rem 0 !important;
+}
+/* Guide buttons + caption must not sit under History selectbox */
+.sidebar-guides-block {
+  display: block !important;
+  margin: 0.35rem 0 0.85rem 0 !important;
+  padding-bottom: 0.35rem !important;
+  border-bottom: 1px solid #1e293b !important;
+}
+.sidebar-guides-block .guide-open-btn {
+  margin: 0.28rem 0 !important;
+}
+.sidebar-guides-block .guides-hint {
+  display: block !important;
+  font-size: 0.65rem !important;
+  color: #94a3b8 !important;
+  margin: 0.35rem 0 0.15rem 0 !important;
+  line-height: 1.35 !important;
+  position: relative !important;
+  z-index: 1 !important;
+}
+[data-testid="stSidebar"] [data-baseweb="select"] {
+  margin-top: 0.25rem !important;
+  margin-bottom: 0.35rem !important;
 }
 [data-testid="stSidebar"] h2 {
   font-size: 0.85rem !important;
@@ -954,7 +978,7 @@ def history_run_dialog(path_str: str):
     if not assert_path_in_workspace(_hp, WORKSPACE_DIR):
         st.error("That run is not in your private history (API key mismatch).")
         if st.button("Close", type="primary", use_container_width=True, key="hist_dlg_close_deny"):
-            st.session_state.pop("history_popup_path", None)
+            _clear_all_kpi_popups()
             st.rerun()
         return
     try:
@@ -962,7 +986,7 @@ def history_run_dialog(path_str: str):
     except Exception as exc:
         st.error(f"Could not load run: {exc}")
         if st.button("Close", type="primary", use_container_width=True, key="hist_dlg_close_err"):
-            st.session_state.pop("history_popup_path", None)
+            _clear_all_kpi_popups()
             st.rerun()
         return
 
@@ -1045,7 +1069,7 @@ def history_run_dialog(path_str: str):
                     st.caption(f"{qs.question_id}: {qs.score}/100 — {qs.rationale}")
 
     if st.button("Close", type="primary", use_container_width=True, key="hist_dlg_close"):
-        st.session_state.pop("history_popup_path", None)
+        _clear_all_kpi_popups()
         st.rerun()
 
 
@@ -1066,7 +1090,7 @@ def run_done_dialog():
             "The sidebar Run clock is stopped."
         )
     if st.button("OK", type="primary", use_container_width=True, key="run_done_ok"):
-        st.session_state.pop("show_run_done", None)
+        _clear_all_kpi_popups()
         st.rerun()
 
 
@@ -1119,9 +1143,9 @@ def _reliability_table_html(ranking_mean: list) -> str:
         + "".join(rows_html)
         + "</tbody></table></div>"
         "<div style='font-size:0.78rem;color:#94a3b8;margin-bottom:0.5rem'>"
-        f"{reliability_badge('high')} CV ≤ 10% &nbsp; "
-        f"{reliability_badge('medium')} CV ≤ 25% &nbsp; "
-        f"{reliability_badge('low')} CV &gt; 25% &nbsp;·&nbsp; "
+        f"{reliability_badge('high')} CV ≤ 15% &nbsp; "
+        f"{reliability_badge('medium')} CV ≤ 30% &nbsp; "
+        f"{reliability_badge('low')} CV &gt; 30% &nbsp;·&nbsp; "
         "lower CV = stabler mean</div>"
     )
 
@@ -1135,7 +1159,7 @@ def history_mean_rebuild_dialog():
     if not payload.get("ok"):
         st.error(payload.get("reason") or "Nothing to show.")
         if st.button("Close", type="primary", use_container_width=True, key="hm_dlg_err"):
-            st.session_state.pop("show_history_mean_popup", None)
+            _clear_all_kpi_popups()
             st.rerun()
         return
 
@@ -1145,7 +1169,7 @@ def history_mean_rebuild_dialog():
     except Exception as exc:
         st.error(f"Summary invalid: {exc}")
         if st.button("Close", type="primary", use_container_width=True, key="hm_dlg_bad"):
-            st.session_state.pop("show_history_mean_popup", None)
+            _clear_all_kpi_popups()
             st.rerun()
         return
 
@@ -1185,7 +1209,7 @@ def history_mean_rebuild_dialog():
         f"{payload.get('formula')}"
     )
     if st.button("Close", type="primary", use_container_width=True, key="hm_dlg_close"):
-        st.session_state.pop("show_history_mean_popup", None)
+        _clear_all_kpi_popups()
         st.rerun()
 
 
@@ -1196,7 +1220,7 @@ def multi_run_detail_dialog(path_str: str):
     if not assert_path_in_workspace(_mp, WORKSPACE_DIR):
         st.error("That run is not in your private history (API key mismatch).")
         if st.button("Close", type="primary", use_container_width=True, key="mrun_dlg_deny"):
-            st.session_state.pop("multi_run_popup_path", None)
+            _clear_all_kpi_popups()
             st.rerun()
         return
     try:
@@ -1204,7 +1228,7 @@ def multi_run_detail_dialog(path_str: str):
     except Exception as exc:
         st.error(f"Could not load run: {exc}")
         if st.button("Close", type="primary", use_container_width=True, key="mrun_dlg_err"):
-            st.session_state.pop("multi_run_popup_path", None)
+            _clear_all_kpi_popups()
             st.rerun()
         return
 
@@ -1267,7 +1291,7 @@ def multi_run_detail_dialog(path_str: str):
         st.dataframe(pd.DataFrame(matrix), use_container_width=True, hide_index=True)
 
     if st.button("Close", type="primary", use_container_width=True, key="mrun_dlg_close"):
-        st.session_state.pop("multi_run_popup_path", None)
+        _clear_all_kpi_popups()
         st.rerun()
 
 
@@ -1316,7 +1340,7 @@ def scoring_guide_dialog():
 |-------|------|
 | **Section weights** | Fixed in the case JSON (diagnosis usually heaviest) |
 | **Tie-break** | safety → quality → stem → diagnosis |
-| **Multi reliability** | CV% = std/mean · High ≤10% · Medium ≤25% · else Low |
+| **Multi reliability** | CV% = std/mean · High ≤15% · Medium ≤30% · else Low |
 
 **Flow:** same prompt → answers → blind semantic judge → host formula → ranking.
 """
@@ -1336,22 +1360,54 @@ def scoring_guide_dialog():
         st.rerun()
 
 
+def _clear_all_kpi_popups() -> None:
+    """Drop every KPI / result dialog flag (editing case/gold must never reopen them)."""
+    for k in (
+        "history_popup_path",
+        "multi_run_popup_path",
+        "show_run_done",
+        "show_history_mean_popup",
+        "kpi_dialog_armed",
+        "history_path",
+    ):
+        st.session_state.pop(k, None)
+
+
+def _arm_kpi_dialog(kind: str, *, path: str | None = None) -> None:
+    """Only Run-tab / History / Rebuild buttons may open KPI popups."""
+    st.session_state["kpi_dialog_armed"] = kind
+    if kind == "multi_run" and path:
+        st.session_state["multi_run_popup_path"] = path
+    elif kind == "history" and path:
+        st.session_state["history_popup_path"] = path
+        st.session_state["history_path"] = path
+    elif kind == "rebuild":
+        st.session_state["show_history_mean_popup"] = True
+    elif kind == "run_done":
+        st.session_state["show_run_done"] = True
+
+
+def _on_case_fields_edit() -> None:
+    """Blur/edit on Step 1 / Step 2 — never show KPI popups."""
+    _clear_all_kpi_popups()
+
+
 # Prefer the setup guide when requested from the sidebar (so online users
 # can always re-open the install steps they only see when the sidecar is offline).
 _busy_boot = bool(
     st.session_state.get("benchmark_running") or st.session_state.get("confirmed_run")
 )
-# ONE dialog max per script run (Streamlit rule). Never open dialogs mid-benchmark.
-# Priority: explicit user KPI click > rebuild mean > run-done toast > guides > boot.
+# ONE dialog max per script run. KPI popups require kpi_dialog_armed (set only by
+# Run-tab / History / Rebuild clicks) — editing stem/gold clears the arm.
+_armed = st.session_state.get("kpi_dialog_armed")
 if not _busy_boot:
-    if st.session_state.get("multi_run_popup_path"):
+    if _armed == "multi_run" and st.session_state.get("multi_run_popup_path"):
         multi_run_detail_dialog(st.session_state["multi_run_popup_path"])
-    elif st.session_state.get("history_popup_path"):
+    elif _armed == "history" and st.session_state.get("history_popup_path"):
         history_run_dialog(st.session_state["history_popup_path"])
-    elif st.session_state.get("show_history_mean_popup"):
+    elif _armed == "rebuild" and st.session_state.get("show_history_mean_popup"):
         history_mean_rebuild_dialog()
-    elif st.session_state.get("show_run_done"):
-        run_done_dialog()
+    # run_done toast only — never auto KPI dialog after editing case/gold
     elif st.session_state.get("show_scoring_guide"):
         scoring_guide_dialog()
     elif st.session_state.get("show_qvac_guide"):
@@ -1362,6 +1418,15 @@ if not _busy_boot:
             key_welcome_dialog()
         elif st.session_state.get("boot_step") == "qvac":
             qvac_status_dialog(qvac_up, qvac_ok)
+    else:
+        # Stale KPI flags without an arm (e.g. dialog closed with ✕) — drop them
+        if st.session_state.get("multi_run_popup_path") or st.session_state.get(
+            "history_popup_path"
+        ) or st.session_state.get("show_run_done") or st.session_state.get(
+            "show_history_mean_popup"
+        ):
+            if not _armed:
+                _clear_all_kpi_popups()
 
 if st.session_state.get("or_key_session") and is_usable_openrouter_key(
     st.session_state["or_key_session"]
@@ -1469,10 +1534,11 @@ with st.sidebar:
     st.caption(f"Judge · {(judge_cfg.get('display_label') or judge_cfg.get('model') or 'R1')[:42]}")
     # Client-side overlays (no Streamlit rerun) — safe during collect/judge
     st.markdown(
+        '<div class="sidebar-guides-block">'
         '<label class="guide-open-btn" for="guide_setup">Setup guide</label>'
         '<label class="guide-open-btn" for="guide_rank">How ranking works</label>'
-        '<p style="font-size:0.65rem;color:#94a3b8;margin:0.15rem 0 0.4rem">'
-        "Opens without pausing the run · ✕ to close</p>",
+        '<span class="guides-hint">Opens without pausing the run · ✕ to close</span>'
+        "</div>",
         unsafe_allow_html=True,
     )
 
@@ -1487,23 +1553,11 @@ case_ids = [c for c in ("caseC", "caseA", "caseB") if c in set(list_case_ids())]
 st.markdown('<div class="sec-label">Case</div>', unsafe_allow_html=True)
 
 
-def _clear_all_kpi_popups() -> None:
-    """Close every KPI / guide dialog flag (case change must not reopen them)."""
-    for k in (
-        "history_popup_path",
-        "multi_run_popup_path",
-        "show_run_done",
-        "show_history_mean_popup",
-        "show_scoring_guide",
-        "show_qvac_guide",
-        "history_path",
-    ):
-        st.session_state.pop(k, None)
-
-
 def _on_case_change() -> None:
     """Case picker only swaps stem/gold fields — never opens KPI popups."""
     _clear_all_kpi_popups()
+    st.session_state.pop("show_scoring_guide", None)
+    st.session_state.pop("show_qvac_guide", None)
     # Reset sidebar History to placeholder so it does not look "selected"
     opts = st.session_state.get("_hist_sidebar_opts") or {}
     placeholder = next((k for k, v in opts.items() if v is None), "— select a run —")
@@ -1557,6 +1611,7 @@ with col_case:
         key="demo_case_stem",
         label_visibility="collapsed",
         placeholder="Paste anonymized real case here…" if is_custom_real else "",
+        on_change=_on_case_fields_edit,
     )
 with col_gold:
     st.markdown(
@@ -1582,6 +1637,7 @@ with col_gold:
         key="demo_gold_ref",
         label_visibility="collapsed",
         disabled=False,
+        on_change=_on_case_fields_edit,
     )
     if is_custom_real:
         st.caption(
@@ -2135,14 +2191,9 @@ with st.sidebar:
             chosen = st.session_state.get("hist_sidebar_pick")
             path = opts.get(chosen)
             if path:
-                # Explicit user pick → open that run only (close other KPI dialogs)
-                st.session_state.pop("multi_run_popup_path", None)
-                st.session_state.pop("show_run_done", None)
-                st.session_state.pop("show_history_mean_popup", None)
-                st.session_state["history_popup_path"] = path
-                st.session_state["history_path"] = path
+                _arm_kpi_dialog("history", path=path)
             else:
-                st.session_state.pop("history_popup_path", None)
+                _clear_all_kpi_popups()
 
         pick = st.selectbox(
             "Recent runs",
@@ -2159,13 +2210,12 @@ with st.sidebar:
             key="hist_sidebar_view",
             help="Re-open ranking + answers for the selected sidebar run",
         ):
-            st.session_state["history_popup_path"] = sel_path
-            st.session_state["history_path"] = sel_path
+            _arm_kpi_dialog("history", path=sel_path)
             st.rerun()
     else:
         st.caption("No runs in History yet for this key.")
 
-    # LAST widget in left column = Run clock (space above so it never sits on History)
+    # LAST widget in left column = Run clock (clear gap above History / guides)
     st.markdown('<div class="sidebar-timer-spacer"></div>', unsafe_allow_html=True)
     timer_slot = st.empty()
     _pending = st.session_state.get("confirmed_run") or {}
@@ -3039,10 +3089,7 @@ if st.session_state.get("confirmed_run"):
                         use_container_width=True,
                         key=f"mrun_tab_btn_{ri}_{Path(path).stem[-6:]}",
                     ):
-                        st.session_state.pop("history_popup_path", None)
-                        st.session_state.pop("show_run_done", None)
-                        st.session_state.pop("show_history_mean_popup", None)
-                        st.session_state["multi_run_popup_path"] = path
+                        _arm_kpi_dialog("multi_run", path=path)
                         st.rerun()
 
             with st.expander("Last run only (for reference)", expanded=False):
@@ -3202,9 +3249,18 @@ if st.session_state.get("confirmed_run"):
             f"Saved in your private folder · {short_owner_label()} "
             f"(not visible to other API keys)"
         )
-        # Flag only — never call a @st.dialog here (would collide with another dialog
-        # already opened earlier in the same script run → StreamlitAPIException).
-        st.session_state["show_run_done"] = True
+        # No KPI dialog here — only Run tabs / History / Rebuild open those.
+        # Toast avoids the old bug: stale show_run_done reopening on case/gold blur.
+        try:
+            n_fin = int(st.session_state.get("last_multi_n") or 1)
+            if n_fin > 1:
+                st.toast(f"Multi-run ×{n_fin} finished — scroll to Results / Run tabs.", icon="✅")
+            else:
+                st.toast("Judge finished — scroll to Results.", icon="✅")
+        except Exception:
+            pass
+        st.session_state.pop("show_run_done", None)
+        st.session_state.pop("kpi_dialog_armed", None)
         st.session_state.pop("confirmed_run", None)
         st.session_state.pop("pending_run", None)
         st.session_state["benchmark_running"] = False
@@ -3282,10 +3338,7 @@ elif st.session_state.get("last_ranking"):
                         use_container_width=True,
                         key=f"saved_mrun_tab_{_i}",
                     ):
-                        st.session_state.pop("history_popup_path", None)
-                        st.session_state.pop("show_run_done", None)
-                        st.session_state.pop("show_history_mean_popup", None)
-                        st.session_state["multi_run_popup_path"] = _p
+                        _arm_kpi_dialog("multi_run", path=_p)
                         st.rerun()
     else:
         st.markdown('<div class="sec-label">Last ranking</div>', unsafe_allow_html=True)
@@ -3449,7 +3502,7 @@ elif _do_rebuild:
         ]
         st.session_state["last_multi_n"] = _sum_persist.n
         st.session_state["show_last_run_costs"] = False  # offline rebuild — no live $
-        st.session_state["show_history_mean_popup"] = True
+        _arm_kpi_dialog("rebuild")
         st.rerun()
 
 _prev = st.session_state.get("history_rebuild_result") or {}
@@ -3463,7 +3516,7 @@ if (
         use_container_width=False,
         key="history_rebuild_reopen",
     ):
-        st.session_state["show_history_mean_popup"] = True
+        _arm_kpi_dialog("rebuild")
         st.rerun()
 
 st.markdown('<div class="sec-label">Run history</div>', unsafe_allow_html=True)
