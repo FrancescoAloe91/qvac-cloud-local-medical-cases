@@ -77,7 +77,7 @@ st.set_page_config(
     page_title="QVAC vs Cloud · Automated Benchmark",
     page_icon="🩺",
     layout="wide",
-    initial_sidebar_state="collapsed",
+    initial_sidebar_state="expanded",
 )
 
 LIVE_BOX_H = 168
@@ -201,15 +201,21 @@ div[data-testid="stVerticalBlock"]:has(.spend-modal-marker) > div {
   width: 100% !important;
   box-sizing: border-box !important;
 }
-/* Dock: last block in left sidebar — never floats over main CASE / STEP 1 */
+/* Timer sits in normal flow at the END of the sidebar — never sticky/fixed overlay */
 .sidebar-timer-dock {
-  margin-top: 0.85rem !important;
-  padding-top: 0.45rem !important;
+  margin-top: 1.35rem !important;
+  padding-top: 0.65rem !important;
   border-top: 1px solid #334155 !important;
   background: #070b14 !important;
-  position: sticky !important;
-  bottom: 0 !important;
-  z-index: 6 !important;
+  position: relative !important;
+  bottom: auto !important;
+  z-index: 1 !important;
+  clear: both !important;
+}
+.sidebar-timer-spacer {
+  height: 0.75rem !important;
+  margin: 0 !important;
+  padding: 0 !important;
 }
 [data-testid="stSidebar"] {
   overflow-x: hidden !important;
@@ -225,6 +231,10 @@ section[data-testid="stSidebar"][aria-expanded="false"] iframe,
   display: none !important;
   height: 0 !important;
   visibility: hidden !important;
+}
+[data-testid="stSidebar"] .element-container:has(.sidebar-timer-dock),
+[data-testid="stSidebar"] .element-container:has(.sidebar-timer-spacer) {
+  margin-top: 0 !important;
 }
 .run-timer-panel .t-title {
   font-size: 0.72rem !important;
@@ -1331,24 +1341,27 @@ def scoring_guide_dialog():
 _busy_boot = bool(
     st.session_state.get("benchmark_running") or st.session_state.get("confirmed_run")
 )
-if st.session_state.get("show_scoring_guide"):
-    scoring_guide_dialog()
-if st.session_state.get("show_history_mean_popup"):
-    history_mean_rebuild_dialog()
-elif st.session_state.get("show_run_done"):
-    run_done_dialog()
-elif st.session_state.get("multi_run_popup_path"):
-    multi_run_detail_dialog(st.session_state["multi_run_popup_path"])
-elif st.session_state.get("show_qvac_guide"):
-    qvac_setup_guide_dialog()
-elif st.session_state.get("history_popup_path"):
-    history_run_dialog(st.session_state["history_popup_path"])
-elif (not _busy_boot) and (not st.session_state.get("boot_welcome_done")):
-    # Every new browser session / reload: API key first, then QVAC status
-    if st.session_state.get("boot_step", "api") == "api":
-        key_welcome_dialog()
-    elif st.session_state.get("boot_step") == "qvac":
-        qvac_status_dialog(qvac_up, qvac_ok)
+# ONE dialog max per script run (Streamlit rule). Never open dialogs mid-benchmark.
+# Priority: explicit user KPI click > rebuild mean > run-done toast > guides > boot.
+if not _busy_boot:
+    if st.session_state.get("multi_run_popup_path"):
+        multi_run_detail_dialog(st.session_state["multi_run_popup_path"])
+    elif st.session_state.get("history_popup_path"):
+        history_run_dialog(st.session_state["history_popup_path"])
+    elif st.session_state.get("show_history_mean_popup"):
+        history_mean_rebuild_dialog()
+    elif st.session_state.get("show_run_done"):
+        run_done_dialog()
+    elif st.session_state.get("show_scoring_guide"):
+        scoring_guide_dialog()
+    elif st.session_state.get("show_qvac_guide"):
+        qvac_setup_guide_dialog()
+    elif not st.session_state.get("boot_welcome_done"):
+        # Every new browser session / reload: API key first, then QVAC status
+        if st.session_state.get("boot_step", "api") == "api":
+            key_welcome_dialog()
+        elif st.session_state.get("boot_step") == "qvac":
+            qvac_status_dialog(qvac_up, qvac_ok)
 
 if st.session_state.get("or_key_session") and is_usable_openrouter_key(
     st.session_state["or_key_session"]
@@ -1474,13 +1487,34 @@ case_ids = [c for c in ("caseC", "caseA", "caseB") if c in set(list_case_ids())]
 st.markdown('<div class="sec-label">Case</div>', unsafe_allow_html=True)
 
 
+def _clear_all_kpi_popups() -> None:
+    """Close every KPI / guide dialog flag (case change must not reopen them)."""
+    for k in (
+        "history_popup_path",
+        "multi_run_popup_path",
+        "show_run_done",
+        "show_history_mean_popup",
+        "show_scoring_guide",
+        "show_qvac_guide",
+        "history_path",
+    ):
+        st.session_state.pop(k, None)
+
+
 def _on_case_change() -> None:
-    """Case picker is for editing + RUN — never open a saved-run popup."""
-    st.session_state.pop("history_popup_path", None)
+    """Case picker only swaps stem/gold fields — never opens KPI popups."""
+    _clear_all_kpi_popups()
     # Reset sidebar History to placeholder so it does not look "selected"
     opts = st.session_state.get("_hist_sidebar_opts") or {}
     placeholder = next((k for k, v in opts.items() if v is None), "— select a run —")
     st.session_state["hist_sidebar_pick"] = placeholder
+    # Hide previous case's ranking strip until user runs again or opens History
+    st.session_state.pop("last_ranking", None)
+    st.session_state.pop("last_multi_summary", None)
+    st.session_state.pop("last_multi_paths", None)
+    st.session_state.pop("last_multi_n", None)
+    st.session_state.pop("multi_progress", None)
+    st.session_state.pop("show_last_run_costs", None)
 
 
 _default_case_idx = case_ids.index("caseC") if "caseC" in case_ids else 0
@@ -2101,6 +2135,10 @@ with st.sidebar:
             chosen = st.session_state.get("hist_sidebar_pick")
             path = opts.get(chosen)
             if path:
+                # Explicit user pick → open that run only (close other KPI dialogs)
+                st.session_state.pop("multi_run_popup_path", None)
+                st.session_state.pop("show_run_done", None)
+                st.session_state.pop("show_history_mean_popup", None)
                 st.session_state["history_popup_path"] = path
                 st.session_state["history_path"] = path
             else:
@@ -2127,7 +2165,8 @@ with st.sidebar:
     else:
         st.caption("No runs in History yet for this key.")
 
-    # LAST widget in left column = Run clock (bottom-left of sidebar)
+    # LAST widget in left column = Run clock (space above so it never sits on History)
+    st.markdown('<div class="sidebar-timer-spacer"></div>', unsafe_allow_html=True)
     timer_slot = st.empty()
     _pending = st.session_state.get("confirmed_run") or {}
     if _pending:
@@ -2295,6 +2334,16 @@ if _multi_live.get("completed") is not None:
 if st.session_state.get("confirmed_run"):
     run_cfg = st.session_state.pop("confirmed_run")
     st.session_state["benchmark_running"] = True
+    # No leftover dialogs from a previous run (avoids double-dialog crash at the end)
+    for _dlg_k in (
+        "show_run_done",
+        "multi_run_popup_path",
+        "history_popup_path",
+        "show_history_mean_popup",
+        "show_scoring_guide",
+        "show_qvac_guide",
+    ):
+        st.session_state.pop(_dlg_k, None)
     st.session_state.pop("pending_run", None)  # never re-open confirm mid-run
     n_runs = int(run_cfg["n"])
     run_mode = run_cfg.get("mode") or "full"
@@ -2990,6 +3039,9 @@ if st.session_state.get("confirmed_run"):
                         use_container_width=True,
                         key=f"mrun_tab_btn_{ri}_{Path(path).stem[-6:]}",
                     ):
+                        st.session_state.pop("history_popup_path", None)
+                        st.session_state.pop("show_run_done", None)
+                        st.session_state.pop("show_history_mean_popup", None)
                         st.session_state["multi_run_popup_path"] = path
                         st.rerun()
 
@@ -3150,8 +3202,13 @@ if st.session_state.get("confirmed_run"):
             f"Saved in your private folder · {short_owner_label()} "
             f"(not visible to other API keys)"
         )
+        # Flag only — never call a @st.dialog here (would collide with another dialog
+        # already opened earlier in the same script run → StreamlitAPIException).
         st.session_state["show_run_done"] = True
-        run_done_dialog()
+        st.session_state.pop("confirmed_run", None)
+        st.session_state.pop("pending_run", None)
+        st.session_state["benchmark_running"] = False
+        st.rerun()
 
 
     except Exception as exc:
@@ -3225,6 +3282,9 @@ elif st.session_state.get("last_ranking"):
                         use_container_width=True,
                         key=f"saved_mrun_tab_{_i}",
                     ):
+                        st.session_state.pop("history_popup_path", None)
+                        st.session_state.pop("show_run_done", None)
+                        st.session_state.pop("show_history_mean_popup", None)
                         st.session_state["multi_run_popup_path"] = _p
                         st.rerun()
     else:
