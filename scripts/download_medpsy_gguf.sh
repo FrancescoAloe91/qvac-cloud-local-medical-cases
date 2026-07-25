@@ -7,6 +7,7 @@ PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$PROJECT_DIR"
 
 QUANT="${MEDPSY_QUANT:-medpsy-4b-q4_k_m-imat.gguf}"
+REPO="${MEDPSY_REPO:-qvac/MedPsy-4B-GGUF}"
 MODELS_DIR="$PROJECT_DIR/models"
 TARGET="$MODELS_DIR/$QUANT"
 
@@ -26,14 +27,14 @@ source .venv/bin/activate
 pip install -q --upgrade pip
 pip install -q huggingface_hub
 
-echo "==> Downloading qvac/MedPsy-4B-GGUF · $QUANT (~2.5 GB)…"
-python3 - "$QUANT" "$MODELS_DIR" <<'PY'
+echo "==> Downloading $REPO · $QUANT…"
+python3 - "$REPO" "$QUANT" "$MODELS_DIR" <<'PY'
 import sys
 from huggingface_hub import hf_hub_download
 
-quant, local_dir = sys.argv[1], sys.argv[2]
+repo, quant, local_dir = sys.argv[1], sys.argv[2], sys.argv[3]
 path = hf_hub_download(
-    repo_id="qvac/MedPsy-4B-GGUF",
+    repo_id=repo,
     filename=quant,
     local_dir=local_dir,
 )
