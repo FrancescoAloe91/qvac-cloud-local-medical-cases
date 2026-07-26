@@ -31,6 +31,16 @@ Reproducible clinical benchmark: **six OpenRouter cloud models** (free-web class
 - Artifacts: `artifacts/owners/<sha256(key)[:24]>/…` (key fingerprint only; raw key never in those JSON paths).  
 - Cloud disk may clear when the app sleeps; durable archives → local install.
 
+### What is on GitHub vs what stays only on your machine
+
+| On GitHub (public) | Local only (gitignored · never published) |
+|--|--|
+| App code, teaching demo cases, scoring docs | `artifacts/` — your prompts, model outputs, judge scores, multi-run means |
+| Download **scripts** for GGUFs | `models/*.gguf` — weights fetched from Hugging Face |
+| | `.env`, API keys, `.case_snapshots.json` |
+
+Nobody who clones the repo gets your History or your downloaded weights from git. They build their **own** empty History after they run.
+
 ---
 
 ## Models (free-tier match)
@@ -98,15 +108,20 @@ Full write-up: **[benchmark/SCORING.md](benchmark/SCORING.md)**.
 
 ## Clone the full package (recommended)
 
-One command installs Python deps, downloads the MedPsy **GGUF (~2.5 GB)** from Hugging Face, and sets up the **QVAC SDK** sidecar. The GGUF is **not** in git (GitHub size limit).
-
 ```bash
 git clone https://github.com/FrancescoAloe91/qvac-vs-cloud-llms-health-test.git
 cd qvac-vs-cloud-llms-health-test
+
+# Lightweight (MedPsy-4B Q4 only, ~2.5 GB)
 chmod +x install.sh && ./install.sh
+
+# Full on-device grid (3 MedPsy + Gemma/Llama/Phi, ~14 GB from Hugging Face)
+# ./install.sh --full-models
+# or later: ./scripts/download_all_ggufs.sh
+
 # edit .env → OPENROUTER_API_KEY=sk-or-v1-…  (FULL key from https://openrouter.ai/keys)
 
-# Terminal A — QVAC MedPsy (on-device)
+# Terminal A — QVAC sidecar (on-device)
 cd sidecar && npm start
 
 # Terminal B — dashboard
@@ -114,11 +129,11 @@ source .venv/bin/activate && streamlit run app.py
 # → http://localhost:8501  · Automated Benchmark only
 ```
 
-**Needs:** Python 3.10+, Node.js ≥ 22.17, network for the GGUF download.  
+**Needs:** Python 3.10+, Node.js ≥ 22.17, network for Hugging Face GGUF downloads.  
 **macOS:** OpenSSL 3 (handled by `scripts/setup_qvac_sidecar.sh`).  
 **Windows:** `install.ps1`, then `cd sidecar; npm start` and `streamlit run app.py`.
 
-See [`models/README.md`](models/README.md) for the GGUF source (`qvac/MedPsy-4B-GGUF`).
+GGUFs are **not** stored in git (GitHub size limits). The repo ships the download scripts; see [`models/README.md`](models/README.md). Your run History under `artifacts/` is also **not** in git.
 
 ### What you see (screen recording)
 

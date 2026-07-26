@@ -1,6 +1,18 @@
 # On-device GGUFs (not stored in git)
 
-Weights are **not in git** (GitHub file-size limit). Download locally. All of these run through the **QVAC SDK sidecar** (`POST /load` hot-swap) — prompts stay on-device.
+Weights are **downloaded from Hugging Face** into `models/`. They are **never**
+committed to GitHub (size + license hygiene). Your private run History under
+`artifacts/` is also **never** in git — cloning the repo does not give anyone
+your prompts, outputs, scores, or means.
+
+## One-shot: full pack (~14 GB)
+
+All three MedPsy quants used by **3× QVAC** + Band B peers (Gemma / Llama / Phi):
+
+```bash
+./scripts/download_all_ggufs.sh
+# or: FULL_MODELS=1 ./install.sh
+```
 
 ## MedPsy (QVAC brand)
 

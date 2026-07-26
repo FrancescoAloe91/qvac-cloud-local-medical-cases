@@ -8,15 +8,22 @@ data/wallet.json
 .streamlit/secrets.toml
 .env
 .ip_key_vault.json
+
+# Private History — prompts, model outputs, judge scores, multi-run means.
+# Never commit. Each OpenRouter key gets artifacts/owners/<fingerprint>/.
 artifacts/
+artifacts/**
+
 sidecar/node_modules/
 sidecar/vendor/
 
-# Local MedPsy inference engine (downloaded by scripts/setup_medpsy.sh, not committed)
+# Local MedPsy / peer inference weights (downloaded from Hugging Face, not git)
 .ollama-bin/
 .ollama-models/
 models/*.gguf
+models/**/*.gguf
 models/.cache/
+models/.cache/**
 
 # Local tooling (GitHub CLI binary etc.), not part of the project
 .local-bin/
@@ -25,3 +32,5 @@ models/.cache/
 .cursor/
 .streamlit/credentials.toml
 .streamlit_pid
+*.swp
+.DS_Store
