@@ -1,53 +1,55 @@
 # QVAC vs Cloud LLMs — Health Test
 
-Reproducible clinical benchmark: **six OpenRouter cloud models** (free-web class + light fallbacks, **BYOK**) vs on-device **Tether QVAC MedPsy** (local **QVAC SDK** sidecar), scored by a **blind LLM-as-judge** (**DeepSeek R1**).
+Reproducible clinical benchmark: **3 cloud LLMs** (OpenRouter, **BYOK**) vs **on-device GGUFs** via the **QVAC SDK** sidecar (**Band B peers** + **Tether MedPsy**), scored by a **blind LLM-as-judge** (**DeepSeek R1**).
 
 | | Local (full demo) | Streamlit Cloud |
 |---|---|---|
 | OpenRouter candidates + judge | ✅ your API key | ✅ visitor BYOK |
-| QVAC MedPsy | ✅ QVAC SDK sidecar | ❌ skipped (cloud-only) |
-| Automated Benchmark (main app) | ✅ | ✅ (cloud models + judge) |
-| Private History (A / B / C) | ✅ scoped to your key | ✅ same (per key fingerprint) |
-| Typical cost (`free_tier_match`, 3 cloud + judge) | ~**$0.25–1.50** / case × 1 run | same |
+| On-device GGUFs (MedPsy + peers) | ✅ QVAC SDK sidecar | ❌ skipped (cloud-only) |
+| Automated Benchmark (main app) | ✅ up to **9 models** | ✅ cloud + judge |
+| Private History / KPIs / means | ✅ scoped to **your key** (+ key remembered per **IP**) | ✅ same |
+| Typical cloud spend (3 cloud + judge) | ~**$0.25–1.50** / case × 1 run | same |
 
 **Live app:** https://francescoaloe91-qvac-vs-cloud-llms-health-test-app-wihxyd.streamlit.app  
 **Repo:** https://github.com/FrancescoAloe91/qvac-vs-cloud-llms-health-test
 
 ---
 
-## Privacy: your key (BYOK) + private History
+## Privacy: IP + API key (BYOK) + private History
 
-**How the API key works (important):**
+Every user’s **scripts, dashboard, KPIs, rankings, Rebuild mean, and saved run outputs** are tied to **that user**, not to a shared global log.
+
+| Mechanism | What it does |
+|--|--|
+| **API key (BYOK)** | OpenRouter spend + **History folder** `artifacts/owners/<sha256(key)[:24]>/` (fingerprint only; raw key never in paths) |
+| **Client IP** | Remembers / prefills **your** key on refresh for **that IP only**. Another IP sees an empty key field |
+| **Same key** | Same History, KPIs, multi-run means, Custom Case gold |
+| **Different key** | Cannot see another user’s prompts, outputs, scores, or means |
+
+**How to use the key:**
 
 1. Paste your OpenRouter key in the **welcome popup** → **Save / update key** (or sidebar).  
-2. That key is remembered **for your network IP only**. Refresh on the same PC/IP → field comes **pre-filled** (••••).  
-3. A visitor with a **different IP** sees an **empty** field — they cannot spend your credits.  
-4. Do **not** put `OPENROUTER_API_KEY` in Streamlit Cloud **Secrets**. A Secret is injected into the server for *every* visitor (shared wallet). BYOK in the UI is the correct path.
+2. Same PC/IP → field comes **pre-filled** (••••).  
+3. Different IP → empty field (cannot spend your credits).  
+4. Do **not** put `OPENROUTER_API_KEY` in Streamlit Cloud **Secrets** (shared wallet for every visitor). BYOK in the UI is correct.
 
-**History (Cases A / B / C):**
+### What ships on GitHub vs what stays on your machine
 
-- Same OpenRouter key → same **History**, **Rebuild mean**, Custom Case gold/answers.  
-- Different key → cannot see another visitor’s runs.  
-- Artifacts: `artifacts/owners/<sha256(key)[:24]>/…` (key fingerprint only; raw key never in those JSON paths).  
-- Cloud disk may clear when the app sleeps; durable archives → local install.
-
-### What is on GitHub vs what stays only on your machine
-
-| On GitHub (public) | Local only (gitignored · never published) |
+| On GitHub (public) | Local only (gitignored · **never** published) |
 |--|--|
-| App code, teaching demo cases, scoring docs | `artifacts/` — your prompts, model outputs, judge scores, multi-run means |
-| Download **scripts** for GGUFs | `models/*.gguf` — weights fetched from Hugging Face |
+| App / benchmark code, teaching demo cases, scoring docs | `artifacts/` — **your** prompts, model outputs, judge scores, multi-run means, KPIs |
+| Install + **download scripts** for GGUFs | `models/*.gguf` — weights fetched from Hugging Face onto **your** disk |
 | | `.env`, API keys, `.case_snapshots.json` |
 
-Nobody who clones the repo gets your History or your downloaded weights from git. They build their **own** empty History after they run.
+Cloning the repo does **not** include anyone else’s History or GGUF weights. Each user builds an empty private History after their first runs.
 
 ---
 
-## Models (free-tier match)
+## Models (live 9-model grid)
 
-Pinned in [`benchmark/models.yaml`](benchmark/models.yaml).
+Pinned in [`benchmark/models.yaml`](benchmark/models.yaml) + [`benchmark/qvac_variants.py`](benchmark/qvac_variants.py).
 
-**Band A — free-web everyday class** (API proxies of chatgpt.com / claude.ai / Gemini free defaults):
+**Band A — cloud (OpenRouter $):**
 
 | Role | OpenRouter ID |
 |--|--|
@@ -55,29 +57,52 @@ Pinned in [`benchmark/models.yaml`](benchmark/models.yaml).
 | Claude Sonnet 5 | `anthropic/claude-sonnet-5` |
 | Gemini Flash | `google/gemini-3.5-flash` |
 
-**Band B — open Q4 GGUFs on-device** (same QVAC sidecar as MedPsy · real privacy · $0 inference):
+**Band B — open Q4 GGUFs on-device** (same QVAC sidecar · $0 inference · prompt stays local):
 
-| Role | GGUF (under `models/`) |
+| Role | GGUF under `models/` |
 |--|--|
 | Gemma 2 2B IT | `gemma-2-2b-it-Q4_K_M.gguf` |
 | Llama 3.2 3B | `Llama-3.2-3B-Instruct-Q4_K_M.gguf` |
 | Phi-3.5 mini | `Phi-3.5-mini-instruct-Q4_K_M.gguf` |
 
-```bash
-./scripts/download_local_peers.sh   # ~6 GB total
-```
+**QVAC MedPsy — on-device** (same sidecar):
+
+| Role | GGUF |
+|--|--|
+| MedPsy-1.7B Q4 | `medpsy-1.7b-q4_k_m-imat.gguf` |
+| MedPsy-4B Q4 (default) | `medpsy-4b-q4_k_m-imat.gguf` |
+| MedPsy-4B Q8 | `medpsy-4b-q8_0.gguf` |
 
 | Role | Runtime |
 |--|--|
 | Judge (blind) | `deepseek/deepseek-r1` (cloud) |
-| QVAC (default) | MedPsy-4B Q4 · QVAC SDK · $0 API |
-| QVAC (toggle 3×) | + MedPsy-1.7B Q4 + MedPsy-4B Q8 |
 
-**Live grid:** off = **3 cloud + 3 local + MedPsy (7)** · **3× QVAC** on = **3×3 (9)**.  
-Band A bills OpenRouter; Band B + MedPsy stay on-device (prompt never leaves the machine).
+**Live grid:** **3× QVAC** on (default) = **3 cloud + 3 local peers + 3 MedPsy (9)**. Toggle off = only MedPsy-4B Q4 (7).  
+**Only local ×N** = 6 on-device GGUFs, no cloud collect (judge $ only).  
+**Recommended:** Multi / Only local with **N = 5–30** for stable means (per-model **Runs** column can differ if you repeat local more than cloud).
 
-**Recommended demo path:** **Multi run ×5**. Single run stays available for a quick check.  
-**QVAC only · $0** = MedPsy-only (KPI compare; clinical ranking if OpenRouter key present for judge).
+---
+
+## Optional: download the **complete** local package
+
+GGUF weights are **not** stored in git (GitHub size limits). Anyone can still get a **full offline model pack** from Hugging Face with one command (~**14 GB**: 3 MedPsy + Gemma + Llama + Phi).
+
+```bash
+# After clone — full on-device grid
+./install.sh --full-models
+# or later:
+./scripts/download_all_ggufs.sh
+```
+
+| Install mode | What you get | Size |
+|--|--|--|
+| `./install.sh` (default) | Python + sidecar + **MedPsy-4B Q4 only** | ~2.5 GB |
+| `./install.sh --full-models` | Above + **all 3 MedPsy + 3 Band B peers** | ~14 GB |
+| `./scripts/download_local_peers.sh` | Band B only | ~6 GB |
+| `./scripts/download_medpsy_gguf.sh` | One MedPsy quant (see env vars) | varies |
+
+Details: [`models/README.md`](models/README.md).  
+Downloading GGUFs does **not** copy or overwrite private History under `artifacts/`.
 
 ---
 
@@ -93,56 +118,51 @@ Full write-up: **[benchmark/SCORING.md](benchmark/SCORING.md)**.
    Gold: `100 × (0.50·alignment + 0.30·quality + 0.20·stem_spec)`;  
    Rubric: `100 × (0.30·must + 0.20·acceptable + 0.40·quality + 0.10·stem_spec)` → **cap 96.5**
 
-3. **Ranking %** = weighted mean of sections (weights fixed in the case; diagnosis/safety usually heaviest).  
-4. **100% is not used.** Candidates always get **distinct** accuracies (tie-break: safety → quality → stem → diagnosis).
+3. **Ranking %** = weighted mean of sections (case weights; diagnosis/safety usually heaviest).  
+4. Candidates get **distinct** accuracies (tie-break: safety → quality → stem → diagnosis).
 
 | Parameter (gold) | Weight | Meaning |
 |-----------|--------|---------|
-| **alignment** | 50% | Semantic closeness to gold thesis (synonyms / near-equivalents OK) |
+| **alignment** | 50% | Semantic closeness to gold thesis |
 | **quality** | 30% | Clinical judgment — not writing style |
-| **stem_spec** | 20% | Case-specific anchors (anti–generic paste) |
+| **stem_spec** | 20% | Case-specific anchors |
 
-**Rebuild mean across N runs** (UI, $0 API) rescores **your** saved artifacts with this formula.
+**Rebuild mean across N runs** (UI, $0 API) rescores **your** saved artifacts (3 / 5 / 10 / 20 / 30) with this formula. Tables/charts show only the **current 9 models**, with a **Runs** column (how many scored passes that model/version contributed).
 
 ---
 
-## Clone the full package (recommended)
+## Clone & run (local)
 
 ```bash
 git clone https://github.com/FrancescoAloe91/qvac-vs-cloud-llms-health-test.git
 cd qvac-vs-cloud-llms-health-test
 
-# Lightweight (MedPsy-4B Q4 only, ~2.5 GB)
+# Lightweight (~2.5 GB) OR full pack (~14 GB)
 chmod +x install.sh && ./install.sh
-
-# Full on-device grid (3 MedPsy + Gemma/Llama/Phi, ~14 GB from Hugging Face)
 # ./install.sh --full-models
-# or later: ./scripts/download_all_ggufs.sh
 
-# edit .env → OPENROUTER_API_KEY=sk-or-v1-…  (FULL key from https://openrouter.ai/keys)
+# edit .env → OPENROUTER_API_KEY=sk-or-v1-…  (full key: https://openrouter.ai/keys)
 
-# Terminal A — QVAC sidecar (on-device)
+# Terminal A — QVAC sidecar
 cd sidecar && npm start
 
 # Terminal B — dashboard
 source .venv/bin/activate && streamlit run app.py
-# → http://localhost:8501  · Automated Benchmark only
+# → http://localhost:8501
 ```
 
-**Needs:** Python 3.10+, Node.js ≥ 22.17, network for Hugging Face GGUF downloads.  
-**macOS:** OpenSSL 3 (handled by `scripts/setup_qvac_sidecar.sh`).  
-**Windows:** `install.ps1`, then `cd sidecar; npm start` and `streamlit run app.py`.
+**Needs:** Python 3.10+, Node.js ≥ 22.17, network for Hugging Face downloads.  
+**macOS:** OpenSSL 3 via `scripts/setup_qvac_sidecar.sh`.  
+**Windows:** `install.ps1`, then sidecar + `streamlit run app.py`.
 
-GGUFs are **not** stored in git (GitHub size limits). The repo ships the download scripts; see [`models/README.md`](models/README.md). Your run History under `artifacts/` is also **not** in git.
+### Typical session
 
-### What you see (screen recording)
-
-1. Paste **your** OpenRouter key (welcome / sidebar) — unlocks private History  
-2. **Custom Case** (main) or recall **Demo Case 1 / 2** + optional gold / checklist  
-3. Cost estimate under Single / Multi / QVAC-only  
-4. Confirm spend modal → live panels + KPIs  
-5. Ranking + matrix; artifacts under `artifacts/owners/<your-fingerprint>/`  
-6. **Rebuild mean across N runs** (3 / 5 / 10) · offline · KPI popup  
+1. Paste **your** OpenRouter key (welcome / sidebar) — unlocks private History for **this key**  
+2. **Custom Case** or **Demo Case 1 / 2** + optional gold  
+3. Cost estimate under Single / Multi / QVAC-only / Only local  
+4. Confirm spend → live panels + KPIs  
+5. Ranking + matrix; files under `artifacts/owners/<your-fingerprint>/`  
+6. **Rebuild mean** (offline) · KPI popup  
 7. Sidebar **History** → only runs saved with **this** key  
 
 **CLI** (same private folder when `OPENROUTER_API_KEY` is set):
@@ -160,8 +180,8 @@ python -m benchmark run --case caseA --n 3
 Deploy from `main` / `app.py` — see **[DEPLOY.md](DEPLOY.md)**.
 
 - Visitors bring **their own** OpenRouter key (BYOK).  
-- History / Custom Case content is **per key**, not a public shared log.  
-- QVAC MedPsy sidecar **cannot** run on Streamlit Cloud — use a local install for the full four-model demo.
+- Key remembered per **visitor IP**; History / KPIs per **key fingerprint**.  
+- QVAC sidecar **cannot** run on Streamlit Cloud — use a local install for on-device GGUFs.
 
 Live: https://francescoaloe91-qvac-vs-cloud-llms-health-test-app-wihxyd.streamlit.app  
 
@@ -172,13 +192,16 @@ Pushing to `main` redeploys the cloud app.
 ## Project layout
 
 ```
-app.py                 # Automated Benchmark (only Streamlit entry)
-benchmark/             # cases, OpenRouter, judge, runner, CLI
-benchmark/workspace.py # per-API-key private artifact folders
-benchmark/models.yaml  # free_tier_match model IDs
-benchmark/cases/       # Custom (caseC) + Demo 1/2 (caseA/B) — ids kept for History
-sidecar/               # QVAC SDK HTTP bridge (npm; no node_modules in git)
-artifacts/             # gitignored — owners/<fingerprint>/ per key
-OLD/                   # unused legacy dashboard (not launched)
+app.py                      # Automated Benchmark (Streamlit entry)
+benchmark/                  # cases, OpenRouter, judge, runner, CLI
+benchmark/workspace.py      # per-API-key private artifact folders
+benchmark/models.yaml       # cloud model IDs
+benchmark/cases/            # teaching demos + custom case ids
+sidecar/                    # QVAC SDK HTTP bridge (npm; no node_modules in git)
+models/                     # GGUFs downloaded locally (gitignored)
+artifacts/                  # gitignored — owners/<fingerprint>/ per key
+scripts/download_all_ggufs.sh
+scripts/download_local_peers.sh
+scripts/download_medpsy_gguf.sh
 install.sh / install.ps1
 ```
