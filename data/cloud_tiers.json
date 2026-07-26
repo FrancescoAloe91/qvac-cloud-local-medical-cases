@@ -1,6 +1,9 @@
 {
   "chatgpt": "5.5 Instant",
-  "claude": "Sonnet 4.6 Extra-class",
+  "claude": "Sonnet 5",
   "gemini": "3.5 Flash",
-  "qvac": "MedPsy-4B-GGUF Q4_K_M · QVAC SDK · CPU"
+  "chatgpt_mini": "5.4 Mini",
+  "claude_haiku": "Haiku 4.5",
+  "qwen": "3.6 Flash",
+  "qvac": "MedPsy-4B-GGUF Q4_K_M · QVAC SDK · on-device"
 }

@@ -13,6 +13,7 @@
  *   QVAC_WARM_LOAD      "1" (default) preload model at startup
  */
 import http from "node:http";
+import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import fs from "node:fs";
@@ -21,36 +22,28 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.QVAC_SIDECAR_PORT || 8787);
 const HOST = process.env.QVAC_SIDECAR_HOST || "127.0.0.1";
 
-function resolveModelPath() {
-  if (process.env.QVAC_MODEL_PATH) {
-    return path.resolve(process.env.QVAC_MODEL_PATH);
-  }
-  const repoModel = path.resolve(
-    __dirname,
-    "..",
-    "models",
-    "medpsy-4b-q4_k_m-imat.gguf"
-  );
+function spaceFreePath(absPath) {
   // QVAC SDK worker fails on file:// URLs that contain spaces (%20). Prefer a
-  // space-free symlink under ~/.local when the repo path has spaces.
-  if (!repoModel.includes(" ") && fs.existsSync(repoModel)) {
-    return repoModel;
+  // space-free symlink under ~/.local when the path has spaces.
+  const resolved = path.resolve(absPath);
+  if (!resolved.includes(" ") && fs.existsSync(resolved)) {
+    return resolved;
   }
   const linkDir = path.join(
     process.env.HOME || "/tmp",
     ".local",
     "qvac-models"
   );
-  const linkPath = path.join(linkDir, "medpsy-4b-q4_k_m-imat.gguf");
+  const linkPath = path.join(linkDir, path.basename(resolved));
   try {
     fs.mkdirSync(linkDir, { recursive: true });
-    if (fs.existsSync(repoModel)) {
+    if (fs.existsSync(resolved)) {
       try {
         fs.unlinkSync(linkPath);
       } catch {
         /* ignore */
       }
-      fs.symlinkSync(repoModel, linkPath);
+      fs.symlinkSync(resolved, linkPath);
       return linkPath;
     }
   } catch (err) {
@@ -58,10 +51,23 @@ function resolveModelPath() {
       `[qvac-sidecar] could not create space-free model link: ${err?.message || err}`
     );
   }
-  return repoModel;
+  return resolved;
 }
 
-const MODEL_PATH = resolveModelPath();
+function resolveModelPath() {
+  if (process.env.QVAC_MODEL_PATH) {
+    return spaceFreePath(process.env.QVAC_MODEL_PATH);
+  }
+  const repoModel = path.resolve(
+    __dirname,
+    "..",
+    "models",
+    "medpsy-4b-q4_k_m-imat.gguf"
+  );
+  return spaceFreePath(repoModel);
+}
+
+let MODEL_PATH = resolveModelPath();
 
 const DEVICE = (process.env.QVAC_DEVICE || "gpu").toLowerCase();
 const GPU_LAYERS = Number(
@@ -95,6 +101,90 @@ let sdk = null;
 let modelId = null;
 let loadError = null;
 let activeConfig = null;
+let lastRamMb = null;
+
+/** RSS of this Node process + descendant workers (llama/Metal), in MB. */
+function sampleRamMb() {
+  try {
+    const out = execFileSync("ps", ["-axo", "pid=,ppid=,rss="], {
+      encoding: "utf8",
+      maxBuffer: 8 * 1024 * 1024,
+    });
+    const rows = [];
+    for (const line of out.split("\n")) {
+      const parts = line.trim().split(/\s+/);
+      if (parts.length < 3) continue;
+      const pid = Number(parts[0]);
+      const ppid = Number(parts[1]);
+      const rssKb = Number(parts[2]);
+      if (!Number.isFinite(pid) || !Number.isFinite(ppid) || !Number.isFinite(rssKb)) {
+        continue;
+      }
+      rows.push({ pid, ppid, rssKb });
+    }
+    const byPid = new Map(rows.map((r) => [r.pid, r]));
+    const kids = new Set([process.pid]);
+    let grew = true;
+    while (grew) {
+      grew = false;
+      for (const r of rows) {
+        if (kids.has(r.ppid) && !kids.has(r.pid)) {
+          kids.add(r.pid);
+          grew = true;
+        }
+      }
+    }
+    let totalKb = 0;
+    for (const pid of kids) {
+      const r = byPid.get(pid);
+      if (r) totalKb += r.rssKb;
+    }
+    if (totalKb > 0) {
+      return Math.round((totalKb / 1024) * 10) / 10;
+    }
+  } catch {
+    /* fall through */
+  }
+  return Math.round((process.memoryUsage().rss / (1024 * 1024)) * 10) / 10;
+}
+
+function ggufSizeMb(p) {
+  try {
+    if (!p || !fs.existsSync(p)) return null;
+    return Math.round((fs.statSync(p).size / (1024 * 1024)) * 10) / 10;
+  } catch {
+    return null;
+  }
+}
+
+function refreshRam() {
+  lastRamMb = sampleRamMb();
+  return lastRamMb;
+}
+
+function modelTagFromPath(p) {
+  const base = path.basename(p || "").replace(/\.gguf$/i, "");
+  return base || "medpsy";
+}
+
+async function unloadCurrent() {
+  if (!modelId) return;
+  const id = modelId;
+  try {
+    if (sdk?.unloadModel) {
+      // Keep RPC alive so the next /load can reuse the worker (Node auto-closes by default).
+      await sdk.unloadModel({ modelId: id, autoClose: false });
+      console.log(`[qvac-sidecar] unloaded ${modelTagFromPath(MODEL_PATH)}`);
+    }
+  } catch (err) {
+    console.warn(
+      `[qvac-sidecar] unload warning: ${err?.message || err}`
+    );
+  }
+  modelId = null;
+  activeConfig = null;
+  lastRamMb = null;
+}
 
 async function ensureModel() {
   if (modelId) return modelId;
@@ -120,7 +210,7 @@ async function ensureModel() {
   const LOAD_TIMEOUT_MS = Number(process.env.QVAC_LOAD_TIMEOUT_MS || 300000);
   const tryLoad = async (modelConfig) => {
     console.log(
-      `[qvac-sidecar] loading MedPsy · device=${modelConfig.device} · gpu_layers=${modelConfig.gpu_layers} · ctx=${modelConfig.ctx_size} · predict=${modelConfig.predict}`
+      `[qvac-sidecar] loading ${modelTagFromPath(MODEL_PATH)} · device=${modelConfig.device} · gpu_layers=${modelConfig.gpu_layers} · ctx=${modelConfig.ctx_size} · predict=${modelConfig.predict}`
     );
     return sdk.loadModel(
       {
@@ -165,10 +255,51 @@ async function ensureModel() {
       throw err;
     }
   }
+  refreshRam();
   console.log(
-    `[qvac-sidecar] model ready · device=${activeConfig?.device} · gpu_layers=${activeConfig?.gpu_layers}`
+    `[qvac-sidecar] model ready · ${modelTagFromPath(MODEL_PATH)} · device=${activeConfig?.device} · gpu_layers=${activeConfig?.gpu_layers} · ram≈${lastRamMb} MB`
   );
   return modelId;
+}
+
+/** Hot-swap GGUF for multi-QVAC compare (unload + load). */
+async function loadFromPath(requestedPath) {
+  if (!requestedPath || !String(requestedPath).trim()) {
+    throw new Error("Missing model_path");
+  }
+  const next = spaceFreePath(String(requestedPath).trim());
+  if (!fs.existsSync(next)) {
+    throw new Error(`MedPsy GGUF not found at ${next}`);
+  }
+  if (modelId && MODEL_PATH === next) {
+    refreshRam();
+    return {
+      ok: true,
+      modelLoaded: true,
+      modelPath: MODEL_PATH,
+      model: modelTagFromPath(MODEL_PATH),
+      reused: true,
+      device: activeConfig?.device || DEVICE,
+      gpu_layers: activeConfig?.gpu_layers ?? GPU_LAYERS,
+      ram_mb: lastRamMb,
+      gguf_mb: ggufSizeMb(MODEL_PATH),
+    };
+  }
+  await unloadCurrent();
+  MODEL_PATH = next;
+  loadError = null;
+  await ensureModel();
+  return {
+    ok: true,
+    modelLoaded: true,
+    modelPath: MODEL_PATH,
+    model: modelTagFromPath(MODEL_PATH),
+    reused: false,
+    device: activeConfig?.device || DEVICE,
+    gpu_layers: activeConfig?.gpu_layers ?? GPU_LAYERS,
+    ram_mb: lastRamMb,
+    gguf_mb: ggufSizeMb(MODEL_PATH),
+  };
 }
 
 /** Extract plain text from SDK token chunks (never emit "[object Object]"). */
@@ -243,11 +374,12 @@ async function* tokenStream(prompt) {
   const approxTokens =
     tokenCount > 1 ? tokenCount : Math.max(1, content.split(/\s+/).length);
   const tps = genS > 0 ? Math.round((approxTokens / genS) * 10) / 10 : null;
+  refreshRam();
 
   yield {
     __done: true,
     content,
-    model: "medpsy-4b",
+    model: modelTagFromPath(MODEL_PATH),
     device: activeConfig?.device || DEVICE,
     gpu_layers: activeConfig?.gpu_layers ?? GPU_LAYERS,
     latency_s: Math.round(latencyS * 1000) / 1000,
@@ -256,6 +388,8 @@ async function* tokenStream(prompt) {
     completion_tokens: approxTokens,
     prompt_tokens: 0,
     cost_usd: 0,
+    ram_mb: lastRamMb,
+    gguf_mb: ggufSizeMb(MODEL_PATH),
   };
 }
 
@@ -310,17 +444,39 @@ function writeNdjson(res, obj) {
 const server = http.createServer(async (req, res) => {
   const urlPath = (req.url || "").split("?")[0];
   if (req.method === "GET" && urlPath === "/health") {
+    if (modelId) refreshRam();
     return send(res, 200, {
       ok: true,
       modelLoaded: Boolean(modelId),
       modelPath: MODEL_PATH,
+      model: modelId ? modelTagFromPath(MODEL_PATH) : null,
       device: activeConfig?.device || (modelId ? DEVICE : null),
       gpu_layers: activeConfig?.gpu_layers ?? (modelId ? GPU_LAYERS : null),
       ctx_size: CTX_SIZE,
       predict: PREDICT,
       stream: true,
+      ram_mb: modelId ? lastRamMb : null,
+      gguf_mb: modelId ? ggufSizeMb(MODEL_PATH) : null,
       lastError: loadError ? formatErr(loadError) : null,
     });
+  }
+
+  if (req.method === "POST" && urlPath === "/load") {
+    let raw = "";
+    for await (const chunk of req) raw += chunk;
+    let body = {};
+    try {
+      body = JSON.parse(raw || "{}");
+    } catch {
+      return send(res, 400, { error: "Invalid JSON body" });
+    }
+    try {
+      const out = await loadFromPath(body.model_path || body.path || "");
+      return send(res, 200, out);
+    } catch (err) {
+      loadError = err;
+      return send(res, 500, { error: formatErr(err), modelLoaded: false });
+    }
   }
 
   if (
@@ -380,7 +536,7 @@ server.listen(PORT, HOST, async () => {
   console.log(
     `[qvac-sidecar] prefer device=${DEVICE} gpu_layers=${GPU_LAYERS} (SDK default is GPU/Metal on Mac)`
   );
-  console.log(`[qvac-sidecar] GET /health  POST /generate`);
+  console.log(`[qvac-sidecar] GET /health  POST /generate  POST /load`);
   if (WARM_LOAD) {
     try {
       await ensureModel();

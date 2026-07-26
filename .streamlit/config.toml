@@ -5,7 +5,9 @@ gatherUsageStats = false
 headless = true
 showEmailPrompt = false
 port = 8501
-runOnSave = true
+address = "127.0.0.1"
+# Avoid auto-restart storms while editing; restart manually if needed.
+runOnSave = false
 enableCORS = false
 enableXsrfProtection = true
 

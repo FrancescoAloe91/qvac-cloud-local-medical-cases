@@ -45,6 +45,9 @@ class ModelCallMeta(BaseModel):
     latency_s: Optional[float] = None
     ttft_s: Optional[float] = None
     tps: Optional[float] = None
+    # On-device QVAC: process-tree RSS (sidecar + llama worker), megabytes
+    ram_mb: Optional[float] = None
+    gguf_mb: Optional[float] = None
     display_label: str = ""
     error: Optional[str] = None
 

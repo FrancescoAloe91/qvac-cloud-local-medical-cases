@@ -10,7 +10,9 @@ _SHORT = {
     "chatgpt": "ChatGPT",
     "claude": "Claude",
     "gemini": "Gemini",
-    "qvac": "QVAC",
+    "qvac": "MedPsy 4B Q4",
+    "qvac_1_7b": "MedPsy 1.7B",
+    "qvac_4b_q8": "MedPsy 4B Q8",
 }
 
 
@@ -32,6 +34,7 @@ def snapshot_from_artifact(art: Any) -> Dict[str, Any]:
                 "ttft_s": r.get("ttft_s"),
                 "tps": r.get("tps"),
                 "cost_usd": r.get("cost_usd"),
+                "ram_mb": r.get("ram_mb"),
             }
         )
     dims = []

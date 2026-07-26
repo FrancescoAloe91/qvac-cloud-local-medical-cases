@@ -23,6 +23,15 @@ _SIDECAR_LOG = Path(os.environ.get("QVAC_SIDECAR_LOG", "/tmp/qvac-sidecar.log"))
 _SIDECAR_PID = Path(os.environ.get("QVAC_SIDECAR_PID", "/tmp/qvac-sidecar.pid"))
 
 
+def _opt_float(data: Dict[str, Any], key: str) -> Optional[float]:
+    if data.get(key) is None:
+        return None
+    try:
+        return float(data[key])
+    except (TypeError, ValueError):
+        return None
+
+
 def health(timeout: float = 1.5) -> Dict[str, Any]:
     url = f"{qvac_sidecar_url()}/health"
     try:
@@ -41,6 +50,60 @@ def reachable(timeout: float = 1.5) -> bool:
 def available(timeout: float = 1.5) -> bool:
     """True when MedPsy is loaded and ready for inference via the QVAC SDK sidecar."""
     return bool(health(timeout=timeout).get("modelLoaded"))
+
+
+def space_free_gguf_path(gguf: Path | str) -> Path:
+    """Symlink into ~/.local/qvac-models when the real path contains spaces."""
+    src = Path(gguf).expanduser().resolve()
+    if " " not in str(src):
+        return src
+    link_dir = Path.home() / ".local" / "qvac-models"
+    link_dir.mkdir(parents=True, exist_ok=True)
+    link = link_dir / src.name
+    try:
+        if link.is_symlink() or link.exists():
+            try:
+                link.unlink()
+            except OSError:
+                pass
+        link.symlink_to(src)
+        return link
+    except OSError:
+        return src
+
+
+def load_model(gguf_path: str | Path, timeout: float = 360.0) -> Dict[str, Any]:
+    """Hot-swap the sidecar GGUF via POST /load (for multi-QVAC compare)."""
+    src = Path(gguf_path).expanduser()
+    if not src.is_file():
+        return {"ok": False, "error": f"GGUF not found: {src}"}
+    safe = space_free_gguf_path(src)
+    url = f"{qvac_sidecar_url()}/load"
+    body = json.dumps({"model_path": str(safe)}).encode("utf-8")
+    req = urllib.request.Request(
+        url,
+        data=body,
+        method="POST",
+        headers={"Content-Type": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            if not isinstance(data, dict):
+                return {"ok": False, "error": "Invalid /load response"}
+            data.setdefault("ok", True)
+            return data
+    except urllib.error.HTTPError as exc:
+        detail = ""
+        try:
+            detail = exc.read().decode("utf-8", errors="replace")
+            parsed = json.loads(detail)
+            detail = str(parsed.get("error") or detail)
+        except Exception:
+            detail = detail or f"HTTP {exc.code}"
+        return {"ok": False, "error": detail}
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
 
 
 def _spawn_sidecar() -> None:
@@ -191,8 +254,10 @@ def generate(
         completion_tokens=int(data.get("completion_tokens") or 0),
         cost_usd=0.0,
         latency_s=latency,
-        ttft_s=float(data["ttft_s"]) if data.get("ttft_s") is not None else None,
-        tps=float(data["tps"]) if data.get("tps") is not None else None,
+        ttft_s=_opt_float(data, "ttft_s"),
+        tps=_opt_float(data, "tps"),
+        ram_mb=_opt_float(data, "ram_mb"),
+        gguf_mb=_opt_float(data, "gguf_mb"),
         display_label=display_label,
     )
 
@@ -289,8 +354,10 @@ def generate_streaming(
         ),
         cost_usd=0.0,
         latency_s=latency,
-        ttft_s=float(done_meta["ttft_s"]) if done_meta.get("ttft_s") is not None else None,
-        tps=float(done_meta["tps"]) if done_meta.get("tps") is not None else None,
+        ttft_s=_opt_float(done_meta, "ttft_s"),
+        tps=_opt_float(done_meta, "tps"),
+        ram_mb=_opt_float(done_meta, "ram_mb"),
+        gguf_mb=_opt_float(done_meta, "gguf_mb"),
         display_label=display_label,
     )
 
@@ -357,8 +424,10 @@ def _generate_blocking(
         completion_tokens=int(data.get("completion_tokens") or 0),
         cost_usd=0.0,
         latency_s=latency,
-        ttft_s=float(data["ttft_s"]) if data.get("ttft_s") is not None else None,
-        tps=float(data["tps"]) if data.get("tps") is not None else None,
+        ttft_s=_opt_float(data, "ttft_s"),
+        tps=_opt_float(data, "tps"),
+        ram_mb=_opt_float(data, "ram_mb"),
+        gguf_mb=_opt_float(data, "gguf_mb"),
         display_label=display_label,
     )
 
@@ -433,6 +502,8 @@ def iter_tokens(
             "prompt_tokens": meta.prompt_tokens,
             "completion_tokens": meta.completion_tokens,
             "cost_usd": 0.0,
+            "ram_mb": meta.ram_mb,
+            "gguf_mb": meta.gguf_mb,
         }
         return
 

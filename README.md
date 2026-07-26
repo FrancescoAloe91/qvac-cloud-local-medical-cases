@@ -1,6 +1,6 @@
 # QVAC vs Cloud LLMs — Health Test
 
-Reproducible clinical benchmark: **ChatGPT / Claude / Gemini** (via [OpenRouter](https://openrouter.ai), **BYOK**) vs on-device **Tether QVAC MedPsy 4B** (local **QVAC SDK** sidecar), scored by a **blind LLM-as-judge** (**DeepSeek R1**).
+Reproducible clinical benchmark: **six OpenRouter cloud models** (free-web class + light fallbacks, **BYOK**) vs on-device **Tether QVAC MedPsy** (local **QVAC SDK** sidecar), scored by a **blind LLM-as-judge** (**DeepSeek R1**).
 
 | | Local (full demo) | Streamlit Cloud |
 |---|---|---|
@@ -8,7 +8,7 @@ Reproducible clinical benchmark: **ChatGPT / Claude / Gemini** (via [OpenRouter]
 | QVAC MedPsy | ✅ QVAC SDK sidecar | ❌ skipped (cloud-only) |
 | Automated Benchmark (main app) | ✅ | ✅ (cloud models + judge) |
 | Private History (A / B / C) | ✅ scoped to your key | ✅ same (per key fingerprint) |
-| Typical cost (`free_tier_match`) | ~**$0.20–1.50** / case × 1 run | same |
+| Typical cost (`free_tier_match`, 6 cloud) | ~**$0.40–2.50** / case × 1 run | same |
 
 **Live app:** https://francescoaloe91-qvac-vs-cloud-llms-health-test-app-wihxyd.streamlit.app  
 **Repo:** https://github.com/FrancescoAloe91/qvac-vs-cloud-llms-health-test
@@ -35,17 +35,34 @@ Reproducible clinical benchmark: **ChatGPT / Claude / Gemini** (via [OpenRouter]
 
 ## Models (free-tier match)
 
-Pinned in [`benchmark/models.yaml`](benchmark/models.yaml):
+Pinned in [`benchmark/models.yaml`](benchmark/models.yaml).
 
-| Role | OpenRouter ID | Display |
-|--|--|--|
-| ChatGPT | `openai/gpt-5.5` | GPT-5.5 Instant (API) |
-| Claude | `anthropic/claude-sonnet-4.6` | Sonnet 4.6 Extra-class |
-| Gemini | `google/gemini-3.5-flash` | 3.5 Flash |
-| Judge (blind) | `deepseek/deepseek-r1` | Independent scorer (not ranked as a vendor) |
-| QVAC | local sidecar | MedPsy-4B · QVAC SDK · $0 API |
+**Band A — free-web everyday class** (API proxies of chatgpt.com / claude.ai / Gemini free defaults):
 
-**Recommended demo path:** **Multi run ×3**. Single run stays available for a quick check.  
+| Role | OpenRouter ID |
+|--|--|
+| ChatGPT Instant | `openai/gpt-5.5` |
+| Claude Sonnet 5 | `anthropic/claude-sonnet-5` |
+| Gemini Flash | `google/gemini-3.5-flash` |
+
+**Band B — lighter free-user proxies** (still billed on OpenRouter; not website $0):
+
+| Role | OpenRouter ID |
+|--|--|
+| GPT Mini | `openai/gpt-5.4-mini` |
+| Claude Haiku | `anthropic/claude-haiku-4.5` |
+| Qwen Flash | `qwen/qwen3.6-flash` |
+
+| Role | Runtime |
+|--|--|
+| Judge (blind) | `deepseek/deepseek-r1` |
+| QVAC (default) | MedPsy-4B Q4 · QVAC SDK · $0 API |
+| QVAC (toggle 3×) | + MedPsy-1.7B Q4 + MedPsy-4B Q8 |
+
+**Live grid:** off = **3+3+1 (7)** · **3× QVAC** on = **3×3 (9)**.  
+True OpenRouter **$0** models are only IDs ending in `:free` (e.g. Nemotron / GPT-OSS) — not GPT/Claude proprietary.
+
+**Recommended demo path:** **Multi run ×5**. Single run stays available for a quick check.  
 **QVAC only · $0** = local rehearsal (no cloud, no judge, no ranking).
 
 ---
@@ -63,7 +80,7 @@ Full write-up: **[benchmark/SCORING.md](benchmark/SCORING.md)**.
    Rubric: `100 × (0.30·must + 0.20·acceptable + 0.40·quality + 0.10·stem_spec)` → **cap 96.5**
 
 3. **Ranking %** = weighted mean of sections (weights fixed in the case; diagnosis/safety usually heaviest).  
-4. **100% is not used.** The four models always get **different** accuracies (tie-break: safety → quality → stem → diagnosis).
+4. **100% is not used.** Candidates always get **distinct** accuracies (tie-break: safety → quality → stem → diagnosis).
 
 | Parameter (gold) | Weight | Meaning |
 |-----------|--------|---------|

@@ -26,7 +26,12 @@ MODEL_COLORS = {
     "chatgpt": "#10a37f",
     "claude": "#d97706",
     "gemini": "#8ab4f8",
+    "chatgpt_mini": "#059669",
+    "claude_haiku": "#b45309",
+    "qwen": "#a855f7",
     "qvac": "#00d09c",
+    "qvac_1_7b": "#34d399",
+    "qvac_4b_q8": "#2dd4bf",
 }
 
 MODEL_CONFIG_NAME = {k: v["name"] for k, v in MODEL_CONFIG.items()}
@@ -35,7 +40,24 @@ FILL_COLORS = {
     "chatgpt": "rgba(16,163,127,0.18)",
     "claude": "rgba(217,119,6,0.18)",
     "gemini": "rgba(138,180,248,0.18)",
+    "chatgpt_mini": "rgba(5,150,105,0.18)",
+    "claude_haiku": "rgba(180,83,9,0.18)",
+    "qwen": "rgba(168,85,247,0.18)",
     "qvac": "rgba(0,208,156,0.22)",
+    "qvac_1_7b": "rgba(52,211,153,0.22)",
+    "qvac_4b_q8": "rgba(45,212,191,0.22)",
+}
+
+_CHART_SHORT = {
+    "chatgpt": "ChatGPT Instant",
+    "claude": "Claude Sonnet 5",
+    "gemini": "Gemini Flash",
+    "chatgpt_mini": "GPT Mini",
+    "claude_haiku": "Claude Haiku",
+    "qwen": "Qwen Flash",
+    "qvac": "MedPsy 4B Q4",
+    "qvac_1_7b": "MedPsy 1.7B",
+    "qvac_4b_q8": "MedPsy 4B Q8",
 }
 
 CHART_BG = "#0e1117"
@@ -480,9 +502,7 @@ def fig_judge_accuracy_bars(
     labels = []
     for r in rows:
         key = r.get("key") or ""
-        short = {"chatgpt": "ChatGPT", "claude": "Claude", "gemini": "Gemini", "qvac": "QVAC"}.get(
-            key, r.get("label") or key
-        )
+        short = _CHART_SHORT.get(key, r.get("label") or key)
         labels.append(short)
     accs = [float(r.get("accuracy") or 0) for r in rows]
     colors = [MODEL_COLORS.get(r.get("key"), "#94a3b8") for r in rows]
@@ -524,13 +544,7 @@ def fig_judge_mean_accuracy_bars(
         key=lambda r: float(r.get("accuracy_mean") or 0),
         reverse=True,
     )
-    short = {
-        "chatgpt": "ChatGPT",
-        "claude": "Claude",
-        "gemini": "Gemini",
-        "qvac": "QVAC",
-    }
-    labels = [short.get(r.get("key"), r.get("key") or "?") for r in rows]
+    labels = [_CHART_SHORT.get(r.get("key"), r.get("key") or "?") for r in rows]
     means = [float(r.get("accuracy_mean") or 0) for r in rows]
     stds = [float(r.get("std") or 0) for r in rows]
     cvs = [float(r.get("cv_pct") or 0) for r in rows]

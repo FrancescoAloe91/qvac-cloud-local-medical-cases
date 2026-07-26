@@ -20,6 +20,9 @@ MEDPSY_REPO=qvac/MedPsy-1.7B-GGUF MEDPSY_QUANT=medpsy-1.7b-q4_k_m-imat.gguf ./sc
 ./install.sh
 ```
 
+In the Streamlit app, **3× QVAC compare** hot-swaps these three GGUFs via sidecar `POST /load`
+(standard mode keeps only 4B Q4). Restart the sidecar after pulling this feature so `/load` exists.
+
 Point the sidecar at a file with `QVAC_MODEL_PATH=/path/to/….gguf`, then:
 
 ```bash

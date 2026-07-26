@@ -191,10 +191,15 @@ def build_performance_table(results: dict, lang: str = "en") -> pd.DataFrame:
 
 
 TABLE_MODEL_SHORT = {
-    "qvac": "QVAC",
-    "chatgpt": "ChatGPT",
-    "claude": "Claude",
-    "gemini": "Gemini",
+    "qvac": "MedPsy 4B Q4",
+    "qvac_1_7b": "MedPsy 1.7B",
+    "qvac_4b_q8": "MedPsy 4B Q8",
+    "chatgpt": "ChatGPT Instant",
+    "claude": "Claude Sonnet 5",
+    "gemini": "Gemini Flash",
+    "chatgpt_mini": "GPT Mini",
+    "claude_haiku": "Claude Haiku",
+    "qwen": "Qwen Flash",
 }
 
 

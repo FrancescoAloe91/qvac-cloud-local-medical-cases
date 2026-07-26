@@ -24,3 +24,4 @@ models/.cache/
 # Editor / agent junk
 .cursor/
 .streamlit/credentials.toml
+.streamlit_pid

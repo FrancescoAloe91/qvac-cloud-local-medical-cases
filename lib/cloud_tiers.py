@@ -194,6 +194,10 @@ def tier_label(model_key: str, labels: Optional[Dict[str, str]] = None) -> str:
     data = effective_tier_labels(labels)
     if model_key == "qvac":
         return data.get("qvac", "")
+    if model_key == "qvac_1_7b":
+        return "MedPsy-1.7B Q4 · on-device"
+    if model_key == "qvac_4b_q8":
+        return "MedPsy-4B Q8 · on-device"
     raw = (data.get(model_key) or DEFAULT_TIER_LABELS.get(model_key, "")).strip()
     if model_key in CLOUD_KEYS:
         return _sanitize_cloud_tier_label(model_key, raw)

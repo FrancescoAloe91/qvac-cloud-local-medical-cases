@@ -1,0 +1,719 @@
+/* Dark theme — high contrast, do not break Streamlit Material icons */
+html, body, .stApp, .stMarkdown, p, label, .stCaption {
+  font-family: "IBM Plex Sans", system-ui, sans-serif !important;
+}
+/* CRITICAL: never force font-family on all spans/[class*=css] — breaks Material icon ligatures */
+.stApp {
+  background: #0b1220 !important;
+  color: #e2e8f0 !important;
+}
+/* Kill Streamlit top chrome — opaque bar was clipping the hero title */
+header[data-testid="stHeader"],
+.stApp > header {
+  display: none !important;
+}
+[data-testid="stToolbar"],
+[data-testid="stDecoration"],
+[data-testid="stStatusWidget"] {
+  display: none !important;
+}
+/* Content can sit near the top once chrome is hidden */
+.block-container {
+  padding-top: 1.25rem !important;
+  padding-bottom: 0.7rem !important;
+  max-width: 1440px;
+}
+[data-testid="stMainBlockContainer"] {
+  padding-top: 0.5rem !important;
+}
+[data-testid="stAppViewContainer"] > section.main > div {
+  padding-top: 0.35rem !important;
+}
+div[data-testid="stVerticalBlock"] > div { gap: 0.2rem !important; }
+
+/* Streamlit dialogs: compact + centered (boot only). Never use st.dialog for
+   spend confirm — it sticks grey and ✕ aborts in-flight runs.
+   True fullscreen reading = .fs-overlay (LLM Full screen / How ranking / Setup). */
+div[data-testid="stDialog"] {
+  z-index: 1000000 !important;
+}
+div[data-testid="stDialog"] [role="dialog"] {
+  margin-left: auto !important;
+  margin-right: auto !important;
+}
+
+div[data-testid="stDialog"] [data-testid="stMarkdownContainer"],
+div[data-testid="stDialog"] [data-testid="stMarkdownContainer"] p,
+div[data-testid="stDialog"] [data-testid="stText"],
+div[data-testid="stDialog"] pre,
+div[data-testid="stDialog"] code {
+  white-space: pre-wrap !important;
+  word-break: break-word !important;
+  overflow-wrap: anywhere !important;
+  max-width: 100% !important;
+}
+.dlg-pre {
+  white-space: pre-wrap !important;
+  word-break: break-word !important;
+  overflow-wrap: anywhere !important;
+  overflow: auto !important;
+  max-height: min(70vh, 720px) !important;
+  margin: 0.25rem 0 0.75rem !important;
+  padding: 0.75rem 0.9rem !important;
+  background: #020617 !important;
+  color: #e2e8f0 !important;
+  border: 1px solid #334155 !important;
+  border-radius: 8px !important;
+  font-family: "IBM Plex Mono", ui-monospace, monospace !important;
+  font-size: 0.82rem !important;
+  line-height: 1.45 !important;
+}
+.run-timer-panel {
+  position: relative !important;
+  z-index: 1 !important;
+  background: linear-gradient(165deg, #1c1917 0%, #0f172a 55%, #111827 100%) !important;
+  border: 1px solid #f59e0b !important;
+  color: #fde68a !important;
+  font-family: "IBM Plex Mono", ui-monospace, monospace !important;
+  padding: 0.5rem 0.6rem 0.45rem !important;
+  border-radius: 10px !important;
+  box-shadow: none !important;
+  margin: 0 !important;
+  width: 100% !important;
+  box-sizing: border-box !important;
+}
+/* Timer sits in normal flow at the END of the sidebar — never sticky/fixed overlay */
+.sidebar-timer-dock {
+  margin-top: 0.5rem !important;
+  margin-bottom: 0.85rem !important;
+  padding-top: 0.75rem !important;
+  padding-bottom: 0.35rem !important;
+  border-top: 1px solid #334155 !important;
+  background: #070b14 !important;
+  position: relative !important;
+  bottom: auto !important;
+  z-index: 1 !important;
+  clear: both !important;
+}
+.sidebar-timer-spacer {
+  height: 1.1rem !important;
+  margin: 0.25rem 0 0 0 !important;
+  padding: 0 !important;
+}
+[data-testid="stSidebar"] {
+  overflow-x: hidden !important;
+  overflow-y: auto !important;
+  height: 100vh !important;
+  max-height: 100vh !important;
+}
+[data-testid="stSidebar"] iframe {
+  max-width: 100% !important;
+  width: 100% !important;
+  margin: 0 !important;
+  /* Multi-run clock has an extra "this run" row — do not clip the bottom */
+  overflow: visible !important;
+}
+/* Collapsed sidebar must not leave a timer iframe over the main left column */
+section[data-testid="stSidebar"][aria-expanded="false"] iframe,
+[data-testid="stSidebar"][aria-expanded="false"] iframe {
+  display: none !important;
+  height: 0 !important;
+  visibility: hidden !important;
+}
+[data-testid="stSidebar"] .element-container:has(.sidebar-timer-dock),
+[data-testid="stSidebar"] .element-container:has(.sidebar-timer-spacer) {
+  margin-top: 0 !important;
+}
+.run-timer-panel .t-title {
+  font-size: 0.72rem !important;
+  font-weight: 600 !important;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #94a3b8 !important;
+  margin: 0 0 0.5rem 0 !important;
+}
+.run-timer-panel .t-big {
+  font-size: 1.95rem !important;
+  font-weight: 700 !important;
+  line-height: 1.1 !important;
+  color: #fbbf24 !important;
+  margin: 0 0 0.45rem 0 !important;
+  white-space: nowrap !important;
+}
+.run-timer-panel .t-min {
+  font-size: 0.52em !important;
+  font-weight: 500 !important;
+  opacity: 0.75 !important;
+  letter-spacing: -0.02em;
+  white-space: nowrap !important;
+}
+.run-timer-panel .t-row {
+  display: flex !important;
+  justify-content: space-between !important;
+  align-items: baseline !important;
+  gap: 0.35rem;
+  font-size: 0.95rem !important;
+  font-weight: 600 !important;
+  margin: 0.18rem 0 !important;
+  color: #fde68a !important;
+  flex-wrap: nowrap !important;
+}
+.run-timer-panel .t-row .lab {
+  color: #94a3b8 !important;
+  font-weight: 500 !important;
+  font-size: 0.82rem !important;
+  flex-shrink: 0;
+}
+.run-timer-panel .t-row .val {
+  font-variant-numeric: tabular-nums;
+  color: #fef3c7 !important;
+  white-space: nowrap !important;
+  flex-shrink: 0;
+}
+.run-timer-panel .t-row .val .t-min {
+  font-size: 0.68em !important;
+}
+.run-timer-panel .t-row.active .val {
+  color: #fbbf24 !important;
+}
+.run-timer-panel .t-sep {
+  border: 0;
+  border-top: 1px solid #334155;
+  margin: 0.45rem 0 !important;
+}
+.run-timer-panel .phase {
+  display: block;
+  font-size: 0.74rem !important;
+  font-weight: 500 !important;
+  color: #cbd5e1 !important;
+  margin-top: 0.4rem;
+  line-height: 1.3;
+}
+.run-timer-panel.idle .t-big { color: #64748b !important; }
+.run-timer-panel.idle .phase { color: #64748b !important; }
+/* legacy class kept for stop markup compatibility */
+.run-timer-overlay { /* unused floating mode */ display: none !important; }
+
+[data-testid="stSidebar"] {
+  background: #070b14 !important;
+  min-width: 220px !important;
+  max-width: 280px !important;
+}
+[data-testid="stSidebar"] > div:first-child {
+  padding-top: 0.55rem !important;
+  padding-bottom: 1.75rem !important;
+  padding-left: 0.65rem !important;
+  padding-right: 0.65rem !important;
+  min-height: 100% !important;
+  box-sizing: border-box !important;
+}
+/* Breathing room between sidebar blocks (was 0.18rem → text sat under dropdowns) */
+[data-testid="stSidebar"] [data-testid="stVerticalBlock"] {
+  gap: 0.55rem !important;
+}
+[data-testid="stSidebar"] .stMarkdown p,
+[data-testid="stSidebar"] label,
+[data-testid="stSidebar"] .stCaption,
+[data-testid="stSidebar"] [data-testid="stWidgetLabel"] p {
+  color: #e2e8f0 !important;
+  font-size: 0.72rem !important;
+  line-height: 1.35 !important;
+  margin: 0.1rem 0 !important;
+}
+/* Guide buttons + caption must not sit under History selectbox */
+.sidebar-guides-block {
+  display: block !important;
+  margin: 0.35rem 0 0.85rem 0 !important;
+  padding-bottom: 0.35rem !important;
+  border-bottom: 1px solid #1e293b !important;
+}
+.sidebar-guides-block .guide-open-btn {
+  margin: 0.28rem 0 !important;
+}
+.sidebar-guides-block .guides-hint {
+  display: block !important;
+  font-size: 0.65rem !important;
+  color: #94a3b8 !important;
+  margin: 0.35rem 0 0.15rem 0 !important;
+  line-height: 1.35 !important;
+  position: relative !important;
+  z-index: 1 !important;
+}
+[data-testid="stSidebar"] [data-baseweb="select"] {
+  margin-top: 0.25rem !important;
+  margin-bottom: 0.35rem !important;
+}
+[data-testid="stSidebar"] h2 {
+  font-size: 0.85rem !important;
+  margin: 0.1rem 0 0.15rem !important;
+}
+[data-testid="stSidebar"] h3 {
+  font-size: 0.78rem !important;
+  margin: 0.1rem 0 0.12rem !important;
+}
+[data-testid="stSidebar"] [data-testid="stCaptionContainer"] p,
+[data-testid="stSidebar"] [data-testid="stCaptionContainer"] {
+  font-size: 0.64rem !important;
+  line-height: 1.25 !important;
+}
+[data-testid="stSidebar"] .stButton button {
+  min-height: 1.7rem !important;
+  font-size: 0.7rem !important;
+  padding: 0.15rem 0.4rem !important;
+}
+[data-testid="stSidebar"] input,
+[data-testid="stSidebar"] [data-baseweb="input"] {
+  font-size: 0.72rem !important;
+  min-height: 1.7rem !important;
+}
+[data-testid="stSidebar"] hr {
+  margin: 0.35rem 0 !important;
+}
+[data-testid="stSidebar"] div[data-testid="stAlert"] {
+  padding: 0.28rem 0.4rem !important;
+  font-size: 0.68rem !important;
+}
+[data-testid="stSidebar"] div[data-testid="stAlert"] p {
+  font-size: 0.68rem !important;
+  line-height: 1.25 !important;
+}
+/* Restore Material Symbols used by expanders / widgets */
+[data-testid="stIconMaterial"],
+span[data-testid="stIconMaterial"],
+.material-icons,
+.material-symbols-rounded {
+  font-family: "Material Symbols Rounded", "Material Symbols Outlined", "Material Icons" !important;
+  font-style: normal !important;
+  font-weight: 400 !important;
+  letter-spacing: normal !important;
+  text-transform: none !important;
+  speak: never;
+}
+.demo-hero {
+  font-size: 1.12rem !important; font-weight: 750 !important;
+  margin: 0 !important; color: #f8fafc !important;
+  letter-spacing: -0.02em;
+}
+.demo-sub {
+  color: #94a3b8 !important; font-size: 0.7rem !important;
+  margin: 0 0 0.3rem !important;
+}
+.steps-bar {
+  display: flex !important;
+  flex-direction: row !important;
+  flex-wrap: nowrap !important;
+  align-items: stretch !important;
+  gap: 0.3rem !important;
+  margin: 0 0 0.35rem !important;
+  width: 100% !important;
+}
+.step-pill {
+  flex: 1 1 0 !important;
+  min-width: 0 !important;
+  padding: 0.25rem 0.45rem !important;
+  border-radius: 8px !important;
+  background: #111827 !important;
+  color: #e2e8f0 !important;
+  font-size: 0.66rem !important;
+  line-height: 1.25 !important;
+  border: 1px solid #334155 !important;
+  box-sizing: border-box !important;
+}
+.step-pill b {
+  color: #5eead4 !important;
+  margin-right: 0.28rem !important;
+  font-weight: 700 !important;
+}
+.phase-banner {
+  padding: 0.32rem 0.6rem; border-radius: 8px; margin: 0.2rem 0;
+  background: #0f766e; color: #ffffff !important; font-size: 0.76rem; font-weight: 650;
+}
+.sec-label {
+  font-size: 0.6rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase;
+  color: #5eead4 !important; margin: 0.08rem 0 0.12rem !important;
+}
+.model-chip {
+  display: block; padding: 0.26rem 0.42rem; border-radius: 8px;
+  font-size: 0.66rem; font-weight: 700; border: 1.5px solid; line-height: 1.2;
+  background: #111827 !important; color: #f1f5f9 !important;
+}
+.model-chip span { display: block; font-weight: 500; color: #94a3b8 !important; font-size: 0.56rem; margin-top: 0.06rem; }
+.cost-compact {
+  font-size: 0.64rem; color: #cbd5e1 !important; margin-top: 0.18rem; line-height: 1.3;
+  padding: 0.26rem 0.4rem; border-radius: 7px;
+  background: #111827; border: 1px solid #334155;
+}
+.cost-compact b { color: #f8fafc !important; }
+.cost-multi { text-align: center; font-size: 0.7rem; }
+.status-pill {
+  display: inline-block; font-size: 0.6rem; font-weight: 700;
+  padding: 0.08rem 0.38rem; border-radius: 999px; margin-bottom: 0.1rem;
+}
+.status-pill.ready { background: #164e63; color: #a5f3fc !important; }
+.status-pill.wait { background: #7c2d12; color: #fed7aa !important; }
+.status-pill.done { background: #14532d; color: #bbf7d0 !important; }
+.status-pill.err { background: #7f1d1d; color: #fecaca !important; }
+.status-pill.skip { background: #334155; color: #e2e8f0 !important; }
+.kpi-row {
+  font-family: "IBM Plex Mono", ui-monospace, monospace !important;
+  font-size: 0.6rem !important; color: #5eead4 !important; margin: 0.04rem 0 0.1rem !important;
+}
+.kpi-row.live { color: #fdba74 !important; }
+.live-head {
+  font-size: 0.76rem !important; font-weight: 700 !important; margin: 0 !important;
+  color: #f8fafc !important;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.live-meta { font-size: 0.56rem !important; color: #94a3b8 !important; margin: 0 0 0.1rem !important; }
+/* Fixed live panel: Streamlit 1.50 uses data-testid="stColumn" (was "column") */
+div[data-testid="stHorizontalBlock"] > div[data-testid="stColumn"]:has(.panel-card),
+div[data-testid="stHorizontalBlock"] > div[data-testid="column"]:has(.panel-card),
+div.stColumn:has(.panel-card) {
+  background: #111827 !important;
+  border: 1px solid #334155 !important;
+  border-radius: 10px !important;
+  padding: 0.35rem 0.4rem 0.4rem !important;
+  box-sizing: border-box !important;
+  max-height: 360px !important;
+  overflow: hidden !important;
+}
+.panel-card {
+  border-top-width: 3px !important;
+  border-top-style: solid !important;
+  margin: -0.35rem -0.4rem 0.2rem !important;
+  padding: 0.3rem 0.45rem 0.15rem !important;
+  background: transparent !important;
+}
+.panel-frame {
+  border: 1px solid #334155 !important;
+  border-radius: 10px !important;
+  padding: 0.3rem 0.35rem 0.18rem !important;
+  background: #111827 !important;
+  min-height: 100% !important;
+}
+.kpi-slot {
+  min-height: 1.35rem !important;
+  margin: 0.1rem 0 0.15rem 0 !important;
+}
+.stream-wrap { position: relative; }
+.stream-toolbar {
+  display: flex; justify-content: flex-end; margin: 0 0 0.15rem 0;
+}
+.stream-fs-lab {
+  cursor: pointer; user-select: none;
+  font-size: 0.62rem !important; font-weight: 700 !important;
+  color: #5eead4 !important; padding: 0.12rem 0.4rem;
+  border: 1px solid #334155; border-radius: 6px; background: #0f172a;
+}
+.stream-fs-lab:hover { border-color: #2dd4bf; color: #a5f3fc !important; }
+.fs-ck {
+  position: absolute !important; opacity: 0 !important;
+  pointer-events: none !important; width: 0 !important; height: 0 !important;
+  margin: 0 !important; padding: 0 !important; border: 0 !important;
+  clip: rect(0,0,0,0) !important; overflow: hidden !important;
+}
+/* CLOSED by default — must use !important (Streamlit/Emotion otherwise leaks overlays into page flow) */
+.fs-overlay,
+div.fs-overlay {
+  display: none !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
+  position: fixed !important;
+  inset: 0 !important; left: 0 !important; top: 0 !important;
+  width: 100vw !important; height: 100vh !important;
+  max-width: none !important; max-height: none !important;
+  z-index: 2147483000 !important;
+  background: rgba(2, 6, 23, 0.9) !important; padding: 1.25rem !important;
+  align-items: stretch !important; justify-content: center !important;
+  box-sizing: border-box !important; margin: 0 !important;
+  overflow: hidden !important;
+}
+/* OPEN via portal class and/or pure CSS :checked (works even if portal JS is late) */
+.fs-overlay.qvac-fs-open,
+div.fs-overlay.qvac-fs-open,
+.fs-ck:checked + .fs-overlay,
+.fs-ck:checked + div.fs-overlay {
+  display: flex !important;
+  visibility: visible !important;
+  pointer-events: auto !important;
+}
+.fs-card {
+  flex: 0 1 auto !important;
+  width: min(1200px, 96vw) !important;
+  max-width: min(1200px, 96vw) !important;
+  height: 92vh !important;
+  max-height: 92vh !important;
+  margin: auto !important;
+  background: #0f172a !important; border: 1px solid #334155 !important;
+  border-radius: 12px !important;
+  display: flex !important; flex-direction: column !important;
+  min-height: 0 !important;
+  box-shadow: 0 20px 50px rgba(0,0,0,0.45) !important;
+  overflow: hidden !important;
+}
+/* Dedicated scrollport — do not scroll the <pre> itself (flex bugs / no wheel) */
+.fs-scroll,
+.fs-card .guide-body {
+  flex: 1 1 auto !important;
+  min-height: 0 !important;
+  height: auto !important;
+  overflow-x: hidden !important;
+  overflow-y: auto !important;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-y;
+  background: #020617 !important;
+}
+.fs-bar {
+  display: flex; justify-content: space-between; align-items: center;
+  gap: 0.75rem; padding: 0.65rem 0.85rem; flex-shrink: 0;
+  border-bottom: 1px solid #334155; color: #e2e8f0;
+  font-size: 0.85rem; font-weight: 700;
+}
+button.fs-close,
+label.fs-close {
+  cursor: pointer !important;
+  font-size: 1.15rem !important;
+  line-height: 1 !important;
+  color: #f8fafc !important;
+  padding: 0.15rem 0.55rem !important;
+  border-radius: 8px !important;
+  background: #334155 !important;
+  border: 1px solid #475569 !important;
+  font-family: inherit !important;
+  appearance: none !important;
+  -webkit-appearance: none !important;
+}
+button.fs-close:hover,
+label.fs-close:hover {
+  background: #7f1d1d !important;
+  border-color: #ef4444 !important;
+  color: #fff !important;
+}
+.fs-pre {
+  display: block !important;
+  flex: none !important;
+  height: auto !important;
+  max-height: none !important;
+  min-height: 100% !important;
+  overflow: visible !important;
+  margin: 0 !important;
+  padding: 1rem 1.25rem 2rem 1.25rem !important;
+  white-space: pre-wrap !important; word-break: break-word !important;
+  overflow-wrap: anywhere !important;
+  font-family: "IBM Plex Mono", ui-monospace, monospace !important;
+  font-size: 0.88rem !important; line-height: 1.5 !important;
+  color: #e2e8f0 !important; background: transparent !important;
+  max-width: 100% !important; box-sizing: border-box !important;
+}
+/* Sidebar / inline openers for client-side guides (no Streamlit rerun) */
+label.guide-open-btn {
+  display: block !important; width: 100% !important; box-sizing: border-box !important;
+  cursor: pointer !important; text-align: center !important;
+  margin: 0.2rem 0 !important; padding: 0.45rem 0.6rem !important;
+  border-radius: 8px !important; border: 1px solid #334155 !important;
+  background: #1e293b !important; color: #f8fafc !important;
+  font-size: 0.82rem !important; font-weight: 650 !important;
+}
+label.guide-open-btn:hover {
+  border-color: #2dd4bf !important; color: #a5f3fc !important;
+}
+.guide-body {
+  flex: 1 1 auto !important; overflow: auto !important; margin: 0 !important;
+  padding: 1rem 1.25rem 1.35rem !important;
+  color: #e2e8f0 !important; font-size: 0.9rem !important; line-height: 1.5 !important;
+  background: #020617 !important;
+  white-space: normal !important; word-break: break-word !important;
+  overflow-wrap: anywhere !important; max-width: 100% !important;
+  box-sizing: border-box !important;
+}
+.guide-body h3 { color: #5eead4 !important; font-size: 1rem !important; margin: 0.9rem 0 0.35rem !important; }
+.guide-body h3:first-child { margin-top: 0 !important; }
+.guide-body p, .guide-body li { color: #e2e8f0 !important; margin: 0.25rem 0 !important; }
+.guide-body ul { margin: 0.2rem 0 0.5rem 1.1rem !important; padding: 0 !important; }
+.guide-body code, .guide-body pre {
+  background: #111827 !important; color: #fde68a !important;
+  border-radius: 6px; padding: 0.15rem 0.35rem;
+  font-size: 0.8rem !important;
+}
+.guide-body pre {
+  display: block; padding: 0.65rem 0.75rem; white-space: pre-wrap;
+  border: 1px solid #334155; margin: 0.4rem 0 0.7rem;
+}
+.guide-body table { width: 100%; border-collapse: collapse; margin: 0.5rem 0; font-size: 0.8rem; }
+.guide-body th, .guide-body td {
+  border: 1px solid #334155; padding: 0.35rem 0.45rem; text-align: left; color: #e2e8f0 !important;
+}
+.guide-body th { background: #1e293b; color: #5eead4 !important; }
+.stream-out {
+  font-family: "IBM Plex Mono", ui-monospace, monospace !important;
+  font-size: 0.68rem !important; line-height: 1.35 !important; white-space: pre-wrap !important;
+  background: #020617 !important; color: #e2e8f0 !important; border-radius: 8px !important;
+  padding: 0.42rem 0.48rem !important;
+  height: 240px !important;
+  min-height: 240px !important;
+  max-height: 240px !important;
+  overflow-x: hidden !important;
+  overflow-y: auto !important;
+  border: 1px solid #1e293b !important;
+  box-sizing: border-box !important;
+}
+.stream-out .caret {
+  display: inline-block; width: 0.4em; height: 0.9em; vertical-align: text-bottom;
+  background: #2dd4bf; animation: caretBlink 0.85s step-end infinite; margin-left: 1px;
+}
+@keyframes caretBlink { 50% { opacity: 0; } }
+/* Buttons: light text + primary/secondary (kind= and baseButton-*) */
+div[data-testid="stButton"] button,
+div[data-testid="stButton"] button p,
+div[data-testid="stButton"] button span {
+  color: #f8fafc !important;
+  border-radius: 8px !important;
+  min-height: 2.05rem !important;
+  opacity: 1 !important;
+}
+div[data-testid="stButton"] button[kind="primary"],
+div[data-testid="stButton"] button[data-testid="baseButton-primary"] {
+  background: #0f766e !important;
+  background-color: #0f766e !important;
+  border: 1px solid #14b8a6 !important;
+  font-weight: 650 !important;
+}
+div[data-testid="stButton"] button[kind="secondary"],
+div[data-testid="stButton"] button[data-testid="baseButton-secondary"] {
+  background: #1e293b !important;
+  background-color: #1e293b !important;
+  border: 1px solid #64748b !important;
+}
+/* Run QVAC only — vivid amber (clearly not Single/Multi teal/slate) */
+div.st-key-qvac_only_btn button,
+div[class*="st-key-qvac_only_btn"] button,
+div[class*="st-key-qvac_only_btn"] button[kind="secondary"],
+div[class*="st-key-qvac_only_btn"] button[data-testid="baseButton-secondary"] {
+  background: #f59e0b !important;
+  background-color: #f59e0b !important;
+  border: 2px solid #fbbf24 !important;
+  color: #1c1917 !important;
+  font-weight: 750 !important;
+}
+div.st-key-qvac_only_btn button p,
+div.st-key-qvac_only_btn button span,
+div[class*="st-key-qvac_only_btn"] button p,
+div[class*="st-key-qvac_only_btn"] button span {
+  color: #1c1917 !important;
+}
+div.st-key-qvac_only_btn button:hover:not(:disabled),
+div[class*="st-key-qvac_only_btn"] button:hover:not(:disabled) {
+  background: #fbbf24 !important;
+  background-color: #fbbf24 !important;
+  border-color: #fde68a !important;
+}
+div.st-key-qvac_only_btn button:disabled,
+div[class*="st-key-qvac_only_btn"] button:disabled {
+  background: #78350f !important;
+  border-color: #a16207 !important;
+  color: #fde68a !important;
+}
+div.st-key-qvac_only_btn button:disabled p,
+div.st-key-qvac_only_btn button:disabled span,
+div[class*="st-key-qvac_only_btn"] button:disabled p,
+div[class*="st-key-qvac_only_btn"] button:disabled span {
+  color: #fde68a !important;
+}
+/* 3× QVAC toggle — compact orange */
+div.st-key-triple_qvac_toggle,
+div[class*="st-key-triple_qvac_toggle"] {
+  background: linear-gradient(135deg, #c2410c 0%, #ea580c 45%, #f59e0b 100%) !important;
+  border: 2px solid #fdba74 !important;
+  border-radius: 10px !important;
+  padding: 0.4rem 0.7rem 0.35rem 0.7rem !important;
+  margin: 0.25rem 0 0.55rem 0 !important;
+  box-shadow: 0 0 0 1px rgba(251,146,60,0.35), 0 4px 14px rgba(194,65,12,0.3) !important;
+}
+div.st-key-triple_qvac_toggle label,
+div.st-key-triple_qvac_toggle p,
+div.st-key-triple_qvac_toggle span,
+div[class*="st-key-triple_qvac_toggle"] label,
+div[class*="st-key-triple_qvac_toggle"] p,
+div[class*="st-key-triple_qvac_toggle"] span {
+  color: #fff7ed !important;
+  font-weight: 700 !important;
+}
+div.st-key-triple_qvac_toggle [data-testid="stMarkdownContainer"] p,
+div[class*="st-key-triple_qvac_toggle"] [data-testid="stMarkdownContainer"] p {
+  color: #fff7ed !important;
+}
+/* STOP · abort (sidebar) — solid red */
+div.st-key-hard_stop_btn button,
+div[class*="st-key-hard_stop_btn"] button {
+  background: #dc2626 !important;
+  background-color: #dc2626 !important;
+  border: 2px solid #f87171 !important;
+  color: #fff !important;
+  font-weight: 750 !important;
+}
+div.st-key-hard_stop_btn button p,
+div.st-key-hard_stop_btn button span,
+div[class*="st-key-hard_stop_btn"] button p,
+div[class*="st-key-hard_stop_btn"] button span {
+  color: #fff !important;
+}
+div.st-key-hard_stop_btn button:hover:not(:disabled),
+div[class*="st-key-hard_stop_btn"] button:hover:not(:disabled) {
+  background: #ef4444 !important;
+  border-color: #fca5a5 !important;
+}
+/* Spend confirm card (NOT st.dialog — no stuck overlay / no ✕ abort) */
+.spend-confirm-card {
+  margin: 0.75rem 0 1rem 0;
+  padding: 1rem 1.15rem 0.85rem 1.15rem;
+  border-radius: 14px;
+  border: 2px solid #fbbf24;
+  background: linear-gradient(180deg, #422006 0%, #1c1917 100%);
+  box-shadow: 0 12px 40px rgba(0,0,0,0.45);
+}
+.spend-confirm-card .spend-title {
+  font-size: 1.05rem;
+  font-weight: 750;
+  color: #fde68a;
+  margin: 0 0 0.45rem 0;
+}
+.spend-confirm-card .spend-body {
+  color: #f5f5f4;
+  font-size: 0.92rem;
+  line-height: 1.45;
+  margin: 0 0 0.35rem 0;
+}
+.spend-confirm-card .spend-note {
+  color: #a8a29e;
+  font-size: 0.78rem;
+  margin: 0;
+}
+div[data-testid="stButton"] button:disabled {
+  opacity: 0.55 !important;
+}
+div[data-testid="stExpander"] details {
+  border: 1px solid #334155; border-radius: 8px; background: #111827;
+}
+div[data-testid="stExpander"] summary,
+div[data-testid="stExpander"] summary p,
+div[data-testid="stExpander"] summary span:not([data-testid="stIconMaterial"]) {
+  color: #e2e8f0 !important;
+}
+textarea, .stTextArea textarea {
+  border-radius: 8px !important;
+  background: #0f172a !important;
+  color: #f1f5f9 !important;
+  border: 1px solid #475569 !important;
+  font-size: 0.76rem !important;
+}
+.stCaption, [data-testid="stCaption"] { color: #94a3b8 !important; font-size: 0.66rem !important; }
+div[data-testid="stAlert"] { padding: 0.35rem 0.55rem !important; }
+/* Select / number / checkbox readable on dark */
+[data-testid="stSelectbox"] div[data-baseweb="select"] > div,
+[data-testid="stNumberInput"] input {
+  background-color: #0f172a !important;
+  color: #f1f5f9 !important;
+  border-color: #475569 !important;
+}
+[data-testid="stWidgetLabel"] p { color: #cbd5e1 !important; }

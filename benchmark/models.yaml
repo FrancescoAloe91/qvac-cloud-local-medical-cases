@@ -1,42 +1,77 @@
-# Free-tier match profile (matches prior demo screens).
-# OpenRouter BYOK — you pay tokens; models mirror free-web class, not Opus/Pro.
+# Two cloud bands + on-device MedPsy:
+#   Band A — free-web class (Instant / Sonnet 5 / Flash): still OpenRouter $ per token
+#   Band B — lighter free-user proxies (Mini / Haiku / Qwen Flash): still OpenRouter $
+# True $0 on OpenRouter = only model IDs ending in `:free` (see README); not GPT/Claude.
 # Override judge: BENCHMARK_JUDGE_MODEL=...
 
 profile: free_tier_match
 
 candidates:
+  # --- Band A · free-web everyday class (API proxies) ---
   - key: chatgpt
-    label: ChatGPT
-    display_label: ChatGPT · OpenAI · GPT-5.5 Instant (API)
+    label: ChatGPT Instant
+    display_label: ChatGPT · OpenAI · GPT-5.5 Instant (free-web class)
     vendor: OpenAI
     site: chatgpt.com
     color: "#10a37f"
     provider: openrouter
     model: openai/gpt-5.5
+    band: free_web
   - key: claude
-    label: Claude
-    display_label: Claude · Anthropic · Sonnet 4.6 (Extra-class)
+    label: Claude Sonnet 5
+    display_label: Claude · Anthropic · Sonnet 5 (free-web class)
     vendor: Anthropic
     site: claude.ai
     color: "#d97706"
     provider: openrouter
-    model: anthropic/claude-sonnet-4.6
+    model: anthropic/claude-sonnet-5
+    band: free_web
   - key: gemini
-    label: Gemini
-    display_label: Gemini · Google · 3.5 Flash
+    label: Gemini Flash
+    display_label: Gemini · Google · 3.5 Flash (free-web class)
     vendor: Google
     site: gemini.google.com
     color: "#8ab4f8"
     provider: openrouter
     model: google/gemini-3.5-flash
+    band: free_web
+  # --- Band B · lighter / fallback free-user proxies ---
+  - key: chatgpt_mini
+    label: GPT Mini
+    display_label: ChatGPT · OpenAI · GPT-5.4 Mini (light free-fallback)
+    vendor: OpenAI
+    site: chatgpt.com
+    color: "#059669"
+    provider: openrouter
+    model: openai/gpt-5.4-mini
+    band: free_light
+  - key: claude_haiku
+    label: Claude Haiku
+    display_label: Claude · Anthropic · Haiku 4.5 (light free-fallback)
+    vendor: Anthropic
+    site: claude.ai
+    color: "#b45309"
+    provider: openrouter
+    model: anthropic/claude-haiku-4.5
+    band: free_light
+  - key: qwen
+    label: Qwen Flash
+    display_label: Qwen · Alibaba · 3.6 Flash (open-weight class)
+    vendor: Alibaba
+    site: openrouter.ai
+    color: "#a855f7"
+    provider: openrouter
+    model: qwen/qwen3.6-flash
+    band: free_light
+  # Default on-device slot (4B Q4). Toggle "3× QVAC" adds 1.7B Q4 + 4B Q8.
   - key: qvac
-    label: QVAC MedPsy 4B
-    display_label: QVAC · on-device · MedPsy-4B via QVAC SDK
+    label: MedPsy 4B Q4
+    display_label: QVAC · MedPsy-4B Q4 · on-device
     vendor: Tether QVAC
     site: local (QVAC SDK)
     color: "#00d09c"
     provider: qvac
-    model: medpsy-4b
+    model: medpsy-4b-q4
 
 judge:
   # Independent vendor (not OpenAI/Anthropic/Google). Reasoning model ≈ free-tier class.

@@ -22,6 +22,7 @@ from benchmark.prompts import (
     candidate_user,
     parse_candidate_answers,
 )
+from benchmark.qvac_variants import is_qvac_key, merge_roster
 from benchmark.report import summarize_runs, write_artifact, write_summary
 from benchmark.schema import (
     CandidateAnswer,
@@ -40,6 +41,10 @@ BLIND_LABELS = [
     "Candidate 3",
     "Candidate 4",
     "Candidate 5",
+    "Candidate 6",
+    "Candidate 7",
+    "Candidate 8",
+    "Candidate 9",
 ]
 
 EventCallback = Optional[Callable[[Dict[str, Any]], None]]
@@ -50,8 +55,18 @@ def _emit(on_event: EventCallback, event: Dict[str, Any]) -> None:
         on_event(event)
 
 
-def estimate_run_cost_usd(cfg: Dict[str, Any], case: Case, include_qvac: bool) -> float:
-    return float(estimate_cost_breakdown(cfg, case, include_qvac=include_qvac)["total_usd"])
+def estimate_run_cost_usd(
+    cfg: Dict[str, Any],
+    case: Case,
+    include_qvac: bool,
+    *,
+    triple_qvac: bool = False,
+) -> float:
+    return float(
+        estimate_cost_breakdown(
+            cfg, case, include_qvac=include_qvac, triple_qvac=triple_qvac
+        )["total_usd"]
+    )
 
 
 def estimate_cost_breakdown(
@@ -61,6 +76,7 @@ def estimate_cost_breakdown(
     include_qvac: bool,
     gold_reference: str = "",
     n: int = 1,
+    triple_qvac: bool = False,
 ) -> Dict[str, Any]:
     """Length-aware per-model + judge cost estimate (USD).
 
@@ -87,15 +103,19 @@ def estimate_cost_breakdown(
     judge_in = judge_ctx + 350 + n_q * (per_q_answer + 220)
     judge_out = int(est.get("judge_output_tokens_per_question", 400)) * n_q
 
+    roster = merge_roster(
+        list(cfg.get("candidates") or []),
+        triple_qvac=bool(triple_qvac),
+        include_qvac=bool(include_qvac),
+    )
+
     per_model: List[Dict[str, Any]] = []
     cloud_keys = 0
     total = 0.0
-    for c in cfg.get("candidates") or []:
+    for c in roster:
         key = c.get("key")
         provider = c.get("provider")
         if provider == "qvac":
-            if not include_qvac:
-                continue
             per_model.append(
                 {
                     "key": key,
@@ -173,9 +193,17 @@ def dry_run_estimate(
     skip_qvac: bool = False,
     gold_reference: str = "",
     case_stem_override: str = "",
+    triple_qvac: bool = False,
 ) -> Dict[str, Any]:
     cfg = load_models_config(models_path)
-    include_qvac = (not skip_qvac) and qvac_bridge.available()
+    include_qvac = (not skip_qvac) and (
+        qvac_bridge.available() or qvac_bridge.reachable()
+    )
+    roster = merge_roster(
+        list(cfg.get("candidates") or []),
+        triple_qvac=bool(triple_qvac),
+        include_qvac=include_qvac,
+    )
     per_case = {}
     breakdowns = {}
     total = 0.0
@@ -184,7 +212,12 @@ def dry_run_estimate(
         if case_stem_override.strip():
             case = case.model_copy(update={"stem": case_stem_override.strip()})
         bd = estimate_cost_breakdown(
-            cfg, case, include_qvac=include_qvac, gold_reference=gold_reference, n=n
+            cfg,
+            case,
+            include_qvac=include_qvac,
+            gold_reference=gold_reference,
+            n=n,
+            triple_qvac=triple_qvac,
         )
         breakdowns[cid] = bd
         per_case[cid] = bd["total_usd"]
@@ -195,6 +228,7 @@ def dry_run_estimate(
         "n": n,
         "estimated_total_usd": round(total, 4),
         "qvac_included": include_qvac,
+        "triple_qvac": bool(triple_qvac) and include_qvac,
         "profile": cfg.get("profile"),
         "candidates": [
             {
@@ -203,8 +237,7 @@ def dry_run_estimate(
                 "display_label": c.get("display_label"),
                 "site": c.get("site"),
             }
-            for c in (cfg.get("candidates") or [])
-            if c.get("provider") != "qvac" or include_qvac
+            for c in roster
         ],
         "judge": (cfg.get("judge") or {}).get("display_label")
         or (cfg.get("judge") or {}).get("model"),
@@ -260,6 +293,40 @@ def _collect_candidate(
             display_label=display,
         )
     elif provider == "qvac":
+        gguf = cand_cfg.get("gguf_path")
+        if gguf:
+            loaded = qvac_bridge.load_model(gguf)
+            if not loaded.get("ok"):
+                raw, meta = "", ModelCallMeta(
+                    model=model_id,
+                    provider="qvac",
+                    display_label=display,
+                    error=str(loaded.get("error") or f"Failed to load {gguf}"),
+                    cost_usd=0.0,
+                )
+                answers = {}
+                cand = CandidateAnswer(
+                    candidate_key=key,
+                    label=label,
+                    display_label=display,
+                    vendor=vendor,
+                    site=site,
+                    blind_id=blind_id,
+                    answers=answers,
+                    raw_response=raw,
+                    meta=meta,
+                )
+                _emit(
+                    on_event,
+                    {
+                        "type": "candidate_done",
+                        "key": key,
+                        "error": meta.error,
+                        "meta": meta.model_dump(),
+                        "text": raw,
+                    },
+                )
+                return cand
         prompt = candidate_system() + "\n\n" + candidate_user(case)
         raw, meta = qvac_bridge.generate(
             prompt, on_token=on_token, display_label=display
@@ -303,16 +370,25 @@ def iter_collect_parallel(
     blind_map: Dict[str, str],
     on_event: EventCallback = None,
 ):
-    """Yield CandidateAnswer as each parallel worker finishes (main-thread friendly)."""
-    with ThreadPoolExecutor(max_workers=max(1, len(candidates_cfg))) as pool:
+    """Yield CandidateAnswer as workers finish.
+
+    Cloud candidates run in parallel; QVAC slots run sequentially (one GGUF at a time).
+    """
+    cloud = [c for c in candidates_cfg if c.get("provider") != "qvac"]
+    qvac_list = [c for c in candidates_cfg if c.get("provider") == "qvac"]
+
+    with ThreadPoolExecutor(max_workers=max(1, len(cloud) or 1)) as pool:
         futures = {
             pool.submit(
                 _collect_candidate, case, c, blind_map[c["key"]], on_event
             ): c["key"]
-            for c in candidates_cfg
+            for c in cloud
         }
         for fut in as_completed(futures):
             yield fut.result()
+
+    for c in qvac_list:
+        yield _collect_candidate(case, c, blind_map[c["key"]], on_event)
 
 
 def iter_collect_live(
@@ -320,7 +396,7 @@ def iter_collect_live(
     candidates_cfg: List[Dict[str, Any]],
     blind_map: Dict[str, str],
 ):
-    """Parallel collect with live token events for UI (main-thread consumer).
+    """Cloud parallel + sequential QVAC with live token events for UI.
 
     Yields dicts:
       {"type": "token", "key", "delta", "chars", "ttft_s", "elapsed_s", "tps_live"}
@@ -339,8 +415,56 @@ def iter_collect_live(
 
     def worker(cand_cfg: Dict[str, Any]) -> None:
         key = cand_cfg["key"]
-        with lock:
-            start_at[key] = _time.time()
+        run_cfg = dict(cand_cfg)
+
+        # Live TTFT must exclude GGUF load (can be minutes). Load first, then start clock.
+        if cand_cfg.get("provider") == "qvac":
+            gguf = cand_cfg.get("gguf_path")
+            if gguf:
+                loaded = qvac_bridge.load_model(gguf)
+                if not loaded.get("ok"):
+                    from benchmark.schema import CandidateAnswer, ModelCallMeta
+
+                    q.put(
+                        {
+                            "type": "done",
+                            "candidate": CandidateAnswer(
+                                candidate_key=key,
+                                label=str(cand_cfg.get("label") or key),
+                                display_label=str(
+                                    cand_cfg.get("display_label")
+                                    or cand_cfg.get("label")
+                                    or ""
+                                ),
+                                vendor=str(cand_cfg.get("vendor") or ""),
+                                site=str(cand_cfg.get("site") or ""),
+                                blind_id=blind_map[key],
+                                answers={},
+                                raw_response="",
+                                meta=ModelCallMeta(
+                                    model=str(cand_cfg.get("model") or ""),
+                                    provider="qvac",
+                                    display_label=str(
+                                        cand_cfg.get("display_label")
+                                        or cand_cfg.get("label")
+                                        or ""
+                                    ),
+                                    error=str(
+                                        loaded.get("error") or f"Failed to load {gguf}"
+                                    ),
+                                    cost_usd=0.0,
+                                ),
+                            ),
+                        }
+                    )
+                    return
+                # Already loaded — skip second /load inside _collect_candidate
+                run_cfg["gguf_path"] = None
+            with lock:
+                start_at[key] = _time.time()
+        else:
+            with lock:
+                start_at[key] = _time.time()
 
         def on_event(evt: Dict[str, Any]) -> None:
             if evt.get("type") != "candidate_token":
@@ -376,7 +500,7 @@ def iter_collect_live(
 
         try:
             cand = _collect_candidate(
-                case, cand_cfg, blind_map[cand_cfg["key"]], on_event
+                case, run_cfg, blind_map[cand_cfg["key"]], on_event
             )
             q.put({"type": "done", "candidate": cand})
         except Exception as exc:
@@ -407,9 +531,18 @@ def iter_collect_live(
                 }
             )
 
+    cloud = [c for c in candidates_cfg if c.get("provider") != "qvac"]
+    qvac_list = [c for c in candidates_cfg if c.get("provider") == "qvac"]
+
+    def qvac_sequence() -> None:
+        for c in qvac_list:
+            worker(c)
+
     threads = [
-        threading.Thread(target=worker, args=(c,), daemon=True) for c in candidates_cfg
+        threading.Thread(target=worker, args=(c,), daemon=True) for c in cloud
     ]
+    if qvac_list:
+        threads.append(threading.Thread(target=qvac_sequence, daemon=True))
     for t in threads:
         t.start()
 
@@ -434,23 +567,27 @@ def prepare_run(
     skip_qvac: bool = False,
     require_qvac: bool = False,
     seed: Optional[int] = None,
+    triple_qvac: bool = False,
 ) -> Dict[str, Any]:
     """Resolve case + candidate list + blind map for UI-driven runs."""
     case = load_case(case_id)
     cfg = load_models_config(models_path)
-    candidates_cfg = list(cfg.get("candidates") or [])
+    yaml_cands = list(cfg.get("candidates") or [])
+    # Sidecar HTTP up is enough — /load can hot-swap GGUFs before generate.
+    qvac_sidecar = qvac_bridge.reachable() or qvac_bridge.available()
+    include_qvac = (not skip_qvac) and qvac_sidecar
+    candidates_cfg = merge_roster(
+        yaml_cands,
+        triple_qvac=bool(triple_qvac) and include_qvac,
+        include_qvac=include_qvac,
+    )
     has_qvac_cfg = any(c.get("provider") == "qvac" for c in candidates_cfg)
-    qvac_up = qvac_bridge.available()
 
-    if require_qvac and has_qvac_cfg and not qvac_up:
+    if require_qvac and not has_qvac_cfg:
         raise RuntimeError(
             "QVAC SDK sidecar is required for demo mode but is offline. "
             "Start it with: cd sidecar && npm start"
         )
-    if skip_qvac:
-        candidates_cfg = [c for c in candidates_cfg if c.get("provider") != "qvac"]
-    elif has_qvac_cfg and not qvac_up:
-        candidates_cfg = [c for c in candidates_cfg if c.get("provider") != "qvac"]
 
     rng = random.Random(seed if seed is not None else uuid.uuid4().int)
     order = list(range(len(candidates_cfg)))
@@ -465,6 +602,7 @@ def prepare_run(
         "candidates_cfg": candidates_cfg,
         "blind_map": blind_map,
         "has_qvac_cfg": has_qvac_cfg,
+        "triple_qvac": bool(triple_qvac) and include_qvac,
     }
 
 
@@ -479,6 +617,7 @@ def run_once(
     on_event: EventCallback = None,
     gold_reference: str = "",
     case_stem_override: str = "",
+    triple_qvac: bool = False,
 ) -> RunArtifact:
     prep = prepare_run(
         case_id,
@@ -486,6 +625,7 @@ def run_once(
         skip_qvac=skip_qvac,
         require_qvac=require_qvac,
         seed=seed,
+        triple_qvac=triple_qvac,
     )
     case = prep["case"]
     if case_stem_override.strip():
@@ -573,6 +713,10 @@ def run_once(
             row["latency_s"] = m.latency_s
             row["cost_usd"] = m.cost_usd
             row["model"] = m.model
+            if m.ram_mb is not None:
+                row["ram_mb"] = m.ram_mb
+            if m.gguf_mb is not None:
+                row["gguf_mb"] = m.gguf_mb
 
     total_cost = 0.0
     for c in collected:
@@ -583,7 +727,7 @@ def run_once(
             total_cost += j.judge_meta.cost_usd
 
     notes = ""
-    if has_qvac_cfg and not any(c.candidate_key == "qvac" for c in collected):
+    if has_qvac_cfg and not any(is_qvac_key(c.candidate_key) for c in collected):
         notes = "QVAC skipped (sidecar unavailable). Start sidecar for full compare."
 
     artifact = RunArtifact(
@@ -631,6 +775,7 @@ def run_n(
     on_event: EventCallback = None,
     gold_reference: str = "",
     case_stem_override: str = "",
+    triple_qvac: bool = False,
 ) -> tuple[List[RunArtifact], MultiRunSummary]:
     if out_dir is None:
         from benchmark.workspace import scoped_artifacts_dir
@@ -652,6 +797,7 @@ def run_n(
             on_event=on_event,
             gold_reference=gold_reference,
             case_stem_override=case_stem_override,
+            triple_qvac=triple_qvac,
         )
         write_artifact(art, out)
         artifacts.append(art)
