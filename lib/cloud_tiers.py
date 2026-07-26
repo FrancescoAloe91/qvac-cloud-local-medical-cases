@@ -205,11 +205,15 @@ def tier_label(model_key: str, labels: Optional[Dict[str, str]] = None) -> str:
 
 
 def display_model_name(model_key: str, labels: Optional[Dict[str, str]] = None) -> str:
+    from lib.model_labels import MODEL_LABELS, full_model_label
+
+    if model_key in MODEL_LABELS:
+        return full_model_label(model_key)
     base = MODEL_CONFIG.get(model_key, {}).get("name", model_key)
     tier = tier_label(model_key, labels)
     return f"{base} · {tier}" if tier else base
 
 
 def short_chart_label(model_key: str, labels: Optional[Dict[str, str]] = None) -> str:
-    """Full model + tier label for charts (no truncation)."""
+    """Full name + version for charts (no truncation)."""
     return display_model_name(model_key, labels)

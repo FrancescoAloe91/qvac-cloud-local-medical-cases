@@ -2,8 +2,9 @@
   "chatgpt": "5.5 Instant",
   "claude": "Sonnet 5",
   "gemini": "3.5 Flash",
-  "chatgpt_mini": "5.4 Mini",
-  "claude_haiku": "Haiku 4.5",
-  "qwen": "3.6 Flash",
+  "local_gemma": "Gemma-2-2B-IT Q4",
+  "local_qwen": "Qwen2.5 (legacy)",
+  "local_llama": "Llama-3.2-3B Q4",
+  "local_phi": "Phi-3.5-mini Q4",
   "qvac": "MedPsy-4B-GGUF Q4_K_M · QVAC SDK · on-device"
 }

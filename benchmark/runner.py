@@ -22,7 +22,7 @@ from benchmark.prompts import (
     candidate_user,
     parse_candidate_answers,
 )
-from benchmark.qvac_variants import is_qvac_key, merge_roster
+from benchmark.qvac_variants import is_qvac_key, local_only_roster, merge_roster
 from benchmark.report import summarize_runs, write_artifact, write_summary
 from benchmark.schema import (
     CandidateAnswer,
@@ -77,11 +77,13 @@ def estimate_cost_breakdown(
     gold_reference: str = "",
     n: int = 1,
     triple_qvac: bool = False,
+    local_only: bool = False,
 ) -> Dict[str, Any]:
     """Length-aware per-model + judge cost estimate (USD).
 
     Scales with clinical case + gold text length (no high yaml floor that
     freezes the estimate for typical case sizes).
+    ``local_only`` = 6 on-device GGUFs ($0 collect) + judge calls only.
     """
     est = cfg.get("estimate") or {}
     sys_u = candidate_system()
@@ -103,11 +105,14 @@ def estimate_cost_breakdown(
     judge_in = judge_ctx + 350 + n_q * (per_q_answer + 220)
     judge_out = int(est.get("judge_output_tokens_per_question", 400)) * n_q
 
-    roster = merge_roster(
-        list(cfg.get("candidates") or []),
-        triple_qvac=bool(triple_qvac),
-        include_qvac=bool(include_qvac),
-    )
+    if local_only:
+        roster = local_only_roster()
+    else:
+        roster = merge_roster(
+            list(cfg.get("candidates") or []),
+            triple_qvac=bool(triple_qvac),
+            include_qvac=bool(include_qvac),
+        )
 
     per_model: List[Dict[str, Any]] = []
     cloud_keys = 0
@@ -327,9 +332,19 @@ def _collect_candidate(
                     },
                 )
                 return cand
-        prompt = candidate_system() + "\n\n" + candidate_user(case)
+        # Prefer structured chat messages so Instruct GGUFs (Qwen/Llama/Phi)
+        # apply their embedded chat_template correctly.
+        sys_p = candidate_system()
+        user_p = candidate_user(case)
+        prompt = sys_p + "\n\n" + user_p
         raw, meta = qvac_bridge.generate(
-            prompt, on_token=on_token, display_label=display
+            prompt,
+            on_token=on_token,
+            display_label=display,
+            messages=[
+                {"role": "system", "content": sys_p},
+                {"role": "user", "content": user_p},
+            ],
         )
     else:
         raw, meta = "", ModelCallMeta(

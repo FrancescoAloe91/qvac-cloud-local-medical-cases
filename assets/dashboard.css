@@ -692,6 +692,32 @@ div[class*="st-key-hard_stop_btn"] button:hover:not(:disabled) {
 div[data-testid="stButton"] button:disabled {
   opacity: 0.55 !important;
 }
+
+/* Run grid 2×2 — equal cost-line height so buttons stay aligned across columns */
+.run-cost-cell {
+  min-height: 2.6rem;
+  box-sizing: border-box;
+}
+.only-local-cost {
+  color: #cbd5e1 !important;
+}
+.only-local-cost b { color: #f8fafc !important; }
+/* Soft amber edge on the Only-local button only (same amber as Run clock) */
+div.st-key-local_only_btn button,
+div[class*="st-key-local_only_btn"] button {
+  border: 1px solid #f59e0b !important;
+  background: #1c1917 !important;
+  color: #fde68a !important;
+  font-weight: 650 !important;
+  box-shadow: none !important;
+}
+div.st-key-local_only_btn button p,
+div.st-key-local_only_btn button span,
+div[class*="st-key-local_only_btn"] button p,
+div[class*="st-key-local_only_btn"] button span {
+  color: #fde68a !important;
+  font-weight: 650 !important;
+}
 div[data-testid="stExpander"] details {
   border: 1px solid #334155; border-radius: 8px; background: #111827;
 }

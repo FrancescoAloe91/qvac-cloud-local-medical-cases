@@ -16,6 +16,7 @@ from benchmark.scoring import (
     semantic_item_score,
     soft_alignment_from_checklist,
 )
+from lib.model_labels import is_current_roster_key
 
 # Multi-run mean reliability from CV% = 100 × std / mean
 # Five bands (ceilings): Super High ≤3 · High ≤10 · Medium ≤20 · Low ≤30 · else Very Low
@@ -62,7 +63,10 @@ def summarize_runs(artifacts: List[RunArtifact]) -> MultiRunSummary:
     scores: Dict[str, List[float]] = {}
     for art in artifacts:
         for row in art.ranking:
-            scores.setdefault(row["key"], []).append(float(row["accuracy"]))
+            key = str(row.get("key") or "")
+            if not is_current_roster_key(key):
+                continue  # drop legacy Band B / old cloud keys from means
+            scores.setdefault(key, []).append(float(row["accuracy"]))
 
     stats: Dict[str, Dict[str, float]] = {}
     outliers: List[str] = []
@@ -81,6 +85,7 @@ def summarize_runs(artifacts: List[RunArtifact]) -> MultiRunSummary:
             iqr = s[-1] - s[0]
         else:
             iqr = 0.0
+        n_runs = len(vals)
         stats[key] = {
             "mean": round(mean, 2),
             "median": round(med, 2),
@@ -90,7 +95,8 @@ def summarize_runs(artifacts: List[RunArtifact]) -> MultiRunSummary:
             "iqr": round(iqr, 2),
             "min": round(min(vals), 2),
             "max": round(max(vals), 2),
-            "n": float(len(vals)),
+            "n": float(n_runs),
+            "n_runs": float(n_runs),
         }
         # Flag high variance (prefer N≥5 for stable CV reads)
         if len(vals) >= 3 and std > 15:
@@ -115,6 +121,7 @@ def summarize_runs(artifacts: List[RunArtifact]) -> MultiRunSummary:
             "iqr": v["iqr"],
             "min": v["min"],
             "max": v["max"],
+            "n_runs": int(v.get("n_runs") or v.get("n") or 0),
         }
         for k, v in stats.items()
     ]
@@ -137,8 +144,8 @@ def summarize_runs(artifacts: List[RunArtifact]) -> MultiRunSummary:
 def print_summary_table(summary: MultiRunSummary) -> str:
     lines = [
         f"Case {summary.case_id} · N={summary.n} · cost≈${summary.total_cost_usd:.4f}",
-        f"{'Rank':<6}{'Model':<12}{'Mean%':>7}{'±Std':>7}{'CV%':>6}{'Rel':>11}{'Med%':>7}",
-        "-" * 64,
+        f"{'Rank':<6}{'Model':<12}{'Mean%':>7}{'±Std':>7}{'CV%':>6}{'Rel':>11}{'Med%':>7}{'Runs':>6}",
+        "-" * 70,
     ]
     for row in summary.ranking_mean:
         lines.append(
@@ -146,6 +153,7 @@ def print_summary_table(summary: MultiRunSummary) -> str:
             f"{row['accuracy_mean']:>7.1f}{row['std']:>7.1f}"
             f"{row.get('cv_pct', 0):>6.1f}{str(row.get('reliability', '—')):>11}"
             f"{row.get('median', 0):>7.1f}"
+            f"{int(row.get('n_runs') or 0):>6}"
         )
     if summary.outliers:
         lines.append("Reliability notes:")
@@ -337,7 +345,7 @@ def rebuild_multi_from_history(
     current formula, return summarize_runs-compatible summary + per-run rows.
     Zero API cost.
     """
-    n = max(2, min(int(n), 20))
+    n = max(2, min(int(n), 30))
     pairs = artifacts_for_case(out_dir, case_id, limit=n)
     if len(pairs) < 2:
         return {

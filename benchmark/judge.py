@@ -5,8 +5,8 @@ from __future__ import annotations
 import json
 import re
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Any, Dict, List, Optional
+from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
+from typing import Any, Callable, Dict, List, Optional
 
 from benchmark import openrouter
 from benchmark.prompts import judge_system, judge_user, use_gold_ground_truth
@@ -429,6 +429,283 @@ def judge_candidate(
     )
 
 
+class PipelinedJudge:
+    """Judge candidates as soon as each finishes collect (overlap with later collects).
+
+    Submit from the Streamlit/script thread; call :meth:`poll` periodically on that
+    same thread so ``on_progress`` can update the UI. Finish with :meth:`finalize`.
+    """
+
+    def __init__(
+        self,
+        case: Case,
+        judge_model: str,
+        *,
+        temperature: float = 0.0,
+        gold_reference: str = "",
+        max_workers: Optional[int] = None,
+        expected_total: int = 0,
+        on_progress: Optional[Callable[[Dict[str, Any]], None]] = None,
+    ) -> None:
+        self.case = case
+        self.judge_model = judge_model
+        self.temperature = float(temperature)
+        self.gold_reference = gold_reference or ""
+        self.expected_total = max(0, int(expected_total or 0))
+        self.on_progress = on_progress
+        n_hint = max(self.expected_total, 1)
+        self._workers = max(1, min(n_hint, max_workers or n_hint))
+        self._pool = ThreadPoolExecutor(max_workers=self._workers)
+        self._pending: Dict[Future, CandidateAnswer] = {}
+        self._by_key: Dict[str, JudgeResult] = {}
+        self._candidates: List[CandidateAnswer] = []
+        self._finished = 0
+        self._shutdown = False
+        _register_active_pipe(self)
+
+    @property
+    def candidates(self) -> List[CandidateAnswer]:
+        return list(self._candidates)
+
+    @property
+    def submitted(self) -> int:
+        return len(self._candidates)
+
+    @property
+    def done_count(self) -> int:
+        return self._finished
+
+    @property
+    def pending_count(self) -> int:
+        return len(self._pending)
+
+    @property
+    def total(self) -> int:
+        return max(self.expected_total, len(self._candidates))
+
+    def set_expected_total(self, n: int) -> None:
+        self.expected_total = max(0, int(n))
+
+    def _emit(self, evt: Dict[str, Any]) -> None:
+        if self.on_progress is None:
+            return
+        try:
+            self.on_progress(evt)
+        except Exception:
+            pass
+
+    def _one_safe(self, cand: CandidateAnswer) -> JudgeResult:
+        # No on_progress from worker threads — UI updates stay on the script thread.
+        # Never spend DeepSeek on errored / empty collects (even if partial text exists).
+        if cand.meta.error:
+            return _zero_judgment(
+                self.case,
+                cand,
+                self.judge_model,
+                f"Candidate error: {cand.meta.error}",
+                cand.meta,
+            )
+        if not _candidate_has_answer(cand):
+            z = _zero_judgment(
+                self.case,
+                cand,
+                self.judge_model,
+                "Empty answer — not judged (skipped DeepSeek to save credits)",
+                cand.meta,
+            )
+            for qs in z.question_scores:
+                qs.errors = ["empty_answer"]
+            return z
+        return judge_candidate(
+            self.case,
+            cand,
+            self.judge_model,
+            temperature=self.temperature,
+            gold_reference=self.gold_reference,
+        )
+
+    def submit(self, cand: CandidateAnswer) -> bool:
+        """Queue one candidate for DeepSeek. Returns False if duplicate / closed."""
+        if self._shutdown:
+            return False
+        if any(c.candidate_key == cand.candidate_key for c in self._candidates):
+            return False
+        self._candidates.append(cand)
+        self._emit(
+            {
+                "phase": "queued",
+                "key": cand.candidate_key,
+                "label": cand.display_label or cand.label or cand.candidate_key,
+                "done": self._finished,
+                "total": self.total,
+            }
+        )
+        fut = self._pool.submit(self._one_safe, cand)
+        self._pending[fut] = cand
+        return True
+
+    def _harvest(self, fut: Future) -> None:
+        cand = self._pending.pop(fut, None)
+        if cand is None:
+            return
+        try:
+            result = fut.result()
+        except Exception as exc:
+            result = _zero_judgment(
+                self.case,
+                cand,
+                self.judge_model,
+                f"Judge exception: {type(exc).__name__}: {exc}",
+                cand.meta,
+            )
+            for qs in result.question_scores:
+                qs.errors = ["judge_exception"]
+        self._by_key[cand.candidate_key] = result
+        self._finished += 1
+        self._emit(
+            {
+                "phase": "done",
+                "key": cand.candidate_key,
+                "label": cand.display_label or cand.label or cand.candidate_key,
+                "done": self._finished,
+                "total": self.total,
+                "accuracy": result.weighted_accuracy,
+                "failed": is_failed_judgment(result),
+                "note": (result.judge_meta.error if result.judge_meta else None) or "",
+            }
+        )
+
+    def poll(self) -> int:
+        """Non-blocking: harvest finished futures. Call from the UI/script thread."""
+        n = 0
+        for fut in list(self._pending):
+            if fut.done():
+                self._harvest(fut)
+                n += 1
+        return n
+
+    def finalize(self) -> List[JudgeResult]:
+        """Wait for outstanding judges, serial retry, unique accuracies, shutdown."""
+        while self._pending:
+            done, _ = wait(
+                tuple(self._pending.keys()),
+                return_when=FIRST_COMPLETED,
+            )
+            for fut in done:
+                if fut in self._pending:
+                    self._harvest(fut)
+
+        ordered = [
+            self._by_key[c.candidate_key]
+            for c in self._candidates
+            if c.candidate_key in self._by_key
+        ]
+        cand_by = {c.candidate_key: c for c in self._candidates}
+        for j in list(ordered):
+            if not _is_rejudgable_failure(j):
+                continue
+            cand = cand_by.get(j.candidate_key)
+            if not cand or not _candidate_has_answer(cand):
+                continue
+            self._emit(
+                {
+                    "phase": "retry",
+                    "key": cand.candidate_key,
+                    "label": cand.display_label or cand.label or cand.candidate_key,
+                    "done": self._finished,
+                    "total": self.total,
+                }
+            )
+            time.sleep(1.5)
+            retry = judge_candidate(
+                self.case,
+                cand,
+                self.judge_model,
+                temperature=self.temperature,
+                gold_reference=self.gold_reference,
+            )
+            self._by_key[j.candidate_key] = retry
+            self._emit(
+                {
+                    "phase": "retry_done",
+                    "key": cand.candidate_key,
+                    "label": cand.display_label or cand.label or cand.candidate_key,
+                    "done": self._finished,
+                    "total": self.total,
+                    "accuracy": retry.weighted_accuracy,
+                    "failed": is_failed_judgment(retry),
+                }
+            )
+        ordered = [
+            self._by_key[c.candidate_key]
+            for c in self._candidates
+            if c.candidate_key in self._by_key
+        ]
+
+        fair = [j for j in ordered if not is_failed_judgment(j)]
+        failed = [j for j in ordered if is_failed_judgment(j)]
+        if fair:
+            unique_fair, _notes = ensure_unique_accuracies(self.case, fair)
+            by_u = {j.candidate_key: j for j in unique_fair}
+            for j in failed:
+                by_u[j.candidate_key] = j
+            ordered = [
+                by_u[c.candidate_key]
+                for c in self._candidates
+                if c.candidate_key in by_u
+            ]
+
+        self.close(cancel_pending=False)
+        return ordered
+
+    def close(self, *, cancel_pending: bool = False) -> None:
+        """Idempotent pool shutdown. ``cancel_pending=True`` on STOP (best-effort)."""
+        self._shutdown = True
+        if cancel_pending:
+            for fut in list(self._pending):
+                fut.cancel()
+            self._pending.clear()
+        try:
+            self._pool.shutdown(wait=False, cancel_futures=bool(cancel_pending))
+        except TypeError:
+            try:
+                self._pool.shutdown(wait=False)
+            except Exception:
+                pass
+        except Exception:
+            pass
+        _unregister_active_pipe(self)
+
+
+# Process-wide registry so sidebar STOP can best-effort cancel in-flight judges.
+_ACTIVE_PIPES: List["PipelinedJudge"] = []
+
+
+def _register_active_pipe(pipe: "PipelinedJudge") -> None:
+    if pipe not in _ACTIVE_PIPES:
+        _ACTIVE_PIPES.append(pipe)
+
+
+def _unregister_active_pipe(pipe: "PipelinedJudge") -> None:
+    try:
+        _ACTIVE_PIPES.remove(pipe)
+    except ValueError:
+        pass
+
+
+def abandon_all_pipelines() -> int:
+    """Best-effort cancel of all live PipelinedJudge pools (STOP / hard abort)."""
+    n = 0
+    for pipe in list(_ACTIVE_PIPES):
+        try:
+            pipe.close(cancel_pending=True)
+            n += 1
+        except Exception:
+            pass
+    _ACTIVE_PIPES.clear()
+    return n
+
+
 def judge_candidates_parallel(
     case: Case,
     candidates: List[CandidateAnswer],
@@ -437,90 +714,27 @@ def judge_candidates_parallel(
     temperature: float = 0.0,
     gold_reference: str = "",
     max_workers: Optional[int] = None,
+    on_progress: Optional[Callable[[Dict[str, Any]], None]] = None,
 ) -> List[JudgeResult]:
-    """Score all candidates in parallel; enforce unique accuracies."""
+    """Score all candidates in parallel; enforce unique accuracies.
+
+    ``on_progress`` receives dicts:
+      {"phase": "queued"|"done"|"retry"|"retry_done", "key", "label", "done", "total", ...}
+    """
     if not candidates:
         return []
-
-    def _one_safe(cand: CandidateAnswer) -> JudgeResult:
-        if cand.meta.error and not (cand.raw_response or "").strip():
-            return _zero_judgment(
-                case,
-                cand,
-                judge_model,
-                f"Candidate error: {cand.meta.error}",
-                cand.meta,
-            )
-        if not _candidate_has_answer(cand):
-            z = _zero_judgment(
-                case,
-                cand,
-                judge_model,
-                "Empty answer — not judged (skipped DeepSeek to save credits)",
-                cand.meta,
-            )
-            for qs in z.question_scores:
-                qs.errors = ["empty_answer"]
-            return z
-        return judge_candidate(
-            case,
-            cand,
-            judge_model,
-            temperature=temperature,
-            gold_reference=gold_reference,
-        )
-
-    workers = max(1, min(len(candidates), max_workers or len(candidates)))
-    by_key: Dict[str, JudgeResult] = {}
-    with ThreadPoolExecutor(max_workers=workers) as pool:
-        futs = {pool.submit(_one_safe, c): c for c in candidates}
-        for fut in as_completed(futs):
-            cand = futs[fut]
-            try:
-                by_key[cand.candidate_key] = fut.result()
-            except Exception as exc:
-                z = _zero_judgment(
-                    case,
-                    cand,
-                    judge_model,
-                    f"Judge exception: {type(exc).__name__}: {exc}",
-                    cand.meta,
-                )
-                for qs in z.question_scores:
-                    qs.errors = ["judge_exception"]
-                by_key[cand.candidate_key] = z
-    ordered = [by_key[c.candidate_key] for c in candidates if c.candidate_key in by_key]
-
-    # Serial re-judge for transport empties (e.g. Claude answer OK but R1 body empty).
-    # Parallel storms sometimes drop one response; one quiet retry usually recovers.
-    cand_by = {c.candidate_key: c for c in candidates}
-    for j in list(ordered):
-        if not _is_rejudgable_failure(j):
-            continue
-        cand = cand_by.get(j.candidate_key)
-        if not cand or not _candidate_has_answer(cand):
-            continue
-        time.sleep(1.5)
-        retry = judge_candidate(
-            case,
-            cand,
-            judge_model,
-            temperature=temperature,
-            gold_reference=gold_reference,
-        )
-        by_key[j.candidate_key] = retry
-    ordered = [by_key[c.candidate_key] for c in candidates if c.candidate_key in by_key]
-
-    # Unique accuracies only among fair grades
-    fair = [j for j in ordered if not is_failed_judgment(j)]
-    failed = [j for j in ordered if is_failed_judgment(j)]
-    if fair:
-        unique_fair, _notes = ensure_unique_accuracies(case, fair)
-        by_u = {j.candidate_key: j for j in unique_fair}
-        for j in failed:
-            by_u[j.candidate_key] = j
-        ordered = [by_u[c.candidate_key] for c in candidates if c.candidate_key in by_u]
-    return ordered
+    pipe = PipelinedJudge(
+        case,
+        judge_model,
+        temperature=temperature,
+        gold_reference=gold_reference,
+        max_workers=max_workers or len(candidates),
+        expected_total=len(candidates),
+        on_progress=on_progress,
+    )
+    for c in candidates:
+        pipe.submit(c)
+    return pipe.finalize()
 
 
 def build_ranking(judgments: List[JudgeResult]) -> List[Dict[str, Any]]:

@@ -6,6 +6,7 @@ import pandas as pd
 
 from lib.clinical_scoring import weighted_dimension_composite
 from lib.i18n import t
+from lib.model_labels import MODEL_LABELS, full_model_label, name_and_version
 from lib.tiers import MODEL_CONFIG
 
 
@@ -190,25 +191,24 @@ def build_performance_table(results: dict, lang: str = "en") -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-TABLE_MODEL_SHORT = {
-    "qvac": "MedPsy 4B Q4",
-    "qvac_1_7b": "MedPsy 1.7B",
-    "qvac_4b_q8": "MedPsy 4B Q8",
-    "chatgpt": "ChatGPT Instant",
-    "claude": "Claude Sonnet 5",
-    "gemini": "Gemini Flash",
-    "chatgpt_mini": "GPT Mini",
-    "claude_haiku": "Claude Haiku",
-    "qwen": "Qwen Flash",
-}
+TABLE_MODEL_SHORT = {k: full_model_label(k) for k in MODEL_LABELS}
 
 
 def table_model_name(key: str) -> str:
-    """Short display name for tables (QVAC, ChatGPT, …)."""
+    """Name · Version for tables."""
     if not key:
         return "—"
+    if key in MODEL_LABELS:
+        return full_model_label(key)
     cfg = MODEL_CONFIG.get(key, {})
     return TABLE_MODEL_SHORT.get(key, cfg.get("name", key))
+
+
+def table_model_parts(key: str) -> tuple:
+    """(Name, Version) columns for ranking tables."""
+    if not key:
+        return ("—", "—")
+    return name_and_version(key)
 
 
 def _infer_keys_from_model_column(df: pd.DataFrame, model_col: str) -> list:

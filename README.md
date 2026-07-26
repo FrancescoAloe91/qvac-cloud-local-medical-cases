@@ -8,7 +8,7 @@ Reproducible clinical benchmark: **six OpenRouter cloud models** (free-web class
 | QVAC MedPsy | ✅ QVAC SDK sidecar | ❌ skipped (cloud-only) |
 | Automated Benchmark (main app) | ✅ | ✅ (cloud models + judge) |
 | Private History (A / B / C) | ✅ scoped to your key | ✅ same (per key fingerprint) |
-| Typical cost (`free_tier_match`, 6 cloud) | ~**$0.40–2.50** / case × 1 run | same |
+| Typical cost (`free_tier_match`, 3 cloud + judge) | ~**$0.25–1.50** / case × 1 run | same |
 
 **Live app:** https://francescoaloe91-qvac-vs-cloud-llms-health-test-app-wihxyd.streamlit.app  
 **Repo:** https://github.com/FrancescoAloe91/qvac-vs-cloud-llms-health-test
@@ -45,25 +45,29 @@ Pinned in [`benchmark/models.yaml`](benchmark/models.yaml).
 | Claude Sonnet 5 | `anthropic/claude-sonnet-5` |
 | Gemini Flash | `google/gemini-3.5-flash` |
 
-**Band B — lighter free-user proxies** (still billed on OpenRouter; not website $0):
+**Band B — open Q4 GGUFs on-device** (same QVAC sidecar as MedPsy · real privacy · $0 inference):
 
-| Role | OpenRouter ID |
+| Role | GGUF (under `models/`) |
 |--|--|
-| GPT Mini | `openai/gpt-5.4-mini` |
-| Claude Haiku | `anthropic/claude-haiku-4.5` |
-| Qwen Flash | `qwen/qwen3.6-flash` |
+| Gemma 2 2B IT | `gemma-2-2b-it-Q4_K_M.gguf` |
+| Llama 3.2 3B | `Llama-3.2-3B-Instruct-Q4_K_M.gguf` |
+| Phi-3.5 mini | `Phi-3.5-mini-instruct-Q4_K_M.gguf` |
+
+```bash
+./scripts/download_local_peers.sh   # ~6 GB total
+```
 
 | Role | Runtime |
 |--|--|
-| Judge (blind) | `deepseek/deepseek-r1` |
+| Judge (blind) | `deepseek/deepseek-r1` (cloud) |
 | QVAC (default) | MedPsy-4B Q4 · QVAC SDK · $0 API |
 | QVAC (toggle 3×) | + MedPsy-1.7B Q4 + MedPsy-4B Q8 |
 
-**Live grid:** off = **3+3+1 (7)** · **3× QVAC** on = **3×3 (9)**.  
-True OpenRouter **$0** models are only IDs ending in `:free` (e.g. Nemotron / GPT-OSS) — not GPT/Claude proprietary.
+**Live grid:** off = **3 cloud + 3 local + MedPsy (7)** · **3× QVAC** on = **3×3 (9)**.  
+Band A bills OpenRouter; Band B + MedPsy stay on-device (prompt never leaves the machine).
 
 **Recommended demo path:** **Multi run ×5**. Single run stays available for a quick check.  
-**QVAC only · $0** = local rehearsal (no cloud, no judge, no ranking).
+**QVAC only · $0** = MedPsy-only (KPI compare; clinical ranking if OpenRouter key present for judge).
 
 ---
 

@@ -320,13 +320,30 @@ function extractTokenText(item) {
   return "";
 }
 
-async function* tokenStream(prompt) {
+function normalizeHistory(prompt, messages) {
+  if (Array.isArray(messages) && messages.length) {
+    return messages
+      .filter((m) => m && typeof m.content === "string" && m.content.trim())
+      .map((m) => ({
+        role: String(m.role || "user"),
+        content: String(m.content),
+      }));
+  }
+  return [{ role: "user", content: String(prompt || "") }];
+}
+
+async function* tokenStream(prompt, messages) {
   const id = await ensureModel();
-  const history = [{ role: "user", content: prompt }];
+  const history = normalizeHistory(prompt, messages);
   const t0 = Date.now();
   let ttftMs = null;
   let content = "";
   let tokenCount = 0;
+  let sdkStats = null;
+
+  console.log(
+    `[qvac-sidecar] generate · ${modelTagFromPath(MODEL_PATH)} · history=${history.length} · prompt_chars=${history.reduce((n, m) => n + m.content.length, 0)}`
+  );
 
   const result = sdk.completion({ modelId: id, history, stream: true });
 
@@ -339,28 +356,68 @@ async function* tokenStream(prompt) {
     return text;
   };
 
+  const consumeTokenStream = async function* (stream) {
+    for await (const tok of stream) {
+      const t = mark(tok);
+      if (t) yield t;
+    }
+  };
+
   if (typeof result === "string") {
     const t = mark(result);
     if (t) yield t;
+  } else if (result?.[Symbol.asyncIterator]) {
+    for await (const tok of result) {
+      const t = mark(tok);
+      if (t) yield t;
+    }
+  } else if (result?.tokenStream) {
+    for await (const t of consumeTokenStream(result.tokenStream)) {
+      yield t;
+    }
+    // Some models emit final text without contentDelta chunks — pull aggregates.
+    if (!content.trim()) {
+      try {
+        if (result.text && typeof result.text.then === "function") {
+          const full = await result.text;
+          const t = mark(full);
+          if (t) yield t;
+        } else if (result.final && typeof result.final.then === "function") {
+          const fin = await result.final;
+          const t = mark(fin?.contentText || fin?.content || fin?.text || "");
+          if (t) yield t;
+        }
+      } catch (err) {
+        console.warn(
+          `[qvac-sidecar] generate fallback text failed: ${err?.message || err}`
+        );
+      }
+    }
+    if (result.stats && typeof result.stats.then === "function") {
+      try {
+        sdkStats = await result.stats;
+      } catch {
+        /* ignore */
+      }
+    }
   } else if (result && typeof result.then === "function") {
     const resolved = await result;
     if (typeof resolved === "string") {
       const t = mark(resolved);
       if (t) yield t;
     } else if (resolved?.tokenStream) {
-      for await (const tok of resolved.tokenStream) {
-        const t = mark(tok);
-        if (t) yield t;
+      for await (const t of consumeTokenStream(resolved.tokenStream)) {
+        yield t;
       }
     } else {
       const t = mark(
-        String(resolved?.text || resolved?.content || resolved?.message?.content || "")
+        String(
+          resolved?.text ||
+            resolved?.content ||
+            resolved?.message?.content ||
+            ""
+        )
       );
-      if (t) yield t;
-    }
-  } else if (result?.tokenStream) {
-    for await (const tok of result.tokenStream) {
-      const t = mark(tok);
       if (t) yield t;
     }
   } else {
@@ -369,12 +426,38 @@ async function* tokenStream(prompt) {
   }
 
   const latencyS = (Date.now() - t0) / 1000;
-  const ttftS = ttftMs != null ? ttftMs / 1000 : null;
-  const genS = ttftS != null ? Math.max(latencyS - ttftS, 0.05) : latencyS;
-  const approxTokens =
-    tokenCount > 1 ? tokenCount : Math.max(1, content.split(/\s+/).length);
-  const tps = genS > 0 ? Math.round((approxTokens / genS) * 10) / 10 : null;
+  let ttftS = ttftMs != null ? ttftMs / 1000 : null;
+  // Prefer SDK stats when present (ms → s)
+  if (sdkStats) {
+    const sdkTtft =
+      sdkStats.TTFT ?? sdkStats.ttft ?? sdkStats.ttft_ms ?? sdkStats.ttftMs;
+    const sdkTps = sdkStats.TPS ?? sdkStats.tps;
+    if (ttftS == null && sdkTtft != null) {
+      const n = Number(sdkTtft);
+      if (Number.isFinite(n)) ttftS = n > 20 ? n / 1000 : n;
+    }
+    if (sdkTps != null && Number.isFinite(Number(sdkTps))) {
+      // keep for below
+      sdkStats._tps = Number(sdkTps);
+    }
+  }
+  const genS = ttftS != null ? Math.max(latencyS - ttftS, 0.05) : Math.max(latencyS, 0.05);
+  const trimmed = content.trim();
+  const approxTokens = trimmed
+    ? tokenCount > 1
+      ? tokenCount
+      : Math.max(1, trimmed.split(/\s+/).length)
+    : 0;
+  let tps =
+    approxTokens > 0 && genS > 0
+      ? Math.round((approxTokens / genS) * 10) / 10
+      : null;
+  if (tps == null && sdkStats?._tps != null) tps = sdkStats._tps;
   refreshRam();
+
+  console.log(
+    `[qvac-sidecar] generate done · ${modelTagFromPath(MODEL_PATH)} · chars=${trimmed.length} · tok≈${approxTokens} · ttft=${ttftS != null ? ttftS.toFixed(3) : "—"}s · tps=${tps ?? "—"} · latency=${latencyS.toFixed(3)}s`
+  );
 
   yield {
     __done: true,
@@ -390,12 +473,15 @@ async function* tokenStream(prompt) {
     cost_usd: 0,
     ram_mb: lastRamMb,
     gguf_mb: ggufSizeMb(MODEL_PATH),
+    error: trimmed
+      ? null
+      : "Empty generation (0 tokens) — model returned no content",
   };
 }
 
-async function generate(prompt) {
+async function generate(prompt, messages) {
   let meta = null;
-  for await (const item of tokenStream(prompt)) {
+  for await (const item of tokenStream(prompt, messages)) {
     if (item && typeof item === "object" && item.__done) meta = item;
   }
   if (!meta) {
@@ -492,7 +578,8 @@ const server = http.createServer(async (req, res) => {
       return send(res, 400, { error: "Invalid JSON body" });
     }
     const prompt = body.prompt || "";
-    if (!prompt.trim()) {
+    const messages = Array.isArray(body.messages) ? body.messages : null;
+    if (!String(prompt).trim() && !(messages && messages.length)) {
       return send(res, 400, { error: "Missing prompt" });
     }
     const wantStream =
@@ -505,7 +592,7 @@ const server = http.createServer(async (req, res) => {
         Connection: "keep-alive",
       });
       try {
-        for await (const item of tokenStream(prompt)) {
+        for await (const item of tokenStream(prompt, messages)) {
           if (item && typeof item === "object" && item.__done) {
             const { __done, ...meta } = item;
             writeNdjson(res, { type: "done", ...meta });
@@ -521,7 +608,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     try {
-      const out = await generate(prompt);
+      const out = await generate(prompt, messages);
       return send(res, 200, out);
     } catch (err) {
       return send(res, 500, { error: formatErr(err) });

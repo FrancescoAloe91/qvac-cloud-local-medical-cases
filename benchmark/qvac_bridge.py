@@ -191,16 +191,24 @@ def generate(
     timeout: float = 300.0,
     on_token: TokenCallback = None,
     display_label: str = "",
+    messages: Optional[list] = None,
 ) -> Tuple[str, ModelCallMeta]:
     """Ask the QVAC sidecar to generate a completion (with timing KPIs)."""
     # Prefer NDJSON stream so on_token can fire live when the caller supports it
     if on_token is not None:
         return generate_streaming(
-            prompt, timeout=timeout, on_token=on_token, display_label=display_label
+            prompt,
+            timeout=timeout,
+            on_token=on_token,
+            display_label=display_label,
+            messages=messages,
         )
 
     url = f"{qvac_sidecar_url()}/generate"
-    body = json.dumps({"prompt": prompt}).encode("utf-8")
+    payload: Dict[str, Any] = {"prompt": prompt}
+    if messages:
+        payload["messages"] = messages
+    body = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(
         url,
         data=body,
@@ -247,6 +255,10 @@ def generate(
     else:
         latency = float(latency)
 
+    err = data.get("error")
+    if not text and not err:
+        err = "Empty generation (0 tokens)"
+
     return text, ModelCallMeta(
         model=data.get("model") or "medpsy-4b",
         provider="qvac",
@@ -259,6 +271,7 @@ def generate(
         ram_mb=_opt_float(data, "ram_mb"),
         gguf_mb=_opt_float(data, "gguf_mb"),
         display_label=display_label,
+        error=str(err) if err else None,
     )
 
 
@@ -267,10 +280,14 @@ def generate_streaming(
     timeout: float = 300.0,
     on_token: TokenCallback = None,
     display_label: str = "",
+    messages: Optional[list] = None,
 ) -> Tuple[str, ModelCallMeta]:
     """Stream NDJSON tokens from the sidecar; call on_token for each chunk."""
     url = f"{qvac_sidecar_url()}/generate/stream"
-    body = json.dumps({"prompt": prompt, "stream": True}).encode("utf-8")
+    payload: Dict[str, Any] = {"prompt": prompt, "stream": True}
+    if messages:
+        payload["messages"] = messages
+    body = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(
         url,
         data=body,
@@ -345,13 +362,19 @@ def generate_streaming(
     else:
         latency = float(latency)
 
+    n_tok = int(done_meta.get("completion_tokens") or 0)
+    if n_tok <= 0 and text:
+        n_tok = max(1, len(text.split()))
+
+    err = done_meta.get("error")
+    if not text and not err:
+        err = "Empty generation (0 tokens)"
+
     return text, ModelCallMeta(
         model=done_meta.get("model") or "medpsy-4b",
         provider="qvac",
         prompt_tokens=int(done_meta.get("prompt_tokens") or 0),
-        completion_tokens=int(
-            done_meta.get("completion_tokens") or max(1, len(text.split()))
-        ),
+        completion_tokens=n_tok,
         cost_usd=0.0,
         latency_s=latency,
         ttft_s=_opt_float(done_meta, "ttft_s"),
@@ -359,6 +382,7 @@ def generate_streaming(
         ram_mb=_opt_float(done_meta, "ram_mb"),
         gguf_mb=_opt_float(done_meta, "gguf_mb"),
         display_label=display_label,
+        error=str(err) if err else None,
     )
 
 
@@ -435,6 +459,7 @@ def _generate_blocking(
 def iter_tokens(
     prompt: str,
     timeout: float = 300.0,
+    messages: Optional[list] = None,
 ) -> Iterator[Dict[str, Any]]:
     """Yield {type: token|done|error, ...} for UI live updates on the main thread.
 
@@ -443,7 +468,10 @@ def iter_tokens(
     QVAC SDK only — no Ollama fallback.
     """
     url = f"{qvac_sidecar_url()}/generate/stream"
-    body = json.dumps({"prompt": prompt, "stream": True}).encode("utf-8")
+    payload: Dict[str, Any] = {"prompt": prompt, "stream": True}
+    if messages:
+        payload["messages"] = messages
+    body = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(
         url,
         data=body,

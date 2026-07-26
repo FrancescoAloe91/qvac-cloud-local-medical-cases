@@ -6,18 +6,16 @@ import html
 from typing import Any, Dict, List, Optional
 
 
-_SHORT = {
-    "chatgpt": "ChatGPT",
-    "claude": "Claude",
-    "gemini": "Gemini",
-    "qvac": "MedPsy 4B Q4",
-    "qvac_1_7b": "MedPsy 1.7B",
-    "qvac_4b_q8": "MedPsy 4B Q8",
-}
+from lib.model_labels import full_model_label, name_and_version
 
 
 def short_model(key: str) -> str:
-    return _SHORT.get(key, key)
+    """Full Name · Version (kept name for call-site compatibility)."""
+    return full_model_label(key or "")
+
+
+def model_name_version(key: str) -> tuple:
+    return name_and_version(key or "")
 
 
 def snapshot_from_artifact(art: Any) -> Dict[str, Any]:
@@ -83,11 +81,18 @@ def _ranking_table_html(ranking: List[Dict[str, Any]]) -> str:
         return "<p style='color:#94a3b8'>No ranking.</p>"
     body = []
     for r in rows:
+        nm, ver = name_and_version(
+            str(r.get("key") or ""),
+            label=r.get("label"),
+            model=r.get("model"),
+        )
         body.append(
             "<tr>"
             f"<td style='padding:0.3rem 0.45rem;border-bottom:1px solid #1e293b'>#{r.get('rank')}</td>"
             f"<td style='padding:0.3rem 0.45rem;border-bottom:1px solid #1e293b'>"
-            f"{html.escape(short_model(str(r.get('key'))))}</td>"
+            f"{html.escape(nm)}</td>"
+            f"<td style='padding:0.3rem 0.45rem;border-bottom:1px solid #1e293b;"
+            f"color:#94a3b8;font-size:0.8rem'>{html.escape(ver)}</td>"
             f"<td style='padding:0.3rem 0.45rem;border-bottom:1px solid #1e293b;font-weight:700;"
             f"color:#fbbf24'>{float(r.get('accuracy') or 0):.1f}%</td>"
             "</tr>"
@@ -96,7 +101,8 @@ def _ranking_table_html(ranking: List[Dict[str, Any]]) -> str:
         "<table style='width:100%;border-collapse:collapse;font-size:0.88rem;color:#e2e8f0'>"
         "<thead><tr style='color:#94a3b8;text-align:left'>"
         "<th style='padding:0.3rem 0.45rem'>#</th>"
-        "<th style='padding:0.3rem 0.45rem'>Model</th>"
+        "<th style='padding:0.3rem 0.45rem'>Name</th>"
+        "<th style='padding:0.3rem 0.45rem'>Version</th>"
         "<th style='padding:0.3rem 0.45rem'>Acc</th>"
         "</tr></thead><tbody>"
         + "".join(body)

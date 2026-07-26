@@ -6,6 +6,13 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
 from lib.i18n import t
+from lib.model_labels import MODEL_LABELS as _MODEL_LABELS
+from lib.model_labels import (
+    filter_current_roster_rows,
+    full_model_label,
+    ranking_chart_label,
+    rerank_rows,
+)
 from lib.tiers import MODEL_CONFIG
 
 
@@ -26,9 +33,10 @@ MODEL_COLORS = {
     "chatgpt": "#10a37f",
     "claude": "#d97706",
     "gemini": "#8ab4f8",
-    "chatgpt_mini": "#059669",
-    "claude_haiku": "#b45309",
-    "qwen": "#a855f7",
+    "local_gemma": "#a855f7",
+    "local_qwen": "#a855f7",  # legacy artifacts
+    "local_llama": "#3b82f6",
+    "local_phi": "#0ea5e9",
     "qvac": "#00d09c",
     "qvac_1_7b": "#34d399",
     "qvac_4b_q8": "#2dd4bf",
@@ -40,25 +48,17 @@ FILL_COLORS = {
     "chatgpt": "rgba(16,163,127,0.18)",
     "claude": "rgba(217,119,6,0.18)",
     "gemini": "rgba(138,180,248,0.18)",
-    "chatgpt_mini": "rgba(5,150,105,0.18)",
-    "claude_haiku": "rgba(180,83,9,0.18)",
-    "qwen": "rgba(168,85,247,0.18)",
+    "local_gemma": "rgba(168,85,247,0.18)",
+    "local_qwen": "rgba(168,85,247,0.18)",  # legacy
+    "local_llama": "rgba(59,130,246,0.18)",
+    "local_phi": "rgba(14,165,233,0.18)",
     "qvac": "rgba(0,208,156,0.22)",
     "qvac_1_7b": "rgba(52,211,153,0.22)",
     "qvac_4b_q8": "rgba(45,212,191,0.22)",
 }
 
-_CHART_SHORT = {
-    "chatgpt": "ChatGPT Instant",
-    "claude": "Claude Sonnet 5",
-    "gemini": "Gemini Flash",
-    "chatgpt_mini": "GPT Mini",
-    "claude_haiku": "Claude Haiku",
-    "qwen": "Qwen Flash",
-    "qvac": "MedPsy 4B Q4",
-    "qvac_1_7b": "MedPsy 1.7B",
-    "qvac_4b_q8": "MedPsy 4B Q8",
-}
+# Legacy alias — full Name · Version
+_CHART_SHORT = {k: full_model_label(k) for k in _MODEL_LABELS}
 
 CHART_BG = "#0e1117"
 PLOT_BG = "#161b26"
@@ -73,7 +73,11 @@ def _chart_model_label(key: str, full_name: str, tier_labels: Optional[dict] = N
 
 
 def _chart_bar_tick(key: str, display_name: str) -> str:
-    """Short Y-axis labels so bars stay visible in narrow columns; version lives in the table."""
+    """Y-axis: Name + Version (two lines when known)."""
+    from lib.model_labels import chart_model_label
+
+    if key in _MODEL_LABELS:
+        return chart_model_label(key)
     table_short, _, _ = _chart_labels()
     return table_short.get(key, display_name)
 
@@ -492,21 +496,21 @@ def fig_judge_accuracy_bars(
     height: int = 240,
 ) -> go.Figure:
     """Horizontal accuracy bars for Automated Benchmark (judge weighted %)."""
+    ranking_rows = filter_current_roster_rows(ranking_rows)
     if not ranking_rows:
         fig = go.Figure()
         fig.update_layout(**_base_layout(title, height=height))
         return fig
 
-    # Highest accuracy at top
-    rows = sorted(ranking_rows, key=lambda r: float(r.get("accuracy") or 0), reverse=True)
-    labels = []
-    for r in rows:
-        key = r.get("key") or ""
-        short = _CHART_SHORT.get(key, r.get("label") or key)
-        labels.append(short)
+    # Highest accuracy at top (current 9 only)
+    rows = rerank_rows(ranking_rows, score_field="accuracy")
+    labels = [ranking_chart_label(r) for r in rows]
     accs = [float(r.get("accuracy") or 0) for r in rows]
     colors = [MODEL_COLORS.get(r.get("key"), "#94a3b8") for r in rows]
     ranks = [int(r.get("rank") or i + 1) for i, r in enumerate(rows)]
+    # Two-line name/version labels need more left margin + row height
+    n = max(1, len(rows))
+    bar_h = max(height, 56 + n * 48)
 
     fig = go.Figure(
         go.Bar(
@@ -517,12 +521,17 @@ def fig_judge_accuracy_bars(
             text=[f"#{r} · {a:.1f}%" for r, a in zip(ranks[::-1], accs[::-1])],
             textposition="outside",
             cliponaxis=False,
+            hovertemplate="%{y}<br>%{x:.1f}%<extra></extra>",
         )
     )
-    layout = _base_layout(title, height=height)
-    layout["margin"] = dict(l=56, r=72, t=48, b=28)
+    layout = _base_layout(title, height=bar_h)
+    layout["margin"] = dict(l=168, r=72, t=48, b=28)
     layout["xaxis"] = dict(range=[0, 110], title="Accuracy %")
-    layout["yaxis"] = dict(title="")
+    layout["yaxis"] = dict(
+        title="",
+        tickfont=dict(size=11),
+        automargin=True,
+    )
     fig.update_layout(**layout)
     return fig
 
@@ -534,25 +543,34 @@ def fig_judge_mean_accuracy_bars(
     height: int = 280,
 ) -> go.Figure:
     """Mean accuracy with ±1 std error bars (multi-run summary)."""
+    ranking_mean_rows = filter_current_roster_rows(ranking_mean_rows)
     if not ranking_mean_rows:
         fig = go.Figure()
         fig.update_layout(**_base_layout(title, height=height))
         return fig
 
-    rows = sorted(
-        ranking_mean_rows,
-        key=lambda r: float(r.get("accuracy_mean") or 0),
-        reverse=True,
-    )
-    labels = [_CHART_SHORT.get(r.get("key"), r.get("key") or "?") for r in rows]
+    rows = rerank_rows(ranking_mean_rows, score_field="accuracy_mean")
+    labels = [
+        ranking_chart_label(
+            {
+                "key": r.get("key"),
+                "label": r.get("label"),
+                "model": r.get("model"),
+                # mean rows use accuracy_mean; chart helper only needs identity
+            }
+        )
+        for r in rows
+    ]
     means = [float(r.get("accuracy_mean") or 0) for r in rows]
     stds = [float(r.get("std") or 0) for r in rows]
     cvs = [float(r.get("cv_pct") or 0) for r in rows]
+    n_runs_list = [int(r.get("n_runs") or r.get("n") or 0) for r in rows]
     colors = [MODEL_COLORS.get(r.get("key"), "#94a3b8") for r in rows]
     ranks = [int(r.get("rank") or i + 1) for i, r in enumerate(rows)]
+    n = max(1, len(rows))
+    bar_h = max(height, 64 + n * 52)
 
-    # Keep bar labels short so ±std whiskers do not cover the numbers.
-    # Full Mean / ±Std / CV / Reliability live in the table under the chart.
+    # Name + version on Y; Mean / ±Std / CV / Runs live in the table under the chart.
     fig = go.Figure(
         go.Bar(
             y=labels[::-1],
@@ -573,20 +591,21 @@ def fig_judge_mean_accuracy_bars(
             textfont=dict(color="#0f172a", size=13, family="Inter, system-ui, sans-serif"),
             hovertemplate=(
                 "%{y}<br>Mean %{x:.1f}% ± %{customdata[0]:.1f}"
-                "<br>CV %{customdata[1]:.0f}%<extra></extra>"
+                "<br>CV %{customdata[1]:.0f}%"
+                "<br>Runs %{customdata[2]}<extra></extra>"
             ),
-            customdata=list(zip(stds[::-1], cvs[::-1])),
+            customdata=list(zip(stds[::-1], cvs[::-1], n_runs_list[::-1])),
             cliponaxis=False,
         )
     )
-    layout = _base_layout(title, height=height)
-    layout["margin"] = dict(l=72, r=28, t=48, b=36)
+    layout = _base_layout(title, height=bar_h)
+    layout["margin"] = dict(l=168, r=28, t=48, b=36)
     xmax = max(means[i] + stds[i] for i in range(len(means))) if means else 100
     layout["xaxis"] = dict(
         range=[0, min(110, max(40, xmax * 1.12))],
         title="Mean accuracy %  (±1 std whiskers)",
         gridcolor="rgba(51,65,85,0.5)",
     )
-    layout["yaxis"] = dict(title="")
+    layout["yaxis"] = dict(title="", tickfont=dict(size=11), automargin=True)
     fig.update_layout(**layout)
     return fig
