@@ -161,9 +161,23 @@ source .venv/bin/activate && streamlit run app.py
 2. **Custom Case** or **Demo Case 1 / 2** + optional gold  
 3. Cost estimate under Single / Multi / QVAC-only / Only local  
 4. Confirm spend → live panels + KPIs  
-5. Ranking + matrix; files under `artifacts/owners/<your-fingerprint>/`  
-6. **Rebuild mean** (offline) · KPI popup  
-7. Sidebar **History** → only runs saved with **this** key  
+5. During DeepSeek judging: **live board** (see below)  
+6. Ranking + matrix; files under `artifacts/owners/<your-fingerprint>/`  
+7. **Rebuild mean** (offline) · KPI popup  
+8. Sidebar **History** → only runs saved with **this** key  
+
+### Live judging board (during a run)
+
+While DeepSeek R1 scores answers (pipelined with collect), the judge panel shows:
+
+| Panel | Behaviour |
+|--|--|
+| **Left — Judge queue (FIFO)** | Fixed **collect order**. Rows do not reorder; a finished model only **colors** and shows its %. |
+| **Right — Provisional ranking + histogram** | **Dynamic**: scored models sort high→low and **slide** as each judge returns. `Prov. N` = provisional place until all finish. Latest score gets a short highlight glow. |
+
+Progress bar = judge count only. The old repeated text log (`⏳ judging…` / `✅ score…`) under the board was removed — status lives in the FIFO table + histogram.
+
+**Note:** editing app files while a run is open can trigger Streamlit’s “File change” rerun and **abort** an in-flight judge (UI may freeze mid-model). Use **STOP** / refresh, then re-run; do not wait on a frozen last model with 0% CPU / no OpenRouter traffic.
 
 **CLI** (same private folder when `OPENROUTER_API_KEY` is set):
 
@@ -193,6 +207,8 @@ Pushing to `main` redeploys the cloud app.
 
 ```
 app.py                      # Automated Benchmark (Streamlit entry)
+lib/benchmark_multi_ui.py   # Live judging board (FIFO + provisional histogram)
+assets/dashboard.css        # Dashboard + live-board styles
 benchmark/                  # cases, OpenRouter, judge, runner, CLI
 benchmark/workspace.py      # per-API-key private artifact folders
 benchmark/models.yaml       # cloud model IDs

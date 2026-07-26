@@ -75,6 +75,7 @@ from benchmark.runner import (
 from benchmark.schema import CandidateAnswer, Case, ModelCallMeta, RunArtifact, utc_now_iso
 from lib.benchmark_multi_ui import (
     client_toast_run_done,
+    live_judging_board_html,
     progressive_multi_panel_html,
     reliability_badge,
     short_model,
@@ -2559,13 +2560,27 @@ if st.session_state.get("confirmed_run"):
             judge_status = None
             judge_status_ctx = None
             progress_slot = None
-            lines_slot = None
-            live_lines: list[str] = []
+            board_slot = None
             started_keys: set[str] = set()
             label_by_key: dict[str, str] = {}
+            lo_board: dict = {}
+            # Mutable bag — avoids nonlocal + annotated-assign pitfalls on Py3.9
+            lo_ui = {"highlight": None, "queue_i": 0}
+
+            def _paint_lo_board() -> None:
+                if board_slot is None:
+                    return
+                board_slot.markdown(
+                    live_judging_board_html(
+                        lo_board,
+                        highlight_key=lo_ui["highlight"],
+                        title="Live judging · local + MedPsy",
+                    ),
+                    unsafe_allow_html=True,
+                )
 
             def _on_lo_progress(evt: dict) -> None:
-                if progress_slot is None or lines_slot is None:
+                if progress_slot is None:
                     return
                 phase = evt.get("phase")
                 key = str(evt.get("key") or "")
@@ -2574,15 +2589,23 @@ if st.session_state.get("confirmed_run"):
                 tot = int(evt.get("total") or max(1, done_n))
                 if phase == "queued" and key not in started_keys:
                     started_keys.add(key)
-                    live_lines.append(f"⏳ `{name}` · judging…")
+                    lo_ui["queue_i"] = int(lo_ui["queue_i"]) + 1
+                    lo_board[key] = {
+                        "label": name,
+                        "status": "judging",
+                        "accuracy": None,
+                        "queue_i": lo_ui["queue_i"],
+                    }
+                    _paint_lo_board()
                 elif phase == "done":
-                    live_lines[:] = [
-                        ln
-                        for ln in live_lines
-                        if f"`{name}`" not in ln or not ln.startswith("⏳")
-                    ]
+                    prev_q = (lo_board.get(key) or {}).get("queue_i")
                     if evt.get("failed"):
-                        live_lines.append(f"⚠ `{name}` · failed")
+                        lo_board[key] = {
+                            "label": name,
+                            "status": "failed",
+                            "accuracy": float(evt.get("accuracy") or 0),
+                            "queue_i": prev_q,
+                        }
                         if key in status_boxes:
                             status_boxes[key].markdown(
                                 _status_pill("err", "Judge failed"),
@@ -2590,12 +2613,19 @@ if st.session_state.get("confirmed_run"):
                             )
                     else:
                         acc = float(evt.get("accuracy") or 0)
-                        live_lines.append(f"✅ `{name}` · **{acc:.1f}%**")
+                        lo_board[key] = {
+                            "label": name,
+                            "status": "scored",
+                            "accuracy": acc,
+                            "queue_i": prev_q,
+                        }
                         if key in status_boxes:
                             status_boxes[key].markdown(
                                 _status_pill("done", f"Judged · {acc:.0f}%"),
                                 unsafe_allow_html=True,
                             )
+                    lo_ui["highlight"] = key
+                    _paint_lo_board()
                     if judge_status is not None:
                         judge_status.update(
                             label=f"DeepSeek R1 · {done_n}/{tot} scored"
@@ -2604,12 +2634,22 @@ if st.session_state.get("confirmed_run"):
                             state="running",
                         )
                 elif phase == "retry":
-                    live_lines.append(f"🔁 `{name}` · retry…")
+                    if key:
+                        if key not in lo_board:
+                            lo_ui["queue_i"] = int(lo_ui["queue_i"]) + 1
+                        lo_board[key] = {
+                            "label": name,
+                            "status": "judging",
+                            "accuracy": None,
+                            "queue_i": (lo_board.get(key) or {}).get(
+                                "queue_i", lo_ui["queue_i"]
+                            ),
+                        }
+                        _paint_lo_board()
                 progress_slot.progress(
                     min(1.0, done_n / max(1, tot)),
                     text=f"Judge · {done_n}/{tot} (overlap with collect)",
                 )
-                lines_slot.markdown("\n\n".join(live_lines[-16:]))
 
             def _poll_pipe() -> None:
                 if pipe is None:
@@ -2650,8 +2690,9 @@ if st.session_state.get("confirmed_run"):
                 )
                 judge_status = judge_status_ctx.__enter__()
                 progress_slot = st.empty()
-                lines_slot = st.empty()
+                board_slot = st.empty()
                 progress_slot.progress(0.0, text="Judge · waiting for first GGUF…")
+                _paint_lo_board()
 
             for slot in local_slots:
                 qkey = slot["key"]
@@ -2866,6 +2907,16 @@ if st.session_state.get("confirmed_run"):
                                     height=230 if n_local > 1 else 178,
                                     multi=n_local > 1,
                                 )
+                            # Collect → judging: append to bottom of live board (FIFO)
+                            if qkey not in started_keys:
+                                lo_ui["queue_i"] = int(lo_ui["queue_i"]) + 1
+                                lo_board[qkey] = {
+                                    "label": label_by_key[qkey],
+                                    "status": "judging",
+                                    "accuracy": None,
+                                    "queue_i": lo_ui["queue_i"],
+                                }
+                                _paint_lo_board()
                             pipe.submit(cand)
                 _poll_pipe()
 
@@ -3585,14 +3636,27 @@ if st.session_state.get("confirmed_run"):
                 max_workers=min(8, max(2, len(candidates_cfg))),
                 on_progress=None,  # wired below inside st.status
             )
-            full_live_lines: list[str] = []
             full_started: set[str] = set()
             full_progress_slot = None
-            full_lines_slot = None
+            full_board_slot = None
             full_judge_status = None
+            full_board: dict = {}
+            full_ui = {"highlight": None, "queue_i": 0}
+
+            def _paint_full_board() -> None:
+                if full_board_slot is None:
+                    return
+                full_board_slot.markdown(
+                    live_judging_board_html(
+                        full_board,
+                        highlight_key=full_ui["highlight"],
+                        title="Live judging · cloud + local + MedPsy",
+                    ),
+                    unsafe_allow_html=True,
+                )
 
             def _on_full_progress(evt: dict) -> None:
-                if full_progress_slot is None or full_lines_slot is None:
+                if full_progress_slot is None:
                     return
                 phase = evt.get("phase")
                 key = str(evt.get("key") or "")
@@ -3601,19 +3665,53 @@ if st.session_state.get("confirmed_run"):
                 tot = int(evt.get("total") or max(1, done_n))
                 if phase == "queued" and key not in full_started:
                     full_started.add(key)
-                    full_live_lines.append(f"⏳ `{name}` · judging…")
-                elif phase == "done":
-                    full_live_lines[:] = [
-                        ln
-                        for ln in full_live_lines
-                        if f"`{name}`" not in ln or not ln.startswith("⏳")
-                    ]
-                    if evt.get("failed"):
-                        full_live_lines.append(f"⚠ `{name}` · failed")
+                    if key not in full_board or full_board[key].get("status") not in (
+                        "judging",
+                        "scored",
+                        "failed",
+                    ):
+                        full_ui["queue_i"] = int(full_ui["queue_i"]) + 1
+                        qi = full_ui["queue_i"]
                     else:
-                        full_live_lines.append(
-                            f"✅ `{name}` · **{float(evt.get('accuracy') or 0):.1f}%**"
-                        )
+                        qi = (full_board.get(key) or {}).get("queue_i") or full_ui[
+                            "queue_i"
+                        ]
+                    full_board[key] = {
+                        "label": name,
+                        "status": "judging",
+                        "accuracy": None,
+                        "queue_i": qi,
+                    }
+                    _paint_full_board()
+                elif phase == "done":
+                    prev_q = (full_board.get(key) or {}).get("queue_i")
+                    if evt.get("failed"):
+                        full_board[key] = {
+                            "label": name,
+                            "status": "failed",
+                            "accuracy": float(evt.get("accuracy") or 0),
+                            "queue_i": prev_q,
+                        }
+                        if key in status_boxes:
+                            status_boxes[key].markdown(
+                                _status_pill("err", "Judge failed"),
+                                unsafe_allow_html=True,
+                            )
+                    else:
+                        acc = float(evt.get("accuracy") or 0)
+                        full_board[key] = {
+                            "label": name,
+                            "status": "scored",
+                            "accuracy": acc,
+                            "queue_i": prev_q,
+                        }
+                        if key in status_boxes:
+                            status_boxes[key].markdown(
+                                _status_pill("done", f"Judged · {acc:.0f}%"),
+                                unsafe_allow_html=True,
+                            )
+                    full_ui["highlight"] = key
+                    _paint_full_board()
                     if full_judge_status is not None:
                         full_judge_status.update(
                             label=f"DeepSeek R1 · {done_n}/{tot} scored · pipelined",
@@ -3623,7 +3721,6 @@ if st.session_state.get("confirmed_run"):
                     min(1.0, done_n / max(1, tot)),
                     text=f"Judge · {done_n}/{tot} (overlap with collect)",
                 )
-                full_lines_slot.markdown("\n\n".join(full_live_lines[-16:]))
 
             full_pipe.on_progress = _on_full_progress
             full_status_ctx = st.status(
@@ -3632,8 +3729,9 @@ if st.session_state.get("confirmed_run"):
             )
             full_judge_status = full_status_ctx.__enter__()
             full_progress_slot = st.empty()
-            full_lines_slot = st.empty()
+            full_board_slot = st.empty()
             full_progress_slot.progress(0.0, text="Judge · waiting for first answer…")
+            _paint_full_board()
 
             for evt in iter_collect_live(case_obj, candidates_cfg, blind_map):
                 if evt.get("type") == "token":
@@ -3727,8 +3825,29 @@ if st.session_state.get("confirmed_run"):
                                 height=230 if n_runs > 1 else 178,
                                 multi=n_runs > 1,
                             )
+                        # Collect → judging: append to bottom of live board (FIFO)
+                        # before DeepSeek finishes (cloud + local + MedPsy).
+                        _ck = cand.candidate_key
+                        _clab = (
+                            label_live.get(_ck)
+                            or cand.display_label
+                            or cand.label
+                            or _ck
+                        )
+                        if _ck not in full_started:
+                            full_ui["queue_i"] = int(full_ui["queue_i"]) + 1
+                            full_board[_ck] = {
+                                "label": _clab,
+                                "status": "judging",
+                                "accuracy": None,
+                                "queue_i": full_ui["queue_i"],
+                            }
+                            _paint_full_board()
                         full_pipe.submit(cand)
                         full_pipe.poll()
+                    elif err and cand.candidate_key:
+                        # Collect error: keep out of ranking (not a fair judge score)
+                        pass
 
             by_key = {c.candidate_key: c for c in collected}
             collected = [by_key[c["key"]] for c in candidates_cfg if c["key"] in by_key]

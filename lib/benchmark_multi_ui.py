@@ -5,7 +5,6 @@ from __future__ import annotations
 import html
 from typing import Any, Dict, List, Optional
 
-
 from lib.model_labels import full_model_label, name_and_version
 
 
@@ -75,26 +74,238 @@ def mean_placeholder_html(*, n_done: int, n_total: int) -> str:
 """
 
 
+_BAR_COLORS = {
+    "chatgpt": "#10a37f",
+    "claude": "#d97706",
+    "gemini": "#8ab4f8",
+    "local_gemma": "#a855f7",
+    "local_llama": "#3b82f6",
+    "local_phi": "#0ea5e9",
+    "qvac": "#00d09c",
+    "qvac_1_7b": "#34d399",
+    "qvac_4b_q8": "#2dd4bf",
+}
+
+
+def _bar_color(key: str) -> str:
+    return _BAR_COLORS.get(key, "#94a3b8")
+
+
+def accuracy_histogram_html(
+    rows: List[Dict[str, Any]],
+    *,
+    score_field: str = "accuracy",
+    highlight_key: Optional[str] = None,
+    include_pending: bool = False,
+) -> str:
+    """Pure-HTML horizontal histogram (safe inside live Streamlit HTML / modals)."""
+    scored: List[Dict[str, Any]] = []
+    pending: List[Dict[str, Any]] = []
+    for r in rows or []:
+        st = str(r.get("status") or "scored")
+        if r.get(score_field) is not None and st in ("scored", "failed", "ok", ""):
+            scored.append(r)
+        elif include_pending:
+            pending.append(r)
+
+    scored = sorted(
+        scored,
+        key=lambda r: float(r.get(score_field) or 0),
+        reverse=True,
+    )
+    if not scored and not pending:
+        return (
+            '<div class="rank-hist empty">No scores yet — bars appear as '
+            "each judge finishes.</div>"
+        )
+
+    bars = []
+    for i, r in enumerate(scored, 1):
+        key = str(r.get("key") or "")
+        nm, ver = name_and_version(
+            key, label=r.get("label"), model=r.get("model")
+        )
+        acc = float(r.get(score_field) or 0)
+        failed = str(r.get("status")) == "failed"
+        width = max(0.0, min(100.0, acc))
+        flash = " hist-bar-flash" if highlight_key and key == highlight_key else ""
+        color = "#7f1d1d" if failed else _bar_color(key)
+        num = "—" if failed else f"{acc:.1f}%"
+        bars.append(
+            f'<div class="hist-row{flash}">'
+            f'<div class="hist-label">'
+            f'<span class="hist-rank"><span class="rank-prov-tag">Prov.</span> {i}</span>'
+            f'<span class="hist-name">{html.escape(nm)}</span>'
+            f'<span class="hist-ver">{html.escape(ver)}</span></div>'
+            f'<div class="hist-track">'
+            f'<div class="hist-fill" style="width:{width:.1f}%;background:{color}"></div>'
+            f"</div>"
+            f'<div class="hist-num">{num}</div>'
+            f"</div>"
+        )
+
+    for r in pending:
+        key = str(r.get("key") or "")
+        nm, ver = name_and_version(
+            key, label=r.get("label"), model=r.get("model")
+        )
+        bars.append(
+            f'<div class="hist-row pending">'
+            f'<div class="hist-label"><span class="hist-rank">—</span>'
+            f'<span class="hist-name">{html.escape(nm)}</span>'
+            f'<span class="hist-ver">{html.escape(ver)}</span></div>'
+            f'<div class="hist-track"><div class="hist-fill pending-fill"></div></div>'
+            f'<div class="hist-num hist-wait">…</div>'
+            f"</div>"
+        )
+
+    return '<div class="rank-hist">' + "".join(bars) + "</div>"
+
+
+def live_judging_board_html(
+    entries: Dict[str, Dict[str, Any]],
+    *,
+    highlight_key: Optional[str] = None,
+    title: str = "Live judging · collect order + provisional ranking",
+) -> str:
+    """Live board during DeepSeek judging.
+
+    Left table stays **FIFO** (collect → judge queue order): rows never reorder;
+    they only update status/score in place when a judge finishes.
+
+    Right histogram is the **provisional ranking**: scored rows sort high→low and
+    slide as new scores arrive. ``highlight_key`` gets a 2s glow (latest arrival).
+    """
+    all_rows: List[Dict[str, Any]] = []
+    for key, raw in (entries or {}).items():
+        row = dict(raw or {})
+        row["key"] = key
+        all_rows.append(row)
+
+    # Left = fixed collect order
+    fifo = sorted(
+        all_rows,
+        key=lambda r: (
+            int(r.get("queue_i") or 10_000),
+            str(r.get("label") or r.get("key") or "").lower(),
+        ),
+    )
+    scored = [
+        r
+        for r in all_rows
+        if str(r.get("status") or "") in ("scored", "failed")
+        and r.get("accuracy") is not None
+    ]
+    scored_keys = {str(r.get("key") or "") for r in scored}
+    pending = [r for r in all_rows if str(r.get("key") or "") not in scored_keys]
+
+    body: List[str] = []
+    for r in fifo:
+        key = str(r.get("key") or "")
+        nm, ver = name_and_version(
+            key, label=r.get("label"), model=r.get("model")
+        )
+        qi = int(r.get("queue_i") or 0) or "—"
+        st = str(r.get("status") or "pending")
+        flash = " rank-row-flash" if highlight_key and key == highlight_key else ""
+        if st in ("scored", "failed") and r.get("accuracy") is not None:
+            acc = float(r.get("accuracy") or 0)
+            failed = st == "failed"
+            if failed:
+                acc_col = (
+                    "<span class='rank-live-acc-num fail'>—</span>"
+                    "<span class='rank-live-note'>failed</span>"
+                )
+            else:
+                acc_col = (
+                    f"<span class='rank-live-acc-num'>{acc:.1f}</span>"
+                    f"<span class='rank-live-acc-unit'>%</span>"
+                )
+            body.append(
+                f"<tr class='rank-live-row scored{flash}' data-key='{html.escape(key)}'>"
+                f"<td class='rank-live-pos'>{qi}</td>"
+                f"<td class='rank-live-name'>{html.escape(nm)}"
+                f"<div class='rank-live-ver'>{html.escape(ver)}</div></td>"
+                f"<td class='rank-live-acc'>{acc_col}</td>"
+                f"</tr>"
+            )
+        else:
+            waiting = (
+                "judging…"
+                if st in ("pending", "queued", "retry", "judging")
+                else ("collecting…" if st == "collecting" else st)
+            )
+            body.append(
+                f"<tr class='rank-live-row pending' data-key='{html.escape(key)}'>"
+                f"<td class='rank-live-pos' style='color:#64748b'>{qi}</td>"
+                f"<td class='rank-live-name' style='opacity:.85'>{html.escape(nm)}"
+                f"<div class='rank-live-ver'>{html.escape(ver)}</div></td>"
+                f"<td class='rank-live-acc'><span class='rank-live-wait'>"
+                f"{html.escape(waiting)}</span></td>"
+                f"</tr>"
+            )
+
+    if not body:
+        return (
+            f'<div class="rank-live-board">'
+            f'<div class="rank-live-title">{html.escape(title)}</div>'
+            f'<div class="rank-live-empty">Waiting for first collect → judge…</div></div>'
+        )
+
+    n_scored = len(scored)
+    table = (
+        "<table class='rank-live-table'><thead><tr>"
+        "<th>#</th><th>Model</th><th>Score</th>"
+        "</tr></thead><tbody>"
+        + "".join(body)
+        + "</tbody></table>"
+    )
+    # Right = dynamic ranking (scored high→low; pending at bottom)
+    hist = accuracy_histogram_html(
+        scored + pending,
+        highlight_key=highlight_key,
+        include_pending=True,
+    )
+    return (
+        f'<div class="rank-live-board">'
+        f'<div class="rank-live-title">{html.escape(title)}</div>'
+        f'<div class="rank-live-sub">{n_scored} scored · left = collect order (fixed) · '
+        f"right = <b>Prov.</b> ranking (slides as scores arrive)"
+        f"{' · latest highlighted' if highlight_key else ''}</div>"
+        f'<div class="rank-live-grid">'
+        f'<div class="rank-live-col table-col">'
+        f'<div class="rank-live-hist-cap">Judge queue · FIFO</div>{table}</div>'
+        f'<div class="rank-live-col hist-col">'
+        f'<div class="rank-live-hist-cap">Provisional ranking · histogram</div>{hist}</div>'
+        f"</div></div>"
+    )
+
+
 def _ranking_table_html(ranking: List[Dict[str, Any]]) -> str:
-    rows = sorted(ranking or [], key=lambda r: int(r.get("rank") or 99))
+    rows = sorted(
+        ranking or [],
+        key=lambda r: float(r.get("accuracy") or 0),
+        reverse=True,
+    )
     if not rows:
         return "<p style='color:#94a3b8'>No ranking.</p>"
     body = []
-    for r in rows:
+    for i, r in enumerate(rows, 1):
         nm, ver = name_and_version(
             str(r.get("key") or ""),
             label=r.get("label"),
             model=r.get("model"),
         )
+        acc = float(r.get("accuracy") or 0)
         body.append(
             "<tr>"
-            f"<td style='padding:0.3rem 0.45rem;border-bottom:1px solid #1e293b'>#{r.get('rank')}</td>"
+            f"<td style='padding:0.3rem 0.45rem;border-bottom:1px solid #1e293b'>#{i}</td>"
             f"<td style='padding:0.3rem 0.45rem;border-bottom:1px solid #1e293b'>"
             f"{html.escape(nm)}</td>"
             f"<td style='padding:0.3rem 0.45rem;border-bottom:1px solid #1e293b;"
             f"color:#94a3b8;font-size:0.8rem'>{html.escape(ver)}</td>"
-            f"<td style='padding:0.3rem 0.45rem;border-bottom:1px solid #1e293b;font-weight:700;"
-            f"color:#fbbf24'>{float(r.get('accuracy') or 0):.1f}%</td>"
+            f"<td style='padding:0.3rem 0.45rem;border-bottom:1px solid #1e293b;font-weight:800;"
+            f"color:#fbbf24;font-size:1.05rem;text-align:right'>{acc:.1f}%</td>"
             "</tr>"
         )
     return (
@@ -103,10 +314,27 @@ def _ranking_table_html(ranking: List[Dict[str, Any]]) -> str:
         "<th style='padding:0.3rem 0.45rem'>#</th>"
         "<th style='padding:0.3rem 0.45rem'>Name</th>"
         "<th style='padding:0.3rem 0.45rem'>Version</th>"
-        "<th style='padding:0.3rem 0.45rem'>Acc</th>"
+        "<th style='padding:0.3rem 0.45rem;text-align:right'>Score</th>"
         "</tr></thead><tbody>"
         + "".join(body)
         + "</tbody></table>"
+    )
+
+
+def _run_summary_body_html(ranking: List[Dict[str, Any]]) -> str:
+    """Table + histogram for finished-run modal."""
+    rows = sorted(
+        ranking or [],
+        key=lambda r: float(r.get("accuracy") or 0),
+        reverse=True,
+    )
+    return (
+        '<div class="rank-live-grid run-summary-grid">'
+        f'<div class="rank-live-col table-col">{_ranking_table_html(rows)}</div>'
+        f'<div class="rank-live-col hist-col">'
+        f'<div class="rank-live-hist-cap">Accuracy % · histogram</div>'
+        f"{accuracy_histogram_html(rows)}"
+        f"</div></div>"
     )
 
 
@@ -142,10 +370,10 @@ def progressive_multi_panel_html(
         ranking = snap.get("ranking") or []
         top = "—"
         if ranking:
-            best = min(ranking, key=lambda r: int(r.get("rank") or 99))
+            best = max(ranking, key=lambda r: float(r.get("accuracy") or 0))
             top = (
                 f"{short_model(str(best.get('key')))} "
-                f"{float(best.get('accuracy') or 0):.0f}%"
+                f"{float(best.get('accuracy') or 0):.1f}%"
             )
         chips.append(
             f'<button type="button" onclick="document.getElementById(\'{mid}\').style.display=\'flex\'" '
@@ -160,19 +388,20 @@ def progressive_multi_panel_html(
         modals.append(
             f'<div id="{mid}" style="display:none;position:fixed;inset:0;z-index:100000;'
             f'align-items:center;justify-content:center;background:rgba(2,6,23,0.82);">'
-            f'<div style="width:min(440px,96%);max-height:90%;overflow:auto;background:#0f172a;'
+            f'<div style="width:min(720px,96%);max-height:92%;overflow:auto;background:#0f172a;'
             f'border:1px solid #334155;border-radius:16px;padding:1.1rem 1.25rem;'
             f'box-shadow:0 16px 40px rgba(0,0,0,0.5);">'
             f'<div style="display:flex;justify-content:space-between;align-items:center;'
             f'margin-bottom:0.55rem;">'
-            f'<div style="font-weight:700;color:#f8fafc;font-size:1.1rem;">Run {i} KPIs</div>'
+            f'<div style="font-weight:700;color:#f8fafc;font-size:1.1rem;">'
+            f"Run {i} · table + histogram</div>"
             f'<button type="button" onclick="document.getElementById(\'{mid}\').style.display=\'none\'" '
             f'style="border:0;background:#334155;color:#e2e8f0;border-radius:8px;padding:0.35rem 0.7rem;'
             f'cursor:pointer;">Close</button></div>'
-            f'{_ranking_table_html(ranking)}'
-            f'<div style="color:#64748b;font-size:0.78rem;margin-top:0.55rem;">'
+            f"{_run_summary_body_html(ranking)}"
+            f'<div style="color:#64748b;font-size:0.78rem;margin-top:0.65rem;">'
             f'Cost ${float(snap.get("total_cost_usd") or 0):.4f} · full detail after batch ends'
-            f'</div></div></div>'
+            f"</div></div></div>"
         )
 
     pending = n_total - n_done
@@ -198,7 +427,7 @@ def client_toast_run_done(run_i: int, n_total: int, ranking: List[Dict[str, Any]
     """In-panel completion card (iframe-safe). Pair with st.toast for app-level notice."""
     leader = "—"
     if ranking:
-        best = min(ranking, key=lambda r: int(r.get("rank") or 99))
+        best = max(ranking, key=lambda r: float(r.get("accuracy") or 0))
         leader = (
             f"{short_model(str(best.get('key')))} · "
             f"{float(best.get('accuracy') or 0):.1f}%"

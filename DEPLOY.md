@@ -14,6 +14,7 @@
 **On the cloud demo:**
 
 - **Automated Benchmark** (`app.py`) with visitor **BYOK** OpenRouter (ChatGPT / Claude / Gemini + DeepSeek R1 judge).
+- During judging: **live board** — left = collect-order FIFO queue; right = provisional ranking histogram (see README).
 - **BYOK in the UI only:** each visitor pastes their own OpenRouter key and clicks **Save**. The app remembers it for **that visitor’s IP** (prefilled on refresh). Other IPs start with an **empty** field.
 - **Do not** add `OPENROUTER_API_KEY` under Streamlit **Settings → Secrets**. That would load *your* key into the server for **every** visitor (they would all bill your account).
 - **Private History / KPIs:** Custom Case + Demo runs live under `artifacts/owners/<hash of that visitor’s key>/`. Same key → same history and means; other keys cannot open those files.
