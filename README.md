@@ -60,12 +60,18 @@ call, deterministic local repair normalizes harmless wrappers, aliases, extra
 fields, lists, and numeric strings without changing evidence text or clinical
 words. A corrective retry requests only invalid sections when valid sections
 can be retained from the same judge. Candidate collection retries once only for
-retryable transport or explicit truncation, never for genuinely empty or
-clinically incomplete output. The independent verifier is activated only after
+retryable transport or explicit truncation. Transport retries the call;
+truncation requests only missing/cut sections and retains parsed sections.
+Markdown, punctuation, spacing, Unicode styling, and case are normalized
+locally before declaring a section missing. Genuinely absent clinical content
+remains N/A. The independent verifier is activated only after
 systemic residual failure (at least two affected candidates and at least the
 30% cohort threshold). If activated, it re-judges
 the complete fixed candidate set; one ranking never mixes judge cohorts. Empty or partial candidate
 answers, invented evidence, and genuinely unusable JSON remain technical N/A.
+Clinical meaning is the judge's first coverage/quality criterion. The host
+accepts evidence assembled from textually present sentences, but never uses
+unconstrained fuzzy matching that could accept changed clinical facts.
 
 Local candidates are loaded from gitignored GGUF files through the QVAC SDK
 sidecar:

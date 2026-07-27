@@ -63,8 +63,10 @@ unambiguous wrappers, aliases, singleton/list forms, extra fields, and numeric
 strings. It never changes evidence text or clinical words. A schema/evidence
 rejection retries only invalid sections when accepted sections from the same
 judge can be retained. Candidate collection retries once for retryable
-transport or explicit truncation; genuinely empty or clinically incomplete
-output remains N/A without relaxed validation.
+transport or explicit truncation. A truncation retry requests only missing or
+cut sections and retains already parsed sections. Deterministic parser
+normalization handles Markdown, punctuation, spacing, Unicode styling, and case;
+genuinely absent clinical content remains N/A without relaxed validation.
 
 If bounded primary recovery leaves systemic judge failure—at least two
 technical failures and at least 30% of the fixed cohort—and an eligible

@@ -571,8 +571,19 @@ def _collect_candidate(
             "reason": "transport" if transport_failure else "truncation",
         },
     )
+    recovery_case = case
+    target_question_ids = {question.id for question in case.questions}
+    if truncation and not transport_failure:
+        missing = [
+            question
+            for question in case.questions
+            if not ((first.answers or {}).get(question.id) or "").strip()
+        ]
+        target_questions = missing or [case.questions[-1]]
+        target_question_ids = {question.id for question in target_questions}
+        recovery_case = case.model_copy(update={"questions": target_questions})
     second = _collect_candidate_once(
-        case,
+        recovery_case,
         cand_cfg,
         blind_id,
         on_event,
@@ -589,6 +600,18 @@ def _collect_candidate(
         3,
     )
     second.meta.retry_count = 1
+    if truncation and not transport_failure:
+        merged_answers = dict(first.answers or {})
+        for question_id in target_question_ids:
+            recovered = (second.answers or {}).get(question_id)
+            if (recovered or "").strip():
+                merged_answers[question_id] = recovered
+        second.answers = merged_answers
+        second.raw_response = (
+            (first.raw_response or "").rstrip()
+            + "\n\n[TARGETED TRUNCATION RECOVERY]\n"
+            + (second.raw_response or "").lstrip()
+        ).strip()
     return second
 
 

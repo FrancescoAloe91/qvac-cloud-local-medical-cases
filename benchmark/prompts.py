@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import re
+import unicodedata
 from typing import Dict
 
 from benchmark.gold import load_confirmed_gold
@@ -54,31 +56,35 @@ def candidate_user(case: Case) -> str:
 
 
 def parse_candidate_answers(case: Case, raw: str) -> Dict[str, str]:
-    """Best-effort parse of A1/A2… or [id]: blocks. Falls back to whole text."""
+    """Parse presentation variants deterministically; never infer missing content."""
     answers: Dict[str, str] = {}
-    text = raw or ""
-    for i, q in enumerate(case.questions, 1):
-        marker = f"A{i}:"
-        start = text.find(marker)
-        if start < 0:
-            alt = f"[{q.id}]"
-            start = text.lower().find(alt.lower())
-            if start >= 0:
-                start = text.find(":", start)
-                if start < 0:
-                    continue
-                start += 1
-            else:
-                continue
-        else:
-            start += len(marker)
-        end = len(text)
-        for j in range(i + 1, len(case.questions) + 1):
-            nxt = text.find(f"A{j}:", start)
-            if nxt >= 0:
-                end = nxt
-                break
-        answers[q.id] = text[start:end].strip()
+    text = unicodedata.normalize("NFKC", raw or "")
+    marker_re = re.compile(
+        r"(?im)(?:^|\n)\s*(?:[-*#>`_]+\s*)?"
+        r"A\s*(\d+)\s*(?::|[.)]|[-–—])\s*(?:[*_`]+\s*)?"
+    )
+    matches = list(marker_re.finditer(text))
+    by_number = {int(match.group(1)): index for index, match in enumerate(matches)}
+    for number, q in enumerate(case.questions, 1):
+        match_index = by_number.get(number)
+        if match_index is not None:
+            match = matches[match_index]
+            end = (
+                matches[match_index + 1].start()
+                if match_index + 1 < len(matches)
+                else len(text)
+            )
+            answers[q.id] = text[match.end() : end].strip()
+            continue
+        id_match = re.search(
+            rf"(?im)(?:^|\n)\s*(?:[-*#>`_]+\s*)?"
+            rf"\[?{re.escape(q.id)}\]?\s*(?::|[-–—])\s*",
+            text,
+        )
+        if id_match:
+            next_marker = marker_re.search(text, id_match.end())
+            end = next_marker.start() if next_marker else len(text)
+            answers[q.id] = text[id_match.end() : end].strip()
 
     n_filled = sum(1 for q in case.questions if (answers.get(q.id) or "").strip())
     # Fewer than 2 sections parsed → treat as unstructured prose; give judge the
