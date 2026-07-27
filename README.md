@@ -59,12 +59,12 @@ schema/evidence receive bounded automatic retries. Before another paid judge
 call, deterministic local repair normalizes harmless wrappers, aliases, extra
 fields, lists, and numeric strings without changing evidence text or clinical
 words. A corrective retry requests only invalid sections when valid sections
-can be retained from the same judge. Candidate collection retries once only for
-retryable transport or explicit truncation. Transport retries the call;
-truncation requests only missing/cut sections and retains parsed sections.
-Markdown, punctuation, spacing, Unicode styling, and case are normalized
-locally before declaring a section missing. Genuinely absent clinical content
-remains N/A. The independent verifier is activated only after
+can be retained from the same judge. Candidate collection retries once for a
+retryable transport fault, a local sidecar/GGUF fault, explicit truncation, or
+sections the model left unwritten. Transport retries the call; truncation and
+unwritten sections request only the affected questions and retain everything
+already answered. Genuinely absent clinical content remains N/A. The independent
+verifier is activated only after
 systemic residual failure (at least two affected candidates and at least the
 30% cohort threshold). If activated, it re-judges
 the complete fixed candidate set; one ranking never mixes judge cohorts. Empty or partial candidate
@@ -73,6 +73,27 @@ Clinical meaning is the judge's first coverage/quality criterion. The host
 accepts evidence assembled from textually present sentences, but never uses
 unconstrained fuzzy matching that could accept changed clinical facts.
 
+### Reading the candidate answer
+
+Section recovery is tolerant about presentation and strict about substance.
+Small on-device models seldom reproduce the requested `A#:` layout exactly, and
+a different layout is not a clinical failure, so the parser accepts:
+
+- `A1:`, `Q1 [diagnosis]:`, `## A1 [DIAGNOSIS]`, `Answer 1 —`, and an `A1:`
+  marker restated mid-sentence after prose;
+- Markdown headings, bold or italic emphasis, ordinals, list bullets, missing
+  colons, and arbitrary casing;
+- synonymous or localized section labels such as impression, workup,
+  investigations, triage, contraindications, or management;
+- sections written out of order, and a question restated before its answer
+  (both fragments are attributed to that one section).
+
+Reasoning wrappers such as `<think>…</think>` are removed before scoring, so a
+private monologue is never graded as an answer and never steals content from a
+neighbouring section. The parser only re-attributes text the model actually
+wrote; it never generates, completes, or copies clinical content, so a section
+the model genuinely never produced still ends as N/A.
+
 Local candidates are loaded from gitignored GGUF files through the QVAC SDK
 sidecar:
 
@@ -80,6 +101,12 @@ sidecar:
 - Llama 3.2 3B Instruct Q4
 - Phi-3.5 Mini Instruct Q4
 - MedPsy 1.7B Q4, 4B Q4, and 4B Q8
+
+The sidecar reports a stop reason so a cut-off on-device answer is visible to
+the host, and its default context window (`QVAC_CTX_SIZE`, 8192) holds the
+prompt plus the same 3000-token output budget cloud candidates receive. Every
+roster slot reaches exactly one terminal row: a GGUF that fails to load or to
+stream is reported as a technical N/A instead of disappearing from the cohort.
 
 Latency and throughput are descriptive operational metrics; they are not
 hardware-normalized comparisons between cloud and local execution.

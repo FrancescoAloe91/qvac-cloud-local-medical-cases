@@ -58,15 +58,47 @@ observations. They are excluded from means and reported with reason counts.
 There is no synthetic zero, fallback score, or forced tie-break.
 Exact ties keep the same rank.
 
+### Recovering the candidate's sections
+
+A candidate answer is read by clinical meaning, not by one exact template.
+Deterministic parsing accepts numbered markers (`A1:`, `Q1 [diagnosis]:`,
+`## A1 [DIAGNOSIS]`, `Answer 1 —`, and a marker restated mid-sentence),
+Markdown headings and emphasis, ordinals, list bullets, absent colons, any
+casing, Unicode presentation, sections in any order, and synonymous or
+localized labels (impression, workup, investigations, triage,
+contraindications, management, and similar). A restated question followed by
+its answer contributes both fragments to the same section, and a heading always
+ends the previous section so content is never attributed to the wrong question.
+Reasoning wrappers (`<think>…</think>` and equivalents) are removed before
+scoring, so a private monologue is neither graded nor allowed to displace a real
+answer.
+
+This tolerance is presentational only. The parser never writes, completes, or
+duplicates clinical content, so recovery is possible exactly when the model
+itself produced the content.
+
+A hit output-length cap is not by itself a failure. A truncated response whose
+required sections all carry content is judged normally; it becomes N/A only when
+a required section has no content at all.
+
 Before a paid corrective call, deterministic local normalization repairs only
 unambiguous wrappers, aliases, singleton/list forms, extra fields, and numeric
 strings. It never changes evidence text or clinical words. A schema/evidence
 rejection retries only invalid sections when accepted sections from the same
-judge can be retained. Candidate collection retries once for retryable
-transport or explicit truncation. A truncation retry requests only missing or
-cut sections and retains already parsed sections. Deterministic parser
-normalization handles Markdown, punctuation, spacing, Unicode styling, and case;
-genuinely absent clinical content remains N/A without relaxed validation.
+judge can be retained. Candidate collection spends at most one retry, on a
+retryable transport fault, a local sidecar/GGUF fault, explicit truncation, or
+sections the model left unwritten. Truncation and unwritten sections regenerate
+only the affected questions and retain already parsed sections verbatim.
+
+### What remains N/A
+
+After tolerant parsing and the bounded retry, an observation is still technical
+N/A when the candidate returned nothing, when a required clinical section has no
+recoverable content (including a degenerate loop that never reaches the later
+questions), when collection or the local runtime failed outright, when the
+provider blocked the content, or when the judge produced unusable JSON or
+evidence that is not verbatim in the answer. Genuinely absent clinical content
+is never scored, imputed, or credited.
 
 If bounded primary recovery leaves systemic judge failure—at least two
 technical failures and at least 30% of the fixed cohort—and an eligible

@@ -919,11 +919,7 @@ class PipelinedJudge:
             for qs in z.question_scores:
                 qs.errors = ["empty_answer"]
             return z
-        if (cand.meta.finish_reason or "").lower() in {
-            "length",
-            "max_tokens",
-            "content_filter",
-        }:
+        if (cand.meta.finish_reason or "").lower() == "content_filter":
             return _zero_judgment(
                 self.case,
                 cand,
@@ -931,6 +927,8 @@ class PipelinedJudge:
                 f"Partial candidate output — finish_reason={cand.meta.finish_reason}",
                 cand.meta,
             )
+        # A hit length cap is not itself a failure: judge the answer whenever every
+        # required section carries content, and fail only on real absence.
         missing = _candidate_missing_sections(self.case, cand)
         if missing:
             return _zero_judgment(
@@ -997,8 +995,7 @@ class PipelinedJudge:
             if not cand.meta.error
             and _candidate_has_answer(cand)
             and not _candidate_missing_sections(self.case, cand)
-            and (cand.meta.finish_reason or "").lower()
-            not in {"length", "max_tokens", "content_filter"}
+            and (cand.meta.finish_reason or "").lower() != "content_filter"
         ]
         if not eligible:
             return

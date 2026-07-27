@@ -7,7 +7,7 @@
  *   QVAC_MODEL_PATH     path to MedPsy GGUF
  *   QVAC_DEVICE         "gpu" (default) | "cpu"
  *   QVAC_GPU_LAYERS     default 99 (0 = CPU-only layers)
- *   QVAC_CTX_SIZE       default 4096
+ *   QVAC_CTX_SIZE       default 8192 (must hold the prompt plus QVAC_PREDICT)
  *   QVAC_PREDICT        max new tokens, default 3000 (aligned with cloud candidates)
  *   QVAC_MAIN_GPU       optional: "dedicated" | "integrated" | "0"
  *   QVAC_WARM_LOAD      "1" (default) preload model at startup
@@ -73,7 +73,10 @@ const DEVICE = (process.env.QVAC_DEVICE || "gpu").toLowerCase();
 const GPU_LAYERS = Number(
   process.env.QVAC_GPU_LAYERS ?? (DEVICE === "cpu" ? 0 : 99)
 );
-const CTX_SIZE = Number(process.env.QVAC_CTX_SIZE || 4096);
+// The benchmark prompt (case stem + five questions) costs roughly 1-2k tokens,
+// so a 4096 window could not hold it plus the 3000 tokens candidates are told
+// they may use. That mismatch truncated on-device answers mid-section.
+const CTX_SIZE = Number(process.env.QVAC_CTX_SIZE || 8192);
 const PREDICT = Number(process.env.QVAC_PREDICT || 3000);
 const WARM_LOAD = (process.env.QVAC_WARM_LOAD || "1") !== "0";
 
@@ -476,6 +479,13 @@ async function* tokenStream(prompt, messages) {
     `[qvac-sidecar] generate done · ${modelTagFromPath(MODEL_PATH)} · chars=${trimmed.length} · tok≈${approxTokens} · ttft=${ttftS != null ? ttftS.toFixed(3) : "—"}s · tps=${tps ?? "—"} · latency=${latencyS.toFixed(3)}s`
   );
 
+  // The SDK exposes no stop reason, so report one from the budget the worker
+  // was given. Without it the host cannot tell a finished answer from a cut one.
+  const predictCap = activeConfig?.predict ?? PREDICT;
+  const hitPredictCap =
+    Number.isFinite(predictCap) && predictCap > 0 && tokenCount >= predictCap;
+  const finishReason = trimmed ? (hitPredictCap ? "length" : "stop") : "";
+
   yield {
     __done: true,
     content,
@@ -487,6 +497,9 @@ async function* tokenStream(prompt, messages) {
     tps,
     completion_tokens: approxTokens,
     prompt_tokens: 0,
+    finish_reason: finishReason,
+    ctx_size: activeConfig?.ctx_size ?? CTX_SIZE,
+    predict: predictCap,
     cost_usd: 0,
     ram_mb: lastRamMb,
     gguf_mb: ggufSizeMb(MODEL_PATH),

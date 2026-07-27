@@ -70,6 +70,7 @@ from benchmark.run_control import cancel_run, finish_run, is_cancelled, start_ru
 from benchmark.runner import (
     build_run_artifact,
     estimate_cost_breakdown,
+    is_retryable_local_error,
     iter_collect_live,
     prepare_run,
 )
@@ -2722,16 +2723,16 @@ if st.session_state.get("confirmed_run"):
             t_j0 = None
             collected = []
             judgments = []
-            blind_i = 0
             judge_status = None
             judge_status_ctx = None
             progress_slot = None
             board_slot = None
             started_keys: set[str] = set()
             label_by_key: dict[str, str] = {}
+            submitted_local: set[str] = set()
             lo_board: dict = {}
             # Mutable bag — avoids nonlocal + annotated-assign pitfalls on Py3.9
-            lo_ui = {"highlight": None, "queue_i": 0}
+            lo_ui = {"highlight": None, "queue_i": 0, "blind_i": 0}
 
             def _paint_lo_board() -> None:
                 if board_slot is None:
@@ -2898,6 +2899,72 @@ if st.session_state.get("confirmed_run"):
                 progress_slot.progress(0.0, text="Judge · waiting for first GGUF…")
                 _paint_lo_board()
 
+            def _terminalize_local(
+                slot_cfg: dict,
+                label_text: str,
+                body_text: str,
+                error_text,
+                meta_fields: dict,
+            ) -> None:
+                """Hand one roster slot to the judge, including failed ones.
+
+                A GGUF that never loaded or never streamed is still part of the
+                fixed cohort, so it has to arrive as an explicit N/A row instead
+                of quietly disappearing from the comparison.
+                """
+                if pipe is None:
+                    return
+                key_ = str(slot_cfg.get("key") or "")
+                if not key_ or key_ in submitted_local:
+                    return
+                submitted_local.add(key_)
+                lo_ui["blind_i"] = int(lo_ui["blind_i"]) + 1
+                cand_row = CandidateAnswer(
+                    candidate_key=key_,
+                    label=str(slot_cfg.get("label") or key_),
+                    display_label=str(
+                        label_text or slot_cfg.get("display_label") or key_
+                    ),
+                    vendor=str(slot_cfg.get("vendor") or "local"),
+                    site=str(slot_cfg.get("site") or "local (QVAC SDK)"),
+                    blind_id=f"Candidate {lo_ui['blind_i']}",
+                    answers=(
+                        parse_candidate_answers(live_case, body_text)
+                        if body_text
+                        else {}
+                    ),
+                    raw_response=body_text or "",
+                    meta=ModelCallMeta(
+                        model=str(
+                            meta_fields.get("model") or slot_cfg.get("model") or key_
+                        ),
+                        provider="qvac",
+                        display_label=str(label_text or key_),
+                        ttft_s=meta_fields.get("ttft_s"),
+                        tps=meta_fields.get("tps"),
+                        latency_s=meta_fields.get("latency_s"),
+                        finish_reason=str(meta_fields.get("finish_reason") or ""),
+                        completion_tokens=int(
+                            meta_fields.get("completion_tokens") or 0
+                        ),
+                        ram_mb=meta_fields.get("ram_mb"),
+                        gguf_mb=meta_fields.get("gguf_mb"),
+                        cost_usd=0.0,
+                        error=error_text,
+                    ),
+                )
+                label_by_key[key_] = cand_row.display_label or cand_row.label
+                if key_ not in started_keys:
+                    lo_ui["queue_i"] = int(lo_ui["queue_i"]) + 1
+                    lo_board[key_] = {
+                        "label": label_by_key[key_],
+                        "status": "judging",
+                        "accuracy": None,
+                        "queue_i": lo_ui["queue_i"],
+                    }
+                    _paint_lo_board()
+                pipe.submit(cand_row)
+
             for slot in local_slots:
                 qkey = slot["key"]
                 qlabel = slot.get("display_label") or slot.get("label") or qkey
@@ -2907,14 +2974,21 @@ if st.session_state.get("confirmed_run"):
                     unsafe_allow_html=True,
                 )
                 if gguf:
-                    loaded = qvac_load_model(
-                        gguf,
-                        sampling=(
-                            {"temp": 0.2, "top_k": 20, "top_p": 0.95}
-                            if benchmark_track == "controlled"
-                            else {}
-                        ),
+                    _sampling = (
+                        {"temp": 0.2, "top_k": 20, "top_p": 0.95}
+                        if benchmark_track == "controlled"
+                        else {}
                     )
+                    loaded = qvac_load_model(gguf, sampling=_sampling)
+                    if not loaded.get("ok"):
+                        # A hot-swap can fail while the previous GGUF unloads;
+                        # spend one free local retry before calling it N/A.
+                        status_boxes[qkey].markdown(
+                            _status_pill("wait", "Reloading GGUF…"),
+                            unsafe_allow_html=True,
+                        )
+                        _time_live.sleep(1.5)
+                        loaded = qvac_load_model(gguf, sampling=_sampling)
                     if not loaded.get("ok"):
                         err_load = str(loaded.get("error") or "load failed")[:80]
                         status_boxes[qkey].markdown(
@@ -2925,76 +2999,107 @@ if st.session_state.get("confirmed_run"):
                             "status": err_load,
                             "error": True,
                             "kpi": "",
+                            "meta": {},
+                            "label": qlabel,
                         }
+                        _terminalize_local(
+                            slot,
+                            str(qlabel),
+                            "",
+                            str(loaded.get("error") or "Failed to load GGUF"),
+                            {},
+                        )
                         _poll_pipe()
                         continue
                 status_boxes[qkey].markdown(
                     _status_pill("wait", "Streaming…"), unsafe_allow_html=True
                 )
-                buf = ""
-                done_meta: dict = {}
-                err_msg = None
-                n_tok = 0
-                t0 = _time_live.time()
-                ttft_s = None
-                last_paint = 0.0
-                last_pipe_poll = 0.0
-                for evt in qvac_iter_tokens(prompt, messages=_chat_msgs):
-                    et = evt.get("type")
-                    if et == "token":
-                        tok = evt.get("token") or ""
-                        if not tok:
-                            continue
-                        buf += tok
-                        n_tok += 1
-                        now = _time_live.time()
-                        if ttft_s is None:
-                            ttft_s = round(now - t0, 2)
-                        elapsed = round(now - t0, 2)
-                        gen_elapsed = max(elapsed - (ttft_s or 0), 0.001)
-                        tps_live = (
-                            round(n_tok / gen_elapsed, 1) if ttft_s is not None else None
+                stream_state = {"last_paint": 0.0, "last_pipe_poll": 0.0}
+
+                def _stream_local_once() -> tuple:
+                    """Consume one on-device generation, painting tokens live."""
+                    buf_ = ""
+                    done_ = {}
+                    err_ = None
+                    n_tok_ = 0
+                    t0_ = _time_live.time()
+                    ttft_ = None
+                    for evt in qvac_iter_tokens(prompt, messages=_chat_msgs):
+                        et = evt.get("type")
+                        if et == "token":
+                            tok = evt.get("token") or ""
+                            if not tok:
+                                continue
+                            buf_ += tok
+                            n_tok_ += 1
+                            now = _time_live.time()
+                            if ttft_ is None:
+                                ttft_ = round(now - t0_, 2)
+                            elapsed = round(now - t0_, 2)
+                            gen_elapsed = max(elapsed - (ttft_ or 0), 0.001)
+                            tps_live = round(n_tok_ / gen_elapsed, 1)
+                            if (
+                                n_tok_ == 1
+                                or n_tok_ % 8 == 0
+                                or (now - stream_state["last_paint"]) >= 0.25
+                            ):
+                                stream_state["last_paint"] = now
+                                text_boxes[qkey].markdown(
+                                    _stream_body_html(buf_, live=True, panel_id=qkey),
+                                    unsafe_allow_html=True,
+                                )
+                                kpi_boxes[qkey].markdown(
+                                    f'<div class="kpi-slot"><p class="kpi-row live">'
+                                    f"{_kpi_live_line(ttft_, elapsed, tps_live)}"
+                                    "</p></div>",
+                                    unsafe_allow_html=True,
+                                )
+                            # Harvest finished DeepSeek calls while this GGUF streams
+                            if (
+                                pipe is not None
+                                and (now - stream_state["last_pipe_poll"]) >= 0.45
+                            ):
+                                stream_state["last_pipe_poll"] = now
+                                _poll_pipe()
+                        elif et == "done":
+                            done_ = evt
+                            if evt.get("content"):
+                                buf_ = str(evt["content"])
+                            if evt.get("error") and not (buf_ or "").strip():
+                                err_ = str(evt["error"])
+                        elif et == "error":
+                            err_ = str(evt.get("error") or "stream error")
+                            break
+                    return buf_, done_, err_, n_tok_, ttft_
+
+                buf, done_meta, err_msg, n_tok, ttft_s = _stream_local_once()
+                # One free local re-stream: a sidecar worker or transport fault
+                # says nothing about the model's clinical ability.
+                if err_msg and not (buf or "").strip() and is_retryable_local_error(err_msg):
+                    status_boxes[qkey].markdown(
+                        _status_pill("wait", "Retrying local generation…"),
+                        unsafe_allow_html=True,
+                    )
+                    _time_live.sleep(1.5)
+                    buf, done_meta, err_msg, n_tok, ttft_s = _stream_local_once()
+
+                if err_msg:
+                    low = err_msg.lower()
+                    if "libssl" in low or "openssl" in low:
+                        err_msg = (
+                            "QVAC SDK needs OpenSSL 3. "
+                            "Run: ./scripts/setup_qvac_sidecar.sh && cd sidecar && npm start"
                         )
-                        if n_tok == 1 or n_tok % 8 == 0 or (now - last_paint) >= 0.25:
-                            last_paint = now
-                            text_boxes[qkey].markdown(
-                                _stream_body_html(buf, live=True, panel_id=qkey),
-                                unsafe_allow_html=True,
-                            )
-                            kpi_boxes[qkey].markdown(
-                                f'<div class="kpi-slot"><p class="kpi-row live">'
-                                f"{_kpi_live_line(ttft_s, elapsed, tps_live)}</p></div>",
-                                unsafe_allow_html=True,
-                            )
-                        # Harvest finished DeepSeek calls while this GGUF streams
-                        if pipe is not None and (now - last_pipe_poll) >= 0.45:
-                            last_pipe_poll = now
-                            _poll_pipe()
-                    elif et == "done":
-                        done_meta = evt
-                        if evt.get("content"):
-                            buf = str(evt["content"])
-                        if evt.get("error") and not (buf or "").strip():
-                            err_msg = str(evt["error"])
-                    elif et == "error":
-                        err_msg = str(evt.get("error") or "stream error")
-                        low = err_msg.lower()
-                        if "libssl" in low or "openssl" in low:
-                            err_msg = (
-                                "QVAC SDK needs OpenSSL 3. "
-                                "Run: ./scripts/setup_qvac_sidecar.sh && cd sidecar && npm start"
-                            )
-                        elif "404" in err_msg or "not found" in low:
-                            err_msg = (
-                                "Sidecar outdated / unreachable. "
-                                "Restart: cd sidecar && npm start"
-                            )
-                        elif "rpc" in low or "worker" in low:
-                            err_msg = (
-                                "QVAC SDK worker failed to start. "
-                                "Run: ./scripts/setup_qvac_sidecar.sh && cd sidecar && npm start"
-                            )
-                        break
+                    elif "404" in err_msg or "not found" in low:
+                        err_msg = (
+                            "Sidecar outdated / unreachable. "
+                            "Restart: cd sidecar && npm start"
+                        )
+                    elif "rpc" in low or "worker" in low:
+                        err_msg = (
+                            "QVAC SDK worker failed to start. "
+                            "Run: ./scripts/setup_qvac_sidecar.sh && cd sidecar && npm start"
+                        )
 
                 _body_chk = (buf or "").strip()
                 if (
@@ -3021,6 +3126,17 @@ if st.session_state.get("confirmed_run"):
                         "meta": {},
                         "label": qlabel,
                     }
+                    _terminalize_local(
+                        slot,
+                        str(qlabel),
+                        buf or "",
+                        err_msg,
+                        {
+                            "model": slot.get("model") or qkey,
+                            "completion_tokens": done_meta.get("completion_tokens"),
+                            "finish_reason": done_meta.get("finish_reason"),
+                        },
+                    )
                 else:
                     status_boxes[qkey].markdown(
                         _status_pill(
@@ -3039,6 +3155,7 @@ if st.session_state.get("confirmed_run"):
                         "completion_tokens": done_meta.get("completion_tokens") or 0,
                         "ram_mb": done_meta.get("ram_mb"),
                         "gguf_mb": done_meta.get("gguf_mb"),
+                        "finish_reason": done_meta.get("finish_reason"),
                         "device": done_meta.get("device")
                         or qvac_health().get("device")
                         or "?",
@@ -3078,35 +3195,6 @@ if st.session_state.get("confirmed_run"):
                             or None
                         )
                         if qkey:
-                            blind_i += 1
-                            cand = CandidateAnswer(
-                                candidate_key=qkey,
-                                label=str(slot.get("label") or qkey),
-                                display_label=str(
-                                    qlabel or slot.get("display_label") or qkey
-                                ),
-                                vendor=str(slot.get("vendor") or "local"),
-                                site=str(slot.get("site") or "local (QVAC SDK)"),
-                                blind_id=f"Candidate {blind_i}",
-                                answers=parse_candidate_answers(live_case, buf),
-                                raw_response=buf,
-                                meta=ModelCallMeta(
-                                    model=str(meta_done.get("model") or slot.get("model") or qkey),
-                                    provider="qvac",
-                                    display_label=str(qlabel or qkey),
-                                    ttft_s=meta_done.get("ttft_s"),
-                                    tps=meta_done.get("tps"),
-                                    latency_s=meta_done.get("latency_s"),
-                                    completion_tokens=int(
-                                        meta_done.get("completion_tokens") or 0
-                                    ),
-                                    ram_mb=meta_done.get("ram_mb"),
-                                    gguf_mb=meta_done.get("gguf_mb"),
-                                    cost_usd=0.0,
-                                    error=candidate_error,
-                                ),
-                            )
-                            label_by_key[qkey] = cand.display_label or cand.label
                             if candidate_error is None and t_j0 is None:
                                 t_j0 = time.time()
                                 # Both phases tick while DeepSeek overlaps next GGUFs
@@ -3132,16 +3220,9 @@ if st.session_state.get("confirmed_run"):
                                     multi=n_local > 1,
                                 )
                             # Collect → judging: append to bottom of live board (FIFO)
-                            if qkey not in started_keys:
-                                lo_ui["queue_i"] = int(lo_ui["queue_i"]) + 1
-                                lo_board[qkey] = {
-                                    "label": label_by_key[qkey],
-                                    "status": "judging",
-                                    "accuracy": None,
-                                    "queue_i": lo_ui["queue_i"],
-                                }
-                                _paint_lo_board()
-                            pipe.submit(cand)
+                            _terminalize_local(
+                                slot, str(qlabel), buf, candidate_error, meta_done
+                            )
                 _poll_pipe()
 
             t_collect_end = time.time()

@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import re
 import unicodedata
-from typing import Dict
+from typing import Dict, Iterator, List, NamedTuple, Optional, Tuple
 
 from benchmark.gold import load_confirmed_gold
 from benchmark.schema import Case
@@ -55,49 +55,292 @@ def candidate_user(case: Case) -> str:
     return "\n".join(lines)
 
 
-def parse_candidate_answers(case: Case, raw: str) -> Dict[str, str]:
-    """Parse presentation variants deterministically; never infer missing content."""
-    answers: Dict[str, str] = {}
-    text = unicodedata.normalize("NFKC", raw or "")
-    marker_re = re.compile(
-        r"(?im)(?:^|\n)\s*(?:[-*#>`_]+\s*)?"
-        r"A\s*(\d+)\s*(?::|[.)]|[-–—])\s*(?:[*_`]+\s*)?"
-    )
-    matches = list(marker_re.finditer(text))
-    by_number = {int(match.group(1)): index for index, match in enumerate(matches)}
-    for number, q in enumerate(case.questions, 1):
-        match_index = by_number.get(number)
-        if match_index is not None:
-            match = matches[match_index]
-            end = (
-                matches[match_index + 1].start()
-                if match_index + 1 < len(matches)
-                else len(text)
-            )
-            answers[q.id] = text[match.end() : end].strip()
-            continue
-        id_match = re.search(
-            rf"(?im)(?:^|\n)\s*(?:[-*#>`_]+\s*)?"
-            rf"\[?{re.escape(q.id)}\]?\s*(?::|[-–—])\s*",
-            text,
-        )
-        if id_match:
-            next_marker = marker_re.search(text, id_match.end())
-            end = next_marker.start() if next_marker else len(text)
-            answers[q.id] = text[id_match.end() : end].strip()
+# --------------------------------------------------------------------------
+# Tolerant candidate parsing
+#
+# Small on-device GGUF models reproduce the requested "A#:" layout only some of
+# the time. They emit reasoning blocks, restate the question before answering,
+# use Markdown headings, drop the colon, or answer out of order. None of that
+# changes whether the clinical content is present, so the parser recovers the
+# content by meaning of the heading instead of demanding one exact shape. It
+# still never invents, copies, or reorders clinical text.
+# --------------------------------------------------------------------------
 
-    n_filled = sum(1 for q in case.questions if (answers.get(q.id) or "").strip())
-    # Fewer than 2 sections parsed → treat as unstructured prose; give judge the
-    # full text for every question so plan/safety are not silently empty.
-    if text.strip() and n_filled < 2 and len(text.strip()) > 80:
-        body = text.strip()
-        for q in case.questions:
-            answers[q.id] = (
+# Reasoning/scratchpad wrappers emitted by reasoning-tuned local checkpoints.
+_REASONING_TAGS = (
+    "think",
+    "thinking",
+    "thought",
+    "reasoning",
+    "reflection",
+    "scratchpad",
+    "analysis",
+)
+_REASONING_BLOCK_RE = re.compile(
+    r"<\s*(" + "|".join(_REASONING_TAGS) + r")\s*>.*?<\s*/\s*\1\s*>",
+    re.IGNORECASE | re.DOTALL,
+)
+_REASONING_OPEN_RE = re.compile(
+    r"<\s*(?:" + "|".join(_REASONING_TAGS) + r")\s*>",
+    re.IGNORECASE,
+)
+_REASONING_CLOSE_RE = re.compile(
+    r"<\s*/\s*(?:" + "|".join(_REASONING_TAGS) + r")\s*>",
+    re.IGNORECASE,
+)
+
+# Section labels accepted as equivalent to the five canonical question ids.
+# Only wording differs; the clinical meaning of each bucket is unchanged.
+_SECTION_SYNONYMS: Dict[str, Tuple[str, ...]] = {
+    "diagnosis": (
+        "diagnosis",
+        "diagnoses",
+        "primary diagnosis",
+        "most likely diagnosis",
+        "likely diagnosis",
+        "working diagnosis",
+        "differential",
+        "differential diagnosis",
+        "diagnosis and differential",
+        "dx",
+        "impression",
+        "assessment",
+        "diagnosi",
+        "diagnostico",
+        "diagnostic",
+    ),
+    "tests": (
+        "tests",
+        "test",
+        "testing",
+        "next tests",
+        "further tests",
+        "diagnostic tests",
+        "investigations",
+        "investigation",
+        "workup",
+        "work-up",
+        "work up",
+        "labs",
+        "laboratory",
+        "esami",
+        "indagini",
+        "pruebas",
+        "examens",
+    ),
+    "urgency": (
+        "urgency",
+        "urgency level",
+        "acuity",
+        "triage",
+        "priority",
+        "red flags",
+        "urgency and red flags",
+        "urgenza",
+        "urgencia",
+        "urgence",
+    ),
+    "safety": (
+        "safety",
+        "safety concerns",
+        "safety issues",
+        "safety traps",
+        "pitfalls",
+        "contraindications",
+        "cautions",
+        "precautions",
+        "warnings",
+        "sicurezza",
+        "seguridad",
+        "securite",
+        "sécurité",
+    ),
+    "plan": (
+        "plan",
+        "management",
+        "management plan",
+        "treatment",
+        "treatment plan",
+        "initial management",
+        "immediate management",
+        "next steps",
+        "therapy",
+        "disposition",
+        "piano",
+        "gestione",
+        "manejo",
+        "prise en charge",
+    ),
+}
+
+# Leading Markdown / list noise allowed before a heading on its own line.
+_LINE_NOISE = r"[ \t]*(?:[>#*\-–—•▪●·+]+[ \t]*)*(?:\*{1,3}|_{1,3}|`{1,3})?[ \t]*"
+# Optional "1." / "2)" ordinal in front of a label heading.
+_ORDINAL = r"(?:\d{1,2}[.)][ \t]*)?"
+# Words that may introduce a numbered answer/question marker.
+_NUM_WORD = (
+    r"(?:answers?|questions?|risposte?|domande?|respuestas?|preguntas?"
+    r"|r[ée]ponses?|ans|a|q|r|d)"
+)
+# ":" / "." / ")" / "]" / free-standing dash. A dash counts only when it is
+# detached from the surrounding words, so ordinary prose such as "A 5-day course
+# of antibiotics" is never mistaken for an answer heading.
+_SEP = r"(?::+|[.)\]](?=[ \t\n]|$)|(?<=[ \t])[-–—](?=[ \t*_`\n]|$))"
+# Emphasis or quoting that may close a heading before the content starts.
+_TRAILING = r"(?:[*_`]+)?[ \t]*"
+# A heading may also end the line instead of carrying a separator ("## A1 [TESTS]").
+_EOL = r"(?:\*{1,3}|_{1,3}|`{1,3})?[ \t]*(?=\n|$)"
+
+_ALL_LABELS = sorted(
+    {label for labels in _SECTION_SYNONYMS.values() for label in labels},
+    key=len,
+    reverse=True,
+)
+_LABEL_TO_ID = {
+    label: section_id
+    for section_id, labels in _SECTION_SYNONYMS.items()
+    for label in labels
+}
+_LABEL_ALTERNATION = "|".join(re.escape(label) for label in _ALL_LABELS)
+
+# "A1:", "### Q2)", "**Answer 3 —**", "## A1 [DIAGNOSIS]".
+_NUMBERED_RE = re.compile(
+    rf"(?im)^{_LINE_NOISE}{_NUM_WORD}[ \t]*\.?[ \t]*(?P<num>\d{{1,2}})"
+    rf"(?:[ \t]*[\[(][ \t]*(?P<sid>[A-Za-z][A-Za-z /_-]{{1,30}}?)[ \t]*[\])])?"
+    rf"[ \t]*(?:{_SEP}{_TRAILING}|{_EOL})"
+)
+# "... volume depletion. A1: hyperkalemia" — marker restated mid-line.
+_INLINE_NUMBERED_RE = re.compile(
+    rf"(?im)(?<=[.!?;:)\]])[ \t]+(?:\*{{1,3}}|_{{1,3}})?"
+    rf"{_NUM_WORD}[ \t]*(?P<num>\d{{1,2}})"
+    rf"(?:[ \t]*[\[(][ \t]*(?P<sid>[A-Za-z][A-Za-z /_-]{{1,30}}?)[ \t]*[\])])?"
+    rf"[ \t]*:+{_TRAILING}"
+)
+# "## Plan", "**Safety:**", "[urgency] -", "3. Management:"
+_LABEL_RE = re.compile(
+    rf"(?im)^{_LINE_NOISE}{_ORDINAL}\[?[ \t]*"
+    rf"(?P<label>{_LABEL_ALTERNATION})"
+    rf"[ \t]*\]?[ \t]*(?:{_SEP}{_TRAILING}|{_EOL})"
+)
+
+
+class _Marker(NamedTuple):
+    start: int
+    end: int
+    question_id: str
+    priority: int
+
+
+def strip_reasoning_blocks(text: str) -> str:
+    """Drop <think>-style scratchpads so a private monologue is never scored.
+
+    A block left unclosed by truncation is dropped only when the model also
+    produced text outside it; otherwise the scratchpad is all there is and the
+    caller decides what to do with it.
+    """
+    cleaned = _REASONING_BLOCK_RE.sub("\n", text)
+    open_match = _REASONING_OPEN_RE.search(cleaned)
+    if open_match and not _REASONING_CLOSE_RE.search(cleaned, open_match.end()):
+        outside = cleaned[: open_match.start()]
+        if outside.strip():
+            cleaned = outside
+    # Orphan closing tag (opening lost to a context window): keep what follows.
+    orphan_close = _REASONING_CLOSE_RE.search(cleaned)
+    if orphan_close and not _REASONING_OPEN_RE.search(cleaned[: orphan_close.start()]):
+        cleaned = cleaned[orphan_close.end() :]
+    return _REASONING_OPEN_RE.sub(" ", _REASONING_CLOSE_RE.sub(" ", cleaned))
+
+
+def _resolve_label(raw_label: Optional[str]) -> Optional[str]:
+    if not raw_label:
+        return None
+    key = re.sub(r"[\s_/-]+", " ", raw_label.strip().lower()).strip(" .:-")
+    return _LABEL_TO_ID.get(key)
+
+
+def _iter_markers(text: str, order: List[str]) -> Iterator[_Marker]:
+    """Yield every recognizable section heading, highest-confidence first."""
+    by_number = {index: qid for index, qid in enumerate(order, 1)}
+    known_ids = set(order)
+
+    def numbered(match: re.Match, priority: int) -> Optional[_Marker]:
+        question_id = by_number.get(int(match.group("num")))
+        if question_id is None:
+            # Out-of-range numbering (e.g. a targeted retry that kept the
+            # original A5 label) is usable only when it names its section.
+            question_id = _resolve_label(match.group("sid"))
+            if question_id is None or question_id not in known_ids:
+                return None
+        return _Marker(match.start(), match.end(), question_id, priority)
+
+    for match in _NUMBERED_RE.finditer(text):
+        marker = numbered(match, 0)
+        if marker is not None:
+            yield marker
+    for match in _INLINE_NUMBERED_RE.finditer(text):
+        marker = numbered(match, 1)
+        if marker is not None:
+            yield marker
+    for match in _LABEL_RE.finditer(text):
+        question_id = _resolve_label(match.group("label"))
+        if question_id in known_ids:
+            yield _Marker(match.start(), match.end(), question_id, 2)
+
+
+def _accepted_markers(text: str, order: List[str]) -> List[_Marker]:
+    markers = sorted(_iter_markers(text, order), key=lambda m: (m.start, m.priority))
+    accepted: List[_Marker] = []
+    for marker in markers:
+        if accepted and marker.start < accepted[-1].end:
+            continue  # nested inside a stronger heading, e.g. "Q1 [diagnosis]:"
+        accepted.append(marker)
+    return accepted
+
+
+def parse_candidate_answers(case: Case, raw: str) -> Dict[str, str]:
+    """Recover each clinical section from realistic formatting variation.
+
+    Tolerant about presentation (heading wording, Markdown, ordering, casing,
+    punctuation, reasoning blocks); strict about substance. A section stays
+    absent when the model genuinely produced no attributable content for it.
+    """
+    normalized = unicodedata.normalize("NFKC", raw or "")
+    text = strip_reasoning_blocks(normalized)
+    if not text.strip():
+        # Everything was inside an unterminated scratchpad; the monologue is
+        # the only output there is, so keep it rather than dropping the answer.
+        text = _REASONING_OPEN_RE.sub(" ", _REASONING_CLOSE_RE.sub(" ", normalized))
+
+    order = [q.id for q in case.questions]
+    markers = _accepted_markers(text, order)
+
+    # A question restated then answered ("Q1 [diagnosis]: … A1: …") produces two
+    # markers for the same section; both fragments belong to that section.
+    chunks: Dict[str, List[str]] = {}
+    for index, marker in enumerate(markers):
+        end = markers[index + 1].start if index + 1 < len(markers) else len(text)
+        body = text[marker.end : end].strip()
+        if body:
+            chunks.setdefault(marker.question_id, []).append(body)
+
+    answers = {qid: "\n\n".join(parts) for qid, parts in chunks.items() if parts}
+
+    # Fewer than two sections recovered → unstructured prose. Hand the judge the
+    # whole body per question, flagged, so real content is graded on relevance
+    # instead of being discarded as a formatting failure.
+    body = text.strip()
+    if body and len(answers) < 2 and len(body) > 80:
+        for qid in order:
+            answers[qid] = (
                 "[UNSTRUCTURED FULL RESPONSE — score only content relevant to "
-                f"{q.id}; apply linear formula on relevant parts only]\n"
-                + body
+                f"{qid}; apply linear formula on relevant parts only]\n" + body
             )
     return answers
+
+
+def missing_section_ids(case: Case, answers: Dict[str, str]) -> List[str]:
+    """Question ids with no recovered candidate content."""
+    return [q.id for q in case.questions if not ((answers or {}).get(q.id) or "").strip()]
 
 
 def judge_system() -> str:

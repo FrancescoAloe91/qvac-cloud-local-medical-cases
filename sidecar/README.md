@@ -46,6 +46,10 @@ npm start
 
 Model **warm-loads at startup** (set `QVAC_WARM_LOAD=0` to defer).  
 `QVAC_PREDICT` caps max new tokens (default 3000, aligned with cloud candidates).
+`QVAC_CTX_SIZE` (default 8192) must hold the benchmark prompt plus that output
+budget, otherwise on-device answers are cut off mid-section. The `done` event
+carries a `finish_reason` (`stop` or `length`) so the host can tell a finished
+answer from a truncated one.
 
 ### macOS dependency
 

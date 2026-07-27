@@ -25,6 +25,7 @@ from benchmark.prompts import (
     CANDIDATE_MAX_OUTPUT_TOKENS,
     candidate_system,
     candidate_user,
+    missing_section_ids,
     parse_candidate_answers,
 )
 from benchmark.qvac_variants import is_qvac_key, local_only_roster, merge_roster
@@ -537,6 +538,34 @@ def _collect_candidate_once(
     return cand
 
 
+def is_retryable_local_error(err: str) -> bool:
+    """Technical on-device failures worth one more attempt.
+
+    A GGUF hot-swap, sidecar transport, or worker start-up can fail for reasons
+    that clear on a second try; those are infrastructure faults, not evidence
+    about the model's clinical ability.
+    """
+    text = (err or "").lower()
+    return any(
+        marker in text
+        for marker in (
+            "failed to load",
+            "load failed",
+            "gguf not found",
+            "sidecar unreachable",
+            "sidecar outdated",
+            "did not become ready",
+            "empty generation",
+            "stream error",
+            "worker",
+            "rpc",
+            "broken pipe",
+            "connection refused",
+            "urlopen error",
+        )
+    )
+
+
 def _collect_candidate(
     case: Case,
     cand_cfg: Dict[str, Any],
@@ -545,7 +574,13 @@ def _collect_candidate(
     benchmark_track: str = "controlled",
     api_key: Optional[str] = None,
 ) -> CandidateAnswer:
-    """Collect once, retrying only transport failure or explicit truncation."""
+    """Collect once, then spend at most one bounded retry on a recoverable fault.
+
+    Recoverable means transport failure, a local sidecar/GGUF fault, explicit
+    truncation, or sections the model left unwritten. Truncation and missing
+    sections regenerate only the affected questions; everything already answered
+    is kept verbatim.
+    """
     first = _collect_candidate_once(
         case,
         cand_cfg,
@@ -554,32 +589,45 @@ def _collect_candidate(
         benchmark_track,
         api_key,
     )
+    error_text = first.meta.error or ""
     transport_failure = bool(
-        first.meta.error and openrouter.is_retryable_error(first.meta.error)
+        error_text
+        and (
+            openrouter.is_retryable_error(error_text)
+            or is_retryable_local_error(error_text)
+        )
     )
     truncation = (first.meta.finish_reason or "").lower() in {
         "length",
         "max_tokens",
     }
-    if not (transport_failure or truncation):
+    missing = missing_section_ids(case, first.answers or {})
+    # Only regenerate gaps when the first attempt otherwise succeeded; a hard
+    # candidate error is already handled by the transport branch.
+    section_gap = bool(missing) and not error_text
+    if not (transport_failure or truncation or section_gap):
         return first
+    if transport_failure:
+        reason = "transport"
+    elif truncation:
+        reason = "truncation"
+    else:
+        reason = "missing sections"
     _emit(
         on_event,
         {
             "type": "candidate_retry",
             "key": first.candidate_key,
-            "reason": "transport" if transport_failure else "truncation",
+            "reason": reason,
         },
     )
+    targeted = (truncation or section_gap) and not transport_failure
     recovery_case = case
     target_question_ids = {question.id for question in case.questions}
-    if truncation and not transport_failure:
-        missing = [
-            question
-            for question in case.questions
-            if not ((first.answers or {}).get(question.id) or "").strip()
-        ]
-        target_questions = missing or [case.questions[-1]]
+    if targeted:
+        target_questions = [
+            question for question in case.questions if question.id in set(missing)
+        ] or [case.questions[-1]]
         target_question_ids = {question.id for question in target_questions}
         recovery_case = case.model_copy(update={"questions": target_questions})
     second = _collect_candidate_once(
@@ -600,7 +648,7 @@ def _collect_candidate(
         3,
     )
     second.meta.retry_count = 1
-    if truncation and not transport_failure:
+    if targeted:
         merged_answers = dict(first.answers or {})
         for question_id in target_question_ids:
             recovered = (second.answers or {}).get(question_id)
@@ -609,9 +657,13 @@ def _collect_candidate(
         second.answers = merged_answers
         second.raw_response = (
             (first.raw_response or "").rstrip()
-            + "\n\n[TARGETED TRUNCATION RECOVERY]\n"
+            + "\n\n[TARGETED SECTION RECOVERY]\n"
             + (second.raw_response or "").lstrip()
         ).strip()
+        # The recovery call answered a subset, so its own stop reason says
+        # nothing about the merged answer.
+        if not missing_section_ids(case, second.answers):
+            second.meta.finish_reason = first.meta.finish_reason
     return second
 
 
