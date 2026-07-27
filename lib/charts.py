@@ -492,20 +492,37 @@ def fig_leaderboard(leaderboard_df, lang: str = "en", tier_labels: Optional[dict
 def fig_judge_accuracy_bars(
     ranking_rows: list,
     *,
-    title: str = "Accuracy ranking (blind judge)",
+    title: str = "Clinical Composite Score (blind judge)",
     height: int = 240,
 ) -> go.Figure:
-    """Horizontal accuracy bars for Automated Benchmark (judge weighted %)."""
+    """Horizontal Clinical Composite Score bars for the benchmark."""
     ranking_rows = filter_current_roster_rows(ranking_rows)
     if not ranking_rows:
         fig = go.Figure()
         fig.update_layout(**_base_layout(title, height=height))
         return fig
 
-    # Highest accuracy at top (current 9 only)
-    rows = rerank_rows(ranking_rows, score_field="accuracy")
+    # Technical N/A observations are not zero-score bars.
+    valid_rows = [
+        row
+        for row in ranking_rows
+        if str(row.get("status") or "ok") == "ok" and row.get("accuracy") is not None
+    ]
+    rows = rerank_rows(valid_rows, score_field="accuracy")
+    if not rows:
+        fig = go.Figure()
+        fig.add_annotation(
+            text="No valid judged scores · technical failures are N/A",
+            x=0.5,
+            y=0.5,
+            xref="paper",
+            yref="paper",
+            showarrow=False,
+        )
+        fig.update_layout(**_base_layout(title, height=height))
+        return fig
     labels = [ranking_chart_label(r) for r in rows]
-    accs = [float(r.get("accuracy") or 0) for r in rows]
+    accs = [float(r["accuracy"]) for r in rows]
     colors = [MODEL_COLORS.get(r.get("key"), "#94a3b8") for r in rows]
     ranks = [int(r.get("rank") or i + 1) for i, r in enumerate(rows)]
     # Two-line name/version labels need more left margin + row height
@@ -526,7 +543,7 @@ def fig_judge_accuracy_bars(
     )
     layout = _base_layout(title, height=bar_h)
     layout["margin"] = dict(l=168, r=72, t=48, b=28)
-    layout["xaxis"] = dict(range=[0, 110], title="Accuracy %")
+    layout["xaxis"] = dict(range=[0, 110], title="Clinical Composite Score")
     layout["yaxis"] = dict(
         title="",
         tickfont=dict(size=11),
@@ -539,10 +556,10 @@ def fig_judge_accuracy_bars(
 def fig_judge_mean_accuracy_bars(
     ranking_mean_rows: list,
     *,
-    title: str = "Multi-run mean accuracy ± std",
+    title: str = "Mean Clinical Composite Score ± std",
     height: int = 280,
 ) -> go.Figure:
-    """Mean accuracy with ±1 std error bars (multi-run summary)."""
+    """Mean Clinical Composite Score with ±1 std error bars."""
     ranking_mean_rows = filter_current_roster_rows(ranking_mean_rows)
     if not ranking_mean_rows:
         fig = go.Figure()
@@ -603,7 +620,7 @@ def fig_judge_mean_accuracy_bars(
     xmax = max(means[i] + stds[i] for i in range(len(means))) if means else 100
     layout["xaxis"] = dict(
         range=[0, min(110, max(40, xmax * 1.12))],
-        title="Mean accuracy %  (±1 std whiskers)",
+        title="Mean Clinical Composite Score  (±1 std whiskers)",
         gridcolor="rgba(51,65,85,0.5)",
     )
     layout["yaxis"] = dict(title="", tickfont=dict(size=11), automargin=True)

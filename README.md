@@ -1,9 +1,9 @@
 # QVAC vs Cloud LLMs — Gold-only Health Benchmark
 
 Experimental, open-source comparison of pinned OpenRouter API models and
-on-device GGUFs through the QVAC SDK. It uses frozen, user-supplied reference claims,
-a blind DeepSeek R1 judge, strict evidence validation, and an independent Claude
-verifier only when the primary judge returns invalid schema/evidence.
+on-device GGUFs through the QVAC SDK. It uses frozen, user-supplied source
+quotes as canonical claims, a blind DeepSeek R1 judge, strict evidence
+validation, and an independent whole-run verifier when primary judging fails.
 
 This is a research/demo tool, not a medical device. It does not validate the
 clinical truth of user input. If the case or reference is wrong or incomplete,
@@ -26,7 +26,8 @@ Repository: https://github.com/FrancescoAloe91/qvac-vs-cloud-llms-health-test
    presentation differences (Markdown, whitespace, case, and punctuation) and
    accepts combined quotes only when every substantial sentence is textually
    present in the candidate answer. It never uses fuzzy or semantic matching.
-6. The host computes each section from 50% graded reference coverage, 35%
+6. The **Clinical Composite Score** computes each section from 50% graded
+   reference coverage, 35%
    clinical quality, and 15% evidence discipline. Helpful and neutral additions
    are unpenalized; unsupported, contradictory, and dangerous content has a
    proportional effect.
@@ -50,11 +51,20 @@ Cloud candidates are exact API routes pinned in
 These are OpenRouter API comparisons. They are not claims about the consumer
 ChatGPT, Claude, or Gemini free web tiers.
 
-The primary judge is `deepseek/deepseek-r1`. The anomaly verifier is
-`anthropic/claude-sonnet-5`. Requested and routed model/provider metadata are
+The primary judge is `deepseek/deepseek-r1`. The independent verifier is
+`qwen/qwen3.5-397b-a17b`, outside the candidate roster and extractor family.
+Requested and routed model/provider metadata are
 stored when OpenRouter supplies them. Retryable transport failures and rejected
-schema/evidence receive bounded automatic retries; an independent verifier is
-used only when the primary output remains invalid. Empty or partial candidate
+schema/evidence receive bounded automatic retries. Before another paid judge
+call, deterministic local repair normalizes harmless wrappers, aliases, extra
+fields, lists, and numeric strings without changing evidence text or clinical
+words. A corrective retry requests only invalid sections when valid sections
+can be retained from the same judge. Candidate collection retries once only for
+retryable transport or explicit truncation, never for genuinely empty or
+clinically incomplete output. The independent verifier is activated only after
+systemic residual failure (at least two affected candidates and at least the
+30% cohort threshold). If activated, it re-judges
+the complete fixed candidate set; one ranking never mixes judge cohorts. Empty or partial candidate
 answers, invented evidence, and genuinely unusable JSON remain technical N/A.
 
 Local candidates are loaded from gitignored GGUF files through the QVAC SDK
@@ -80,6 +90,8 @@ Each artifact uses schema v2 and includes:
 - git/config/prompt/scoring hashes where available;
 - per-candidate validity status and failure reason;
 - requested, valid, and failed observation counts.
+- batch and iteration IDs, effective judge, retry/failure metadata, sampling,
+  token cap, timing, and available local hardware measurements.
 
 Each model enters the aggregate ranking after five valid observations in one
 cohort, even when another model has fewer valid results or N/A failures. Every
@@ -87,6 +99,12 @@ mean retains its own N; missing scores are never imputed and never discard valid
 data from other models. N=5 is explicitly exploratory. The dashboard reports
 sample SD, median, and IQR as repeatability signals for that exact case/reference,
 not general clinical validity.
+
+The primary view keeps every valid per-model observation. A secondary paired
+complete-case sensitivity ranking uses only iterations where every model has a
+valid score; it never imputes missing scores. All results measure
+agreement/usefulness relative to one user reference, not clinical accuracy or
+clinical validation.
 
 ## Privacy and hosted persistence
 
@@ -149,7 +167,7 @@ equivalent schema-valid file.
   elapsed seconds. Stage percentages are not presented as an ETA: queued 10%,
   request sent 25%, response validation 70%, corrective retry 75–88%,
   independent verification 92%, and completion 100%.
-- Right: dynamic provisional claim-correctness histogram.
+- Right: dynamic provisional Clinical Composite Score histogram.
 - Completed technical failures display `N/A · technical`.
 - Repeated text logs were removed to avoid duplicating the queue state.
 - Responsive rules stack the board and review cards on narrow screens and force

@@ -1,4 +1,5 @@
 from lib.benchmark_multi_ui import live_judging_board_html
+from lib.charts import fig_judge_accuracy_bars
 
 
 def test_live_judging_board_shows_stage_progress_and_elapsed_time():
@@ -29,6 +30,9 @@ def test_scored_row_shows_completion_and_judge_score_separately():
                 "status": "scored",
                 "queue_i": 1,
                 "accuracy": 82.4,
+                "coverage": 80.0,
+                "quality": 90.0,
+                "discipline": 95.0,
                 "progress_pct": 100,
                 "elapsed_s": 31.2,
             }
@@ -37,3 +41,21 @@ def test_scored_row_shows_completion_and_judge_score_separately():
 
     assert "82.4" in rendered
     assert "100% complete · 31s" in rendered
+    assert "C 80 · Q 90 · D 95" in rendered
+    assert "Clinical Composite Score" in rendered
+
+
+def test_accuracy_chart_does_not_render_na_as_zero_bar():
+    figure = fig_judge_accuracy_bars(
+        [
+            {
+                "key": "gemini",
+                "status": "n/a",
+                "accuracy": None,
+                "status_note": "judge_timeout",
+            }
+        ]
+    )
+
+    assert not figure.data
+    assert "technical failures are N/A" in figure.layout.annotations[0].text

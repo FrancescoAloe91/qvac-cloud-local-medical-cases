@@ -45,12 +45,13 @@ candidates:
     model: medpsy-4b-q4
 
 judge:
-  # Primary blind judge. A pinned Claude verifier is used only for anomalies.
+  # Primary blind judge. If recovery is needed, the independent verifier
+  # re-judges the complete candidate set so one ranking never mixes judges.
   model: deepseek/deepseek-r1
   display_label: Judge · DeepSeek · R1 (blind, independent)
   temperature: 0
   anonymize: true
-  verifier_model: anthropic/claude-sonnet-5
+  verifier_model: qwen/qwen3.5-397b-a17b
 
 # Token assumptions for --dry-run (length-aware estimate also uses live case/gold chars)
 estimate:

@@ -100,6 +100,7 @@ def parse_extraction(raw_text: str, payload: Mapping[str, Any]) -> Dict[str, Gol
         raise ValueError("Extractor response has no sections object")
 
     sections: Dict[str, GoldSection] = {}
+    seen_source_quotes: set[str] = set()
     for section_id in SECTION_IDS:
         item = raw_sections.get(section_id)
         if not isinstance(item, Mapping):
@@ -125,6 +126,14 @@ def parse_extraction(raw_text: str, payload: Mapping[str, Any]) -> Dict[str, Gol
                 )
             if not claim.text.strip():
                 raise ValueError(f"Claim {claim.id} is empty")
+            if quote in seen_source_quotes:
+                raise ValueError(
+                    f"Duplicate source quote across scoring claims: {claim.source_quote}"
+                )
+            seen_source_quotes.add(quote)
+            # The extractor may segment but cannot rewrite scored meaning or assign weight.
+            claim.text = claim.source_quote.strip()
+            claim.critical = False
             claims.append(claim)
         sections[section_id] = GoldSection(
             summary=str(item.get("summary") or "").strip(),
@@ -141,6 +150,7 @@ def confirmed_gold(
 ) -> ConfirmedGold:
     """Create the frozen contract; all five sections must be assessable."""
     parsed: Dict[str, GoldSection] = {}
+    seen_source_quotes: set[str] = set()
     for section_id in SECTION_IDS:
         item = sections.get(section_id)
         if item is None:
@@ -148,6 +158,17 @@ def confirmed_gold(
         section = item if isinstance(item, GoldSection) else GoldSection.model_validate(item)
         if not section.summary.strip() or not section.claims:
             raise ValueError(f"Complete and confirm section: {section_id}")
+        for claim in section.claims:
+            quote = _normalized(claim.source_quote)
+            if not quote:
+                raise ValueError(f"Claim {claim.id} has an empty source quote")
+            if quote in seen_source_quotes:
+                raise ValueError(
+                    f"Duplicate source quote across scoring claims: {claim.source_quote}"
+                )
+            seen_source_quotes.add(quote)
+            claim.text = claim.source_quote.strip()
+            claim.critical = False
         parsed[section_id] = section
     return ConfirmedGold(
         raw_text=raw_text.strip(),
@@ -163,19 +184,30 @@ def gold_json(gold: ConfirmedGold) -> str:
 
 
 def load_confirmed_gold(value: str | Mapping[str, Any] | ConfirmedGold) -> ConfirmedGold:
-    if isinstance(value, ConfirmedGold):
-        return value
-    if isinstance(value, Mapping):
-        return ConfirmedGold.model_validate(value)
-    text = (value or "").strip()
-    if not text:
-        raise ValueError("A confirmed five-section reference is required")
     try:
-        return ConfirmedGold.model_validate_json(text)
+        if isinstance(value, ConfirmedGold):
+            gold = value.model_copy(deep=True)
+        elif isinstance(value, Mapping):
+            gold = ConfirmedGold.model_validate(value)
+        else:
+            text = (value or "").strip()
+            if not text:
+                raise ValueError("A confirmed five-section reference is required")
+            gold = ConfirmedGold.model_validate_json(text)
     except Exception as exc:
         raise ValueError(
             "Gold must be the confirmed five-section JSON contract, not unreviewed prose"
         ) from exc
+    seen_source_quotes: set[str] = set()
+    for section in gold.sections.values():
+        for claim in section.claims:
+            quote = _normalized(claim.source_quote)
+            if not quote or quote in seen_source_quotes:
+                raise ValueError("Gold contains an empty or duplicate source quote")
+            seen_source_quotes.add(quote)
+            claim.text = claim.source_quote.strip()
+            claim.critical = False
+    return gold
 
 
 def cohort_id(

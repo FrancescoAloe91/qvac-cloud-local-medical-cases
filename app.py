@@ -68,6 +68,7 @@ from benchmark.report import (
 )
 from benchmark.run_control import cancel_run, finish_run, is_cancelled, start_run
 from benchmark.runner import (
+    build_run_artifact,
     estimate_cost_breakdown,
     iter_collect_live,
     prepare_run,
@@ -317,11 +318,67 @@ if (
 def _hard_abort_run(*, flash: bool = True) -> None:
     """Kill pending/active run state and wipe live panels. History on disk stays."""
     # Best-effort: cancel queued DeepSeek futures (in-flight HTTP may still finish).
+    cancelled_snapshots = []
     try:
         cancel_run(st.session_state["_run_scope"])
-        abandon_all_pipelines(st.session_state["_run_scope"])
+        cancelled_snapshots = abandon_all_pipelines(st.session_state["_run_scope"])
     except Exception:
         pass
+    for _snapshot in cancelled_snapshots:
+        try:
+            _case = _snapshot["case"]
+            _candidates = list(_snapshot.get("candidates") or [])
+            _judgments = list(_snapshot.get("judgments") or [])
+            if not _candidates:
+                continue
+            _judge_model = str(_snapshot.get("judge_model") or "")
+            _total_cost = sum(
+                float(candidate.meta.cost_usd or 0.0) for candidate in _candidates
+            ) + sum(
+                float(judgment.judge_meta.cost_usd or 0.0)
+                for judgment in _judgments
+            )
+            _artifact = build_run_artifact(
+                config_snapshot={"judge": {"model": _judge_model}},
+                run_id=f"{_case.id}-{uuid.uuid4().hex[:10]}",
+                case_id=_case.id,
+                started_at=str(_snapshot.get("started_at") or utc_now_iso()),
+                finished_at=utc_now_iso(),
+                batch_id=uuid.uuid4().hex,
+                n_index=1,
+                models_config={
+                    "mode": "cancelled",
+                    "judge": {"model": _judge_model},
+                    "gold_reference": _snapshot.get("gold_reference") or "",
+                    "candidates": [
+                        {
+                            "key": candidate.candidate_key,
+                            "model": candidate.meta.model,
+                        }
+                        for candidate in _candidates
+                    ],
+                },
+                candidates=_candidates,
+                judgments=_judgments,
+                ranking=build_ranking(_judgments),
+                total_cost_usd=round(_total_cost, 6),
+                notes="Cancelled by user; submitted candidate KPIs retained.",
+                run_status="cancelled",
+                benchmark_track=str(
+                    _snapshot.get("benchmark_track") or "controlled"
+                ),
+            )
+            write_artifact(_artifact, WORKSPACE_DIR)
+            if account_store_configured() and isinstance(
+                st.session_state.get("account_session"), AccountSession
+            ):
+                account_save_artifact(
+                    st.session_state["account_session"],
+                    _artifact,
+                )
+        except Exception:
+            # Cancellation itself must not be blocked by persistence failure.
+            pass
     for k in (
         "confirmed_run",
         "pending_run",
@@ -413,13 +470,13 @@ Check <code>curl -s http://127.0.0.1:8787/health</code>.</p>
 """
     rank_body = """
 <h3>How ranking works</h3>
-<p>Blind DeepSeek R1 · strict evidence validation · Claude verifier on anomalies ·
+<p>Blind DeepSeek R1 · strict evidence validation · whole-run independent verifier on anomalies ·
 technical failures are N/A and exact ties remain ties.</p>
 <pre>Section score = 50% graded coverage + 35% clinical quality + 15% discipline
 coverage = continuous 0..1 for every frozen reference claim
 helpful / neutral additions = no penalty
 unsupported / contradictory / dangerous = proportional discipline penalty
-Final correctness = 30% diagnosis + 25% safety + 20% plan + 15% tests + 10% urgency</pre>
+Clinical Composite Score = 30% diagnosis + 25% safety + 20% plan + 15% tests + 10% urgency</pre>
 <table>
   <tr><th>Signal</th><th>Role</th><th>Meaning</th></tr>
   <tr><td>Graded coverage</td><td>50%</td><td>Partial and complete semantic coverage on a 0..1 continuum</td></tr>
@@ -825,7 +882,7 @@ def _render_saved_run_panel(path_str: str, *, key_prefix: str = "saved") -> None
                     for r in _hist_rank
                 ],
                 height=220,
-                title=f"Run {hist.n_index} · accuracy",
+                title=f"Run {hist.n_index} · Clinical Composite Score",
             ),
             use_container_width=True,
             key=f"{key_prefix}_rank_chart_{hist.n_index}_{_hp.stem[-8:]}",
@@ -847,7 +904,7 @@ def _render_saved_run_panel(path_str: str, *, key_prefix: str = "saved") -> None
                     "#": r.get("rank"),
                     "Name": nm,
                     "Version": ver,
-                    "Acc %": r.get("accuracy"),
+                    "Composite %": r.get("accuracy"),
                     "TTFT": r.get("ttft_s"),
                     "TPS": r.get("tps"),
                     "RAM(RSS)": _fmt_ram_mb(r.get("ram_mb")) or "—",
@@ -871,7 +928,7 @@ def _render_saved_run_panel(path_str: str, *, key_prefix: str = "saved") -> None
             by_q = {qs.question_id: qs.score for qs in j.question_scores}
             for qid in q_ids:
                 row[qid] = by_q.get(qid)
-            row["weighted %"] = j.weighted_accuracy
+            row["Clinical Composite %"] = j.weighted_accuracy
             row["Runs"] = 1
             matrix.append(row)
         st.markdown("**Scores by clinical dimension**")
@@ -951,6 +1008,10 @@ def _reliability_table_html(ranking_mean: list) -> str:
             f"font-weight:700;color:#fbbf24;font-size:1.05rem'>"
             f"{float(r.get('accuracy_mean') or 0):.1f}%</td>"
             f"<td style='padding:0.45rem 0.55rem;border-bottom:1px solid #1e293b;color:#cbd5e1'>"
+            f"{float(r.get('coverage_mean') or 0):.0f}/"
+            f"{float(r.get('quality_mean') or 0):.0f}/"
+            f"{float(r.get('discipline_mean') or 0):.0f}</td>"
+            f"<td style='padding:0.45rem 0.55rem;border-bottom:1px solid #1e293b;color:#cbd5e1'>"
             f"± {float(r.get('std') or 0):.1f}</td>"
             f"<td style='padding:0.45rem 0.55rem;border-bottom:1px solid #1e293b;color:#cbd5e1'>"
             f"{float(r.get('cv_pct') or 0):.1f}%</td>"
@@ -961,6 +1022,9 @@ def _reliability_table_html(ranking_mean: list) -> str:
             f"font-size:0.85rem'>{float(r.get('min') or 0):.0f}–{float(r.get('max') or 0):.0f}</td>"
             f"<td style='padding:0.45rem 0.55rem;border-bottom:1px solid #1e293b;font-weight:700;"
             f"color:#e2e8f0;text-align:right'>{n_runs}</td>"
+            f"<td style='padding:0.45rem 0.55rem;border-bottom:1px solid #1e293b;"
+            f"color:#fca5a5;text-align:right'>{int(r.get('n_failed') or 0)} "
+            f"({100 * float(r.get('failure_rate') or 0):.0f}%)</td>"
             "</tr>"
         )
     return (
@@ -971,10 +1035,12 @@ def _reliability_table_html(ranking_mean: list) -> str:
         "letter-spacing:0.04em;text-transform:uppercase'>"
         "<th style='padding:0.55rem'>#</th><th style='padding:0.55rem'>Name</th>"
         "<th style='padding:0.55rem'>Version</th>"
-        "<th style='padding:0.55rem'>Mean</th><th style='padding:0.55rem'>± Std</th>"
+        "<th style='padding:0.55rem'>Composite</th>"
+        "<th style='padding:0.55rem'>C/Q/D</th><th style='padding:0.55rem'>± Std</th>"
         "<th style='padding:0.55rem'>CV %</th><th style='padding:0.55rem'>Reliability</th>"
         "<th style='padding:0.55rem'>Median</th><th style='padding:0.55rem'>Min–Max</th>"
         "<th style='padding:0.55rem;text-align:right'>Runs</th>"
+        "<th style='padding:0.55rem;text-align:right'>Failed</th>"
         "</tr></thead><tbody>"
         + "".join(rows_html)
         + "</tbody></table></div>"
@@ -1019,8 +1085,8 @@ def history_mean_rebuild_dialog():
         return
 
     st.success(
-        f"**{case_display_name(summary.case_id)}** · mean over **N={summary.n}** runs · "
-        f"same-cohort **evidence-linked claim correctness** · "
+        f"**{case_display_name(summary.case_id)}** · per-model valid N shown below · "
+        f"same-cohort **reference-relative Clinical Composite Score** · "
         f"**$0 API** (no OpenRouter / DeepSeek calls)"
     )
     st.caption(reliability_caption(summary))
@@ -1032,14 +1098,39 @@ def history_mean_rebuild_dialog():
     st.plotly_chart(
         fig_judge_mean_accuracy_bars(
             summary.ranking_mean,
-            title=f"Mean accuracy · {case_display_name(summary.case_id)} · N={summary.n}",
+            title=f"Mean Clinical Composite Score · {case_display_name(summary.case_id)}",
             height=260,
         ),
         use_container_width=True,
         key="hm_dlg_mean_chart",
     )
+    st.markdown("##### Paired complete-case sensitivity analysis")
+    if summary.paired_ranking:
+        st.dataframe(
+            pd.DataFrame(
+                [
+                    {
+                        "Rank": row.get("rank"),
+                        "Model": short_model(str(row.get("key"))),
+                        "Paired mean %": row.get("accuracy_mean"),
+                        "Coverage %": row.get("coverage_mean"),
+                        "Quality %": row.get("quality_mean"),
+                        "Discipline %": row.get("discipline_mean"),
+                        "Paired N": summary.paired_n,
+                    }
+                    for row in summary.paired_ranking
+                ]
+            ),
+            use_container_width=True,
+            hide_index=True,
+        )
+    else:
+        st.caption(
+            f"Paired N={summary.paired_n}; at least 5 complete iterations are required. "
+            "This sensitivity analysis never imputes missing scores."
+        )
 
-    with st.expander("Per-run primary correctness", expanded=False):
+    with st.expander("Per-run Clinical Composite Score", expanded=False):
         pr_rows = []
         for pr in payload.get("per_run") or []:
             when = (pr.get("finished_at") or "")[:19].replace("T", " ")
@@ -1092,7 +1183,7 @@ def scoring_guide_dialog():
     with right:
         st.markdown("##### Final ranking %")
         st.code(
-            "Accuracy = Σ (section_weight × section_score)\n"
+            "Clinical Composite Score = Σ (section_weight × section_score)\n"
             "run cap ≈ 97% · always unique ranks across candidates\n"
             "Multi ×N official rank = mean Acc ± std (CV% = reliability)",
             language=None,
@@ -2352,6 +2443,16 @@ if _multi_live.get("completed") is not None:
 if st.session_state.get("confirmed_run"):
     run_cfg = st.session_state.pop("confirmed_run")
     run_mode = run_cfg.get("mode") or "full"
+    _batch_id = uuid.uuid4().hex
+    # Every run owns a fresh progress lifecycle; never repaint an older 1/N batch.
+    for _stale_key in (
+        "multi_progress",
+        "last_multi_summary",
+        "last_multi_paths",
+        "show_history_mean_popup",
+    ):
+        st.session_state.pop(_stale_key, None)
+    multi_progress_slot.empty()
     if len(gold_reference) < 40:
         st.error(
             "Add a sufficiently detailed reference answer before running "
@@ -2552,6 +2653,7 @@ if st.session_state.get("confirmed_run"):
             if is_cancelled(st.session_state["_run_scope"]):
                 st.warning("Run cancelled before the next iteration.")
                 break
+            _iteration_started = utc_now_iso()
             t_run_i0 = _time_live.time()
             if n_local > 1:
                 phase_slot.markdown(
@@ -2699,6 +2801,9 @@ if st.session_state.get("confirmed_run"):
                             "label": name,
                             "status": "scored",
                             "accuracy": acc,
+                            "coverage": evt.get("coverage"),
+                            "quality": evt.get("quality"),
+                            "discipline": evt.get("discipline"),
                             "queue_i": prev_q,
                             "progress_pct": 100,
                             "progress_label": "complete",
@@ -2776,6 +2881,7 @@ if st.session_state.get("confirmed_run"):
                         or ""
                     ),
                     run_scope=st.session_state["_run_scope"],
+                    benchmark_track=benchmark_track,
                 )
                 judge_status_ctx = st.status(
                     "DeepSeek R1 · pipelined with collect · "
@@ -2958,7 +3064,20 @@ if st.session_state.get("confirmed_run"):
                         body_ok = (buf or "").strip()
                         words = body_ok.split()
                         collapsed = len(words) <= 2 and len(body_ok) > 200
-                        if body_ok and not collapsed:
+                        candidate_error = (
+                            str(meta_done.get("error") or "").strip()
+                            or (
+                                "Empty candidate output"
+                                if not body_ok
+                                else (
+                                    "Unusable collapsed candidate output"
+                                    if collapsed
+                                    else ""
+                                )
+                            )
+                            or None
+                        )
+                        if qkey:
                             blind_i += 1
                             cand = CandidateAnswer(
                                 candidate_key=qkey,
@@ -2984,11 +3103,11 @@ if st.session_state.get("confirmed_run"):
                                     ram_mb=meta_done.get("ram_mb"),
                                     gguf_mb=meta_done.get("gguf_mb"),
                                     cost_usd=0.0,
-                                    error=None,
+                                    error=candidate_error,
                                 ),
                             )
                             label_by_key[qkey] = cand.display_label or cand.label
-                            if t_j0 is None:
+                            if candidate_error is None and t_j0 is None:
                                 t_j0 = time.time()
                                 # Both phases tick while DeepSeek overlaps next GGUFs
                                 _el_this = t_j0 - t_run_i0
@@ -3239,12 +3358,15 @@ if st.session_state.get("confirmed_run"):
                     },
                     benchmark_track=benchmark_track,
                 )
-                artifact = RunArtifact(
+                artifact = build_run_artifact(
+                    config_snapshot=cfg,
+                    judge_temperature=judge_temp,
                     run_id=f"{case_id}-{uuid.uuid4().hex[:10]}",
                     case_id=case_id,
-                    started_at=utc_now_iso(),
+                    started_at=_iteration_started,
                     finished_at=utc_now_iso(),
                     n_index=run_i,
+                    batch_id=_batch_id,
                     models_config={
                         "profile": (cfg.get("profile") if isinstance(cfg, dict) else None),
                         "mode": run_mode,
@@ -3282,9 +3404,13 @@ if st.session_state.get("confirmed_run"):
                     prompt_version="gold-only-v1",
                     benchmark_track=benchmark_track,
                     run_status=(
-                        "complete"
-                        if all(j.status == "valid" for j in judgments)
-                        else "partial"
+                        "cancelled"
+                        if any(j.status == "cancelled" for j in judgments)
+                        else (
+                            "complete"
+                            if all(j.status == "valid" for j in judgments)
+                            else "partial"
+                        )
                     ),
                     reproducibility={
                         "benchmark_track": benchmark_track,
@@ -3399,7 +3525,7 @@ if st.session_state.get("confirmed_run"):
                                 "#": r.get("rank"),
                                 "Name": _nm,
                                 "Version": _ver,
-                                "Acc %": r.get("accuracy"),
+                                "Composite %": r.get("accuracy"),
                                 "TTFT": r.get("ttft_s"),
                                 "TPS": r.get("tps"),
                                 "RAM(RSS)": _fmt_ram_mb(r.get("ram_mb")) or "—",
@@ -3460,6 +3586,23 @@ if st.session_state.get("confirmed_run"):
         st.session_state["last_multi_n"] = n_local
 
         _done_label = "Only local" if _local_bakeoff else "QVAC-only"
+        if n_local > 1:
+            st.session_state["multi_progress"] = {
+                "completed": list(completed_snaps),
+                "n_total": n_local,
+                "batch_done": True,
+                "aborted_early": bool(abort_multi),
+                "completed_runs": len(all_artifacts),
+                "requested_runs": n_local,
+                "paths": list(artifact_paths),
+            }
+            _paint_multi_progress(
+                multi_progress_slot,
+                completed_snaps,
+                n_total=n_local,
+                batch_done=True,
+                height=160,
+            )
         if len(all_artifacts) > 1:
             phase_slot.markdown(
                 f'<div class="phase-banner">{_done_label} ×{len(all_artifacts)} done · '
@@ -3497,7 +3640,7 @@ if st.session_state.get("confirmed_run"):
             st.plotly_chart(
                 fig_judge_mean_accuracy_bars(
                     summary.ranking_mean,
-                    title=f"Only local · mean accuracy · N={summary.n}",
+                    title="Only local · mean Clinical Composite Score",
                     height=280,
                 ),
                 use_container_width=True,
@@ -3551,7 +3694,8 @@ if st.session_state.get("confirmed_run"):
                     hide_index=True,
                 )
                 st.caption(
-                    f"$0 collect × N={summary.n} · judge spend ≈ ${summary.total_cost_usd:.4f}"
+                    f"$0 collect × {n_local} requested iterations · "
+                    f"judge spend ≈ ${summary.total_cost_usd:.4f}"
                 )
 
             st.markdown(
@@ -3632,7 +3776,14 @@ if st.session_state.get("confirmed_run"):
                     f"**total {total_s}s** · {per_bits}"
                 )
         else:
-            if ranking:
+            if abort_multi:
+                phase_slot.markdown(
+                    f'<div class="phase-banner">{_done_label} aborted early · '
+                    f"{len(all_artifacts)}/{n_local} run completed · "
+                    "judge infrastructure unavailable</div>",
+                    unsafe_allow_html=True,
+                )
+            elif ranking:
                 phase_slot.markdown(
                     f'<div class="phase-banner">{_done_label} done · {len(ok_local)} local · '
                     f"KPI + clinical ranking · judge {judge_s}s</div>",
@@ -3736,6 +3887,7 @@ if st.session_state.get("confirmed_run"):
             if is_cancelled(st.session_state["_run_scope"]):
                 st.warning("Run cancelled before the next iteration.")
                 break
+            _iteration_started = utc_now_iso()
             phase_slot.markdown(
                 f'<div class="phase-banner">Run {run_i}/{n_runs} · Collecting answers…</div>',
                 unsafe_allow_html=True,
@@ -3793,6 +3945,7 @@ if st.session_state.get("confirmed_run"):
                     (prep["cfg"].get("judge") or {}).get("verifier_model") or ""
                 ),
                 run_scope=st.session_state["_run_scope"],
+                benchmark_track=benchmark_track,
             )
             full_started: set[str] = set()
             full_progress_slot = None
@@ -3893,6 +4046,9 @@ if st.session_state.get("confirmed_run"):
                             "label": name,
                             "status": "scored",
                             "accuracy": acc,
+                            "coverage": evt.get("coverage"),
+                            "quality": evt.get("quality"),
+                            "discipline": evt.get("discipline"),
                             "queue_i": prev_q,
                             "progress_pct": 100,
                             "progress_label": "complete",
@@ -3972,6 +4128,21 @@ if st.session_state.get("confirmed_run"):
                                 + "</div>",
                                 unsafe_allow_html=True,
                             )
+                elif evt.get("type") == "retry":
+                    key = evt["key"]
+                    bufs[key] = ""
+                    tok_n[key] = 0
+                    status_boxes[key].markdown(
+                        _status_pill(
+                            "run",
+                            f"Retrying once · {evt.get('reason') or 'transport'}",
+                        ),
+                        unsafe_allow_html=True,
+                    )
+                    text_boxes[key].markdown(
+                        _stream_body_html("", live=True, panel_id=key),
+                        unsafe_allow_html=True,
+                    )
                 elif evt.get("type") == "done":
                     cand = evt["candidate"]
                     collected.append(cand)
@@ -4003,9 +4174,14 @@ if st.session_state.get("confirmed_run"):
                         "error": err,
                         "kpi": kpi,
                     }
-                    # Overlap: judge only clean answers (skip errors — saves DeepSeek $)
-                    if not err and (cand.raw_response or "").strip():
-                        if t_j0_full is None:
+                    # Submit every fixed candidate. The pipeline terminalizes
+                    # collection errors/empty output as explicit N/A without a paid call.
+                    if cand.candidate_key:
+                        if (
+                            not err
+                            and (cand.raw_response or "").strip()
+                            and t_j0_full is None
+                        ):
                             t_j0_full = time.time()
                             _el_this = t_j0_full - t_run_i0
                             _paint_run_timer(
@@ -4044,9 +4220,6 @@ if st.session_state.get("confirmed_run"):
                             _paint_full_board()
                         full_pipe.submit(cand)
                         full_pipe.poll()
-                    elif err and cand.candidate_key:
-                        # Collect error: keep out of ranking (not a fair judge score)
-                        pass
 
             by_key = {c.candidate_key: c for c in collected}
             collected = [by_key[c["key"]] for c in candidates_cfg if c["key"] in by_key]
@@ -4157,12 +4330,15 @@ if st.session_state.get("confirmed_run"):
                 },
                 benchmark_track=benchmark_track,
             )
-            artifact = RunArtifact(
+            artifact = build_run_artifact(
+                config_snapshot=prep["cfg"],
+                judge_temperature=judge_temp,
                 run_id=f"{case_id}-{uuid.uuid4().hex[:10]}",
                 case_id=case_id,
-                started_at=utc_now_iso(),
+                started_at=_iteration_started,
                 finished_at=utc_now_iso(),
                 n_index=run_i,
+                batch_id=_batch_id,
                 models_config={
                     "profile": prep["cfg"].get("profile"),
                     "candidates": candidates_cfg,
@@ -4185,9 +4361,13 @@ if st.session_state.get("confirmed_run"):
                 prompt_version="gold-only-v1",
                 benchmark_track=benchmark_track,
                 run_status=(
-                    "complete"
-                    if all(j.status == "valid" for j in judgments)
-                    else "partial"
+                    "cancelled"
+                    if any(j.status == "cancelled" for j in judgments)
+                    else (
+                        "complete"
+                        if all(j.status == "valid" for j in judgments)
+                        else "partial"
+                    )
                 ),
                 reproducibility={
                     "benchmark_track": benchmark_track,
@@ -4295,8 +4475,13 @@ if st.session_state.get("confirmed_run"):
         st.session_state["benchmark_running"] = False
         st.session_state["last_cost_rows"] = None  # filled below
 
+        _completion_label = (
+            f"Aborted early · {len(all_artifacts)}/{n_runs} completed"
+            if abort_multi
+            else f"Done · N={len(all_artifacts)}"
+        )
         phase_slot.markdown(
-            f'<div class="phase-banner">Done · N={len(all_artifacts)} · '
+            f'<div class="phase-banner">{_completion_label} · '
             f"actual spend ≈ ${sum(a.total_cost_usd for a in all_artifacts):.4f} · "
             f"wall {total_s}s</div>",
             unsafe_allow_html=True,
@@ -4384,12 +4569,37 @@ if st.session_state.get("confirmed_run"):
             st.plotly_chart(
                 fig_judge_mean_accuracy_bars(
                     summary.ranking_mean,
-                    title=f"Mean accuracy · N={summary.n}",
+                    title="Mean Clinical Composite Score",
                     height=280,
                 ),
                 use_container_width=True,
                 key="rank_chart_multi_mean",
             )
+            st.markdown("##### Paired sensitivity ranking")
+            if summary.paired_ranking:
+                st.dataframe(
+                    pd.DataFrame(
+                        [
+                            {
+                                "Rank": row.get("rank"),
+                                "Model": short_model(str(row.get("key"))),
+                                "Paired mean %": row.get("accuracy_mean"),
+                                "Coverage %": row.get("coverage_mean"),
+                                "Quality %": row.get("quality_mean"),
+                                "Discipline %": row.get("discipline_mean"),
+                                "Paired N": summary.paired_n,
+                            }
+                            for row in summary.paired_ranking
+                        ]
+                    ),
+                    use_container_width=True,
+                    hide_index=True,
+                )
+            else:
+                st.caption(
+                    f"Paired N={summary.paired_n}; at least 5 complete iterations "
+                    "are required. Missing scores are never imputed."
+                )
             if summary.outliers:
                 st.caption("Notes · " + " · ".join(summary.outliers[:4]))
 
@@ -4420,7 +4630,9 @@ if st.session_state.get("confirmed_run"):
                 if last_ranking:
                     st.plotly_chart(
                         fig_judge_accuracy_bars(
-                            last_ranking, height=220, title="Last run · accuracy"
+                            last_ranking,
+                            height=220,
+                            title="Last run · Clinical Composite Score",
                         ),
                         use_container_width=True,
                         key="rank_chart_last_ref",
@@ -4464,7 +4676,7 @@ if st.session_state.get("confirmed_run"):
                             {
                                 "Name": nm,
                                 "Version": ver,
-                                "Acc %": pm["accuracy"],
+                                "Composite %": pm["accuracy"],
                                 "Diagnosis": pm.get("diagnosis"),
                                 "Safety": pm.get("safety"),
                                 "Strongest": pm.get("strongest"),
@@ -4494,7 +4706,9 @@ if st.session_state.get("confirmed_run"):
                 )
             tab_l, tab_r = st.columns(2)
             with tab_l:
-                st.caption("Accuracy + KPI · status=error = not a fair clinical grade")
+                st.caption(
+                    "Clinical Composite Score + KPI · technical errors remain N/A"
+                )
                 if last_ranking:
                     rows = []
                     for r in last_ranking:
@@ -4508,7 +4722,7 @@ if st.session_state.get("confirmed_run"):
                                 "#": r["rank"],
                                 "Name": nm,
                                 "Version": ver,
-                                "Acc %": r["accuracy"],
+                                "Composite %": r["accuracy"],
                                 "Status": (
                                     "ok"
                                     if r.get("status", "ok") == "ok"
@@ -4544,7 +4758,10 @@ if st.session_state.get("confirmed_run"):
                     by_q = {qs.question_id: qs.score for qs in j.question_scores}
                     for qid in q_ids:
                         row[qid] = by_q.get(qid)
-                    row["weighted %"] = j.weighted_accuracy
+                    row["Clinical Composite %"] = j.weighted_accuracy
+                    row["Coverage %"] = j.coverage_score
+                    row["Quality %"] = j.quality_score
+                    row["Discipline %"] = j.discipline_score
                     _nr = next(
                         (
                             int(r.get("n_runs") or r.get("n") or 1)
@@ -4560,7 +4777,7 @@ if st.session_state.get("confirmed_run"):
                 )
                 st.caption(
                     "Per-question 0–100 from DeepSeek R1 (semantic / synonym-aware). "
-                    "Weighted % uses case weights."
+                    "The Clinical Composite Score uses case section weights."
                 )
 
             with st.expander("Judge breakdown", expanded=False):
@@ -4679,7 +4896,7 @@ if (
         st.plotly_chart(
             fig_judge_mean_accuracy_bars(
                 _sum.ranking_mean,
-                title=f"Mean accuracy · N={_sum.n}",
+                    title="Mean Clinical Composite Score",
                 height=260,
             ),
             use_container_width=True,
@@ -4718,7 +4935,7 @@ if (
                     "#": r["rank"],
                     "Name": nm,
                     "Version": ver,
-                    "Acc %": r["accuracy"],
+                    "Composite %": r["accuracy"],
                     "Status": (
                         "ok"
                         if r.get("status", "ok") == "ok"
@@ -4812,7 +5029,22 @@ if (
                     by_q[qs.question_id] = qs.score
             for qid in q_ids:
                 row[qid] = by_q.get(qid)
-            row["weighted %"] = _j_weighted(j)
+            row["Clinical Composite %"] = _j_weighted(j)
+            row["Coverage %"] = (
+                j.get("coverage_score")
+                if isinstance(j, dict)
+                else getattr(j, "coverage_score", None)
+            )
+            row["Quality %"] = (
+                j.get("quality_score")
+                if isinstance(j, dict)
+                else getattr(j, "quality_score", None)
+            )
+            row["Discipline %"] = (
+                j.get("discipline_score")
+                if isinstance(j, dict)
+                else getattr(j, "discipline_score", None)
+            )
             row["Runs"] = _rank_n.get(ck, 1)
             matrix_rows.append(row)
         st.dataframe(pd.DataFrame(matrix_rows), use_container_width=True, hide_index=True)

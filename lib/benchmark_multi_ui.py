@@ -67,7 +67,7 @@ def mean_placeholder_html(*, n_done: int, n_total: int) -> str:
   </div>
   <div style="color:#94a3b8;font-size:0.88rem;line-height:1.45;">
     Completed <b style="color:#fbbf24">{n_done}</b> / {n_total}.
-    Mean accuracy, ±std and CV% reliability appear here when the batch finishes.
+    Mean Clinical Composite Score, ±std and CV% appear when the batch finishes.
     Use the <b>Run tabs</b> below for each finished run.
   </div>
 </div>
@@ -219,9 +219,22 @@ def live_judging_board_html(
                     "<span class='rank-live-note'>N/A · technical</span>"
                 )
             else:
+                subscales = ""
+                if all(
+                    r.get(component) is not None
+                    for component in ("coverage", "quality", "discipline")
+                ):
+                    subscales = (
+                        "<span class='rank-live-note'>"
+                        f"C {float(r['coverage']):.0f} · "
+                        f"Q {float(r['quality']):.0f} · "
+                        f"D {float(r['discipline']):.0f}"
+                        "</span>"
+                    )
                 acc_col = (
                     f"<span class='rank-live-acc-num'>{acc:.1f}</span>"
                     f"<span class='rank-live-acc-unit'>%</span>"
+                    f"{subscales}"
                 )
             acc_col += (
                 f"<span class='rank-live-note'>100% complete · {elapsed_s}s</span>"
@@ -290,7 +303,7 @@ def live_judging_board_html(
         f'<div class="rank-live-col table-col">'
         f'<div class="rank-live-hist-cap">Judge queue · FIFO</div>{table}</div>'
         f'<div class="rank-live-col hist-col">'
-        f'<div class="rank-live-hist-cap">Provisional claim correctness</div>{hist}</div>'
+        f'<div class="rank-live-hist-cap">Provisional Clinical Composite Score</div>{hist}</div>'
         f"</div></div>"
     )
 
@@ -346,7 +359,7 @@ def _run_summary_body_html(ranking: List[Dict[str, Any]]) -> str:
         '<div class="rank-live-grid run-summary-grid">'
         f'<div class="rank-live-col table-col">{_ranking_table_html(rows)}</div>'
         f'<div class="rank-live-col hist-col">'
-        f'<div class="rank-live-hist-cap">Primary correctness %</div>'
+        f'<div class="rank-live-hist-cap">Clinical Composite Score</div>'
         f"{accuracy_histogram_html(rows)}"
         f"</div></div>"
     )
@@ -422,7 +435,7 @@ def progressive_multi_panel_html(
     pend = (
         f'<span style="color:#64748b;font-size:0.8rem;margin-left:0.35rem;">'
         f"· {pending} still running below…</span>"
-        if pending > 0
+        if pending > 0 and not batch_done
         else ""
     )
     tabs = (

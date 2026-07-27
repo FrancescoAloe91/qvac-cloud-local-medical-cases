@@ -83,6 +83,7 @@ class ModelCallMeta(BaseModel):
     ram_mb: Optional[float] = None
     gguf_mb: Optional[float] = None
     display_label: str = ""
+    retry_count: int = 0
     error: Optional[str] = None
 
 
@@ -120,6 +121,10 @@ class JudgeResult(BaseModel):
     candidate_key: str
     question_scores: List[QuestionScore]
     weighted_accuracy: float  # 0-100
+    coverage_score: Optional[float] = None
+    quality_score: Optional[float] = None
+    discipline_score: Optional[float] = None
+    retry_count: int = 0
     judge_model: str
     judge_meta: ModelCallMeta
     raw_judge_json: str = ""
@@ -144,6 +149,7 @@ class RunArtifact(BaseModel):
     started_at: str
     finished_at: str
     n_index: int = 1  # 1-based index within a multi-run
+    batch_id: str = ""
     models_config: Dict[str, Any] = Field(default_factory=dict)
     candidates: List[CandidateAnswer] = Field(default_factory=list)
     judgments: List[JudgeResult] = Field(default_factory=list)
@@ -164,6 +170,8 @@ class MultiRunSummary(BaseModel):
     candidate_stats: Dict[str, Dict[str, Any]] = Field(default_factory=dict)
     # key -> {mean, std, cv_pct, reliability, min, max, n}
     ranking_mean: List[Dict[str, Any]] = Field(default_factory=list)
+    paired_ranking: List[Dict[str, Any]] = Field(default_factory=list)
+    paired_n: int = 0
     run_ids: List[str] = Field(default_factory=list)
     total_cost_usd: float = 0.0
     outliers: List[str] = Field(default_factory=list)

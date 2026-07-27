@@ -324,7 +324,7 @@ def chat_stream(
     model: str,
     messages: List[Dict[str, str]],
     *,
-    temperature: float = 0.3,
+    temperature: Optional[float] = 0.3,
     max_tokens: int = 3000,
     timeout: float = 180.0,
     on_token: TokenCallback = None,
@@ -336,10 +336,11 @@ def chat_stream(
     payload: Dict[str, Any] = {
         "model": model,
         "messages": messages,
-        "temperature": temperature,
         "max_tokens": max_tokens,
         "stream": True,
     }
+    if temperature is not None:
+        payload["temperature"] = temperature
     body = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(
         OPENROUTER_URL, data=body, method="POST", headers=_headers(key)

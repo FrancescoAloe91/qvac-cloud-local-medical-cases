@@ -126,8 +126,10 @@ def judge_user(
                 "kind": q.kind,
                 "weight": q.weight,
                 "question": q.text,
-                "confirmed_reference_summary": section.summary,
-                "reference_claims": [c.model_dump() for c in section.claims],
+                "reference_claims": [
+                    {"id": claim.id, "source_quote": claim.source_quote}
+                    for claim in section.claims
+                ],
                 "candidate_answer": answers.get(q.id, ""),
             }
         )
@@ -143,7 +145,7 @@ def judge_user(
                         "candidate_quotes": [
                             "exact candidate quote; empty only when coverage is 0"
                         ],
-                        "rationale": "brief explanation of degree of coverage",
+                        "rationale": "optional one short sentence",
                     }
                 ],
                 "additional_claims": [
@@ -153,11 +155,11 @@ def judge_user(
                             "helpful | neutral | unsupported | contradictory | dangerous"
                         ),
                         "severity": "number from 0 to 1",
-                        "rationale": "brief case-specific explanation",
+                        "rationale": "optional one short sentence",
                     }
                 ],
                 "quality": "0-1 clinical coherence, prioritization, and usefulness",
-                "rationale": "concise evidence-linked explanation",
+                "rationale": "optional one short sentence",
                 "errors": ["structured clinical concerns, never transport/schema errors"],
             }
         ],

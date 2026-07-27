@@ -14,7 +14,13 @@ from benchmark import openrouter
 from benchmark.gold import load_confirmed_gold
 from benchmark.run_control import is_cancelled
 from benchmark.prompts import judge_system, judge_user
-from benchmark.schema import Case, CandidateAnswer, JudgeResult, QuestionScore
+from benchmark.schema import (
+    Case,
+    CandidateAnswer,
+    JudgeResult,
+    QuestionScore,
+    utc_now_iso,
+)
 from benchmark.scoring import (
     WEIGHTED_CAP,
     claim_correctness_score,
@@ -37,13 +43,125 @@ def _normalize_judge_data(data: Any) -> Dict[str, Any]:
             return _normalize_judge_data(data[0])
         return {"question_scores": [x for x in data if isinstance(x, dict)]}
     if isinstance(data, dict):
-        qs = data.get("question_scores")
+        qs = (
+            data.get("question_scores")
+            if "question_scores" in data
+            else data.get("scores", data.get("sections", data.get("results")))
+        )
+        if qs is None:
+            direct = [
+                {"question_id": key, **value}
+                for key, value in data.items()
+                if key in {"diagnosis", "tests", "urgency", "safety", "plan"}
+                and isinstance(value, dict)
+            ]
+            if direct:
+                qs = direct
         if isinstance(qs, dict):
-            return {**data, "question_scores": [qs]}
+            if all(isinstance(value, dict) for value in qs.values()):
+                qs = [
+                    {"question_id": key, **value}
+                    for key, value in qs.items()
+                ]
+            else:
+                qs = [qs]
         if qs is not None and not isinstance(qs, list):
             return {**data, "question_scores": []}
-        return data
+        normalized = dict(data)
+        if qs is not None:
+            normalized["question_scores"] = [
+                _normalize_judge_item(item)
+                for item in qs
+                if isinstance(item, dict)
+            ]
+        return normalized
     return {}
+
+
+def _as_unit_float(value: Any, *, field: str) -> float:
+    text = str(value).strip()
+    is_percent = text.endswith("%")
+    if is_percent:
+        text = text[:-1].strip()
+    try:
+        number = float(text)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{field} must be numeric") from exc
+    if is_percent or 1.0 < number <= 100.0:
+        number /= 100.0
+    if not 0.0 <= number <= 1.0:
+        raise ValueError(f"{field} must be between 0 and 1")
+    return number
+
+
+def _normalize_judge_item(item: Dict[str, Any]) -> Dict[str, Any]:
+    """Repair unambiguous local schema variants without changing clinical text."""
+    normalized = dict(item)
+    normalized["question_id"] = str(
+        item.get("question_id")
+        or item.get("section_id")
+        or item.get("section")
+        or item.get("id")
+        or ""
+    )
+    assessments = item.get(
+        "claim_assessments",
+        item.get("assessments", item.get("claims")),
+    )
+    if isinstance(assessments, dict):
+        assessments = [
+            {"reference_claim_id": claim_id, **value}
+            if isinstance(value, dict)
+            else {"reference_claim_id": claim_id, "coverage": value}
+            for claim_id, value in assessments.items()
+        ]
+    if isinstance(assessments, list):
+        repaired_assessments = []
+        for row in assessments:
+            if not isinstance(row, dict):
+                repaired_assessments.append(row)
+                continue
+            repaired = dict(row)
+            repaired["reference_claim_id"] = str(
+                row.get("reference_claim_id")
+                or row.get("claim_id")
+                or row.get("id")
+                or ""
+            )
+            if "coverage" not in repaired:
+                repaired["coverage"] = row.get("score")
+            quotes = row.get(
+                "candidate_quotes",
+                row.get("quotes", row.get("candidate_quote", row.get("evidence"))),
+            )
+            if isinstance(quotes, str):
+                quotes = [quotes]
+            repaired["candidate_quotes"] = quotes
+            repaired_assessments.append(repaired)
+        normalized["claim_assessments"] = repaired_assessments
+    additions = item.get("additional_claims", item.get("added_content"))
+    if isinstance(additions, dict):
+        additions = [additions]
+    if isinstance(additions, list):
+        repaired_additions = []
+        for row in additions:
+            if not isinstance(row, dict):
+                repaired_additions.append(row)
+                continue
+            repaired = dict(row)
+            repaired["candidate_quote"] = str(
+                row.get("candidate_quote")
+                or row.get("quote")
+                or row.get("evidence")
+                or ""
+            )
+            repaired_additions.append(repaired)
+        normalized["additional_claims"] = repaired_additions
+    if "quality" not in normalized and "clinical_quality" in item:
+        normalized["quality"] = item.get("clinical_quality")
+    if isinstance(normalized.get("errors"), str):
+        normalized["errors"] = [normalized["errors"]]
+    return normalized
 
 
 def _extract_json(text: str) -> Dict[str, Any]:
@@ -86,6 +204,20 @@ def _weighted_accuracy(case: Case, scores: List[QuestionScore]) -> float:
     if total_w <= 0:
         return 0.0
     return round(min(acc / total_w, WEIGHTED_CAP), 2)
+
+
+def _weighted_subscale(case: Case, scores: List[QuestionScore], field: str) -> float:
+    by_id = {score.question_id: score for score in scores}
+    total_weight = 0.0
+    value = 0.0
+    for question in case.questions:
+        score = by_id.get(question.id)
+        component = getattr(score, field, None) if score else None
+        if component is None:
+            continue
+        value += float(component) * question.weight
+        total_weight += question.weight
+    return round(100.0 * value / total_weight, 2) if total_weight > 0 else 0.0
 
 
 def _as_pos_int(value: Any, default: int = 1) -> int:
@@ -145,10 +277,9 @@ def _score_from_judge_item(
             claim_id = str(row.get("reference_claim_id") or "")
             if claim_id not in reference_ids or claim_id in coverage_by_id:
                 raise ValueError("Unknown or duplicate graded reference claim id")
-            try:
-                coverage = min(max(float(row.get("coverage")), 0.0), 1.0)
-            except (TypeError, ValueError) as exc:
-                raise ValueError("Claim coverage must be a 0-1 number") from exc
+            coverage = _as_unit_float(
+                row.get("coverage"), field="Claim coverage"
+            )
             quotes_raw = row.get("candidate_quotes")
             if not isinstance(quotes_raw, list):
                 raise ValueError("candidate_quotes must be a list")
@@ -191,10 +322,9 @@ def _score_from_judge_item(
                 )
             if classification not in allowed_classes:
                 raise ValueError("Invalid added-content classification")
-            try:
-                severity = min(max(float(row.get("severity")), 0.0), 1.0)
-            except (TypeError, ValueError) as exc:
-                raise ValueError("Added-content severity must be a 0-1 number") from exc
+            severity = _as_unit_float(
+                row.get("severity"), field="Added-content severity"
+            )
             additions.append(
                 {
                     "candidate_quote": quote,
@@ -204,15 +334,10 @@ def _score_from_judge_item(
                 }
             )
 
-        try:
-            quality = min(max(float(item.get("quality")), 0.0), 1.0)
-        except (TypeError, ValueError) as exc:
-            raise ValueError("quality must be a 0-1 number") from exc
-        weighted_total = sum(1.5 if claim.critical else 1.0 for claim in reference_claims)
-        coverage = sum(
-            coverage_by_id[claim.id] * (1.5 if claim.critical else 1.0)
-            for claim in reference_claims
-        ) / max(weighted_total, 1.0)
+        quality = _as_unit_float(item.get("quality"), field="quality")
+        coverage = sum(coverage_by_id[claim.id] for claim in reference_claims) / max(
+            len(reference_claims), 1
+        )
         discipline = evidence_discipline_score(
             additions,
             total_reference=len(reference_claims),
@@ -312,10 +437,7 @@ def _score_from_judge_item(
 
     unsupported, _ = _claim_objects("unsupported_claims")
     contradictions, _ = _claim_objects("contradictions")
-    try:
-        quality = min(max(float(item.get("quality")), 0.0), 1.0)
-    except (TypeError, ValueError) as exc:
-        raise ValueError("quality must be a 0-1 number") from exc
+    quality = _as_unit_float(item.get("quality"), field="quality")
     score, precision, recall = claim_correctness_score(
         matched=len(matched),
         total_reference=len(reference_ids),
@@ -372,13 +494,19 @@ def _zero_judgment(
         marker = "empty_answer"
     elif "timeout" in lower:
         status = "timed_out"
-        marker = "judge_error"
+        marker = "judge_timeout"
+    elif "evidence" in lower:
+        status = "judge_evidence_invalid"
+        marker = "judge_evidence_invalid"
     elif "schema" in lower or "json" in lower:
         status = "judge_schema_invalid"
-        marker = "judge_retry_failed"
+        marker = "judge_schema_invalid"
+    elif "cancel" in lower:
+        status = "cancelled"
+        marker = "cancelled"
     else:
         status = "judge_transport_failed"
-        marker = "judge_error"
+        marker = "judge_transport_failed"
     zeros = [
         QuestionScore(
             question_id=q.id,
@@ -452,16 +580,18 @@ def is_failed_judgment(j: JudgeResult) -> bool:
 
 
 def systemic_judge_failure(judgments: List[JudgeResult]) -> bool:
-    """Stop Multi ×N when the judge path is systemically broken (save credits)."""
+    """Stop only when the judge infrastructure produced no valid observations."""
     if not judgments:
         return True
-    failed = sum(1 for j in judgments if is_failed_judgment(j))
-    n = len(judgments)
-    if failed >= max(2, (n + 1) // 2):
-        return True
-    if failed >= 1 and all(j.weighted_accuracy == 0 for j in judgments):
-        return True
-    return False
+    if any(not is_failed_judgment(j) for j in judgments):
+        return False
+    infrastructure_statuses = {
+        "judge_transport_failed",
+        "judge_schema_invalid",
+        "judge_evidence_invalid",
+        "timed_out",
+    }
+    return any(j.status in infrastructure_statuses for j in judgments)
 
 
 def _is_rejudgable_failure(j: JudgeResult) -> bool:
@@ -471,6 +601,13 @@ def _is_rejudgable_failure(j: JudgeResult) -> bool:
     flags = set(judgment_flags(j))
     if flags & {"empty_answer", "candidate_error"}:
         return False
+    if j.status in {
+        "judge_transport_failed",
+        "judge_schema_invalid",
+        "judge_evidence_invalid",
+        "timed_out",
+    }:
+        return True
     err = ((j.judge_meta.error if j.judge_meta else None) or "").lower()
     return bool(
         flags
@@ -508,6 +645,9 @@ def judge_candidate(
     ]
     raw, meta = "", None
     last_validation_error = ""
+    required = {q.id for q in case.questions}
+    accepted: Dict[str, QuestionScore] = {}
+    retry_ids = set(required)
     for attempt in range(2):
         if progress_callback:
             progress_callback(
@@ -544,42 +684,67 @@ def judge_candidate(
         try:
             if not isinstance(qs, list) or not qs:
                 raise ValueError("empty or unusable JSON")
-            q_scores: List[QuestionScore] = []
-            for item in qs:
+            target_ids = retry_ids if attempt else required
+            grouped: Dict[str, List[Dict[str, Any]]] = {}
+            for raw_item in qs:
+                if not isinstance(raw_item, dict):
+                    continue
+                item = _normalize_judge_item(raw_item)
+                qid = str(item.get("question_id") or "")
+                if qid in target_ids:
+                    grouped.setdefault(qid, []).append(item)
+            section_errors: Dict[str, str] = {}
+            for qid in target_ids:
+                items = grouped.get(qid) or []
+                if len(items) != 1:
+                    section_errors[qid] = (
+                        "missing section" if not items else "duplicate section"
+                    )
+                    continue
+                item = items[0]
                 if not isinstance(item, dict):
-                    raise ValueError("question_scores contains a non-object")
+                    section_errors[qid] = "section is not an object"
+                    continue
                 if not isinstance(item.get("claim_assessments"), list):
-                    raise ValueError("graded claim_assessments schema is required")
-                qid = str(item.get("question_id", ""))
+                    section_errors[qid] = "graded claim_assessments schema is required"
+                    continue
                 answer = (
                     (candidate.answers or {}).get(qid)
                     or candidate.raw_response
                     or ""
                 )
-                q_scores.append(
-                    _score_from_judge_item(
+                try:
+                    accepted[qid] = _score_from_judge_item(
                         case,
                         item,
                         answer_text=answer,
                         gold_reference=gold_reference,
                     )
+                except (TypeError, ValueError, AttributeError) as exc:
+                    accepted.pop(qid, None)
+                    section_errors[qid] = str(exc)
+            retry_ids = required - set(accepted)
+            if retry_ids:
+                details = "; ".join(
+                    f"{qid}: {section_errors.get(qid, 'invalid')}"
+                    for qid in sorted(retry_ids)
                 )
-            required = {q.id for q in case.questions}
-            have = {score.question_id for score in q_scores}
-            if have != required or len(q_scores) != len(required):
-                raise ValueError(
-                    f"section mismatch: expected {sorted(required)}, got {sorted(have)}"
-                )
+                raise ValueError(details)
+            q_scores = [accepted[q.id] for q in case.questions]
             assert meta is not None
             return JudgeResult(
                 blind_id=candidate.blind_id,
                 candidate_key=candidate.candidate_key,
                 question_scores=q_scores,
                 weighted_accuracy=_weighted_accuracy(case, q_scores),
+                coverage_score=_weighted_subscale(case, q_scores, "recall"),
+                quality_score=_weighted_subscale(case, q_scores, "quality"),
+                discipline_score=_weighted_subscale(case, q_scores, "precision"),
                 judge_model=judge_model,
                 judge_meta=meta,
                 raw_judge_json=raw,
                 status="valid",
+                retry_count=attempt,
             )
         except (TypeError, ValueError, AttributeError) as exc:
             last_validation_error = str(exc)
@@ -588,35 +753,18 @@ def judge_candidate(
                     {
                         "role": "user",
                         "content": (
-                            "Deterministic validation rejected the previous output: "
-                            f"{last_validation_error}. Return a complete corrected JSON "
-                            "object and never invent evidence."
+                            "Deterministic validation accepted all other sections but "
+                            f"rejected only {sorted(retry_ids)}: "
+                            f"{last_validation_error}. Return a JSON object whose "
+                            "question_scores contains exactly those rejected sections. "
+                            "Never rewrite accepted sections and never invent evidence."
                         ),
                     }
                 ]
                 continue
 
     assert meta is not None
-    if allow_verifier and verifier_model and verifier_model != judge_model:
-        if progress_callback:
-            progress_callback("independent verifier", 92)
-        verified = judge_candidate(
-            case,
-            candidate,
-            verifier_model,
-            temperature=0.0,
-            gold_reference=gold_reference,
-            api_key=api_key,
-            verifier_model="",
-            allow_verifier=False,
-        )
-        if verified.status == "valid":
-            verified.failure_reason = (
-                f"Primary judge invalid ({judge_model}: {last_validation_error}); "
-                f"accepted independent verifier {verifier_model}"
-            )
-            return verified
-    return _zero_judgment(
+    failed = _zero_judgment(
         case,
         candidate,
         judge_model,
@@ -624,6 +772,8 @@ def judge_candidate(
         meta,
         raw=raw or "",
     )
+    failed.retry_count = 1
+    return failed
 
 
 class PipelinedJudge:
@@ -646,6 +796,9 @@ class PipelinedJudge:
         api_key: Optional[str] = None,
         verifier_model: str = "",
         run_scope: str = "",
+        max_wall_s: float = 900.0,
+        benchmark_track: str = "controlled",
+        max_retries: Optional[int] = None,
     ) -> None:
         self.case = case
         self.judge_model = judge_model
@@ -656,8 +809,15 @@ class PipelinedJudge:
         self.api_key = api_key
         self.verifier_model = verifier_model
         self.run_scope = run_scope or f"pipe-{id(self)}"
+        self.benchmark_track = benchmark_track
+        self.max_wall_s = max(30.0, float(max_wall_s))
+        self._pipeline_started = time.monotonic()
+        self.started_at = utc_now_iso()
         n_hint = max(self.expected_total, 1)
         self._workers = max(1, min(n_hint, max_workers or n_hint))
+        self.max_retries = max(
+            0, int(n_hint if max_retries is None else max_retries)
+        )
         self._pool = ThreadPoolExecutor(max_workers=self._workers)
         self._pending: Dict[Future, CandidateAnswer] = {}
         self._by_key: Dict[str, JudgeResult] = {}
@@ -668,6 +828,43 @@ class PipelinedJudge:
         self._finished = 0
         self._shutdown = False
         _register_active_pipe(self)
+
+    def _finish_pending_as(self, *, status: str, reason: str, marker: str) -> None:
+        for fut, cand in list(self._pending.items()):
+            fut.cancel()
+            result = _zero_judgment(
+                self.case,
+                cand,
+                self.judge_model,
+                reason,
+                cand.meta,
+            )
+            result.status = status
+            result.failure_reason = reason
+            for score in result.question_scores:
+                score.errors = [marker]
+            self._by_key[cand.candidate_key] = result
+            self._finished += 1
+            self._emit(
+                {
+                    "phase": "done",
+                    "key": cand.candidate_key,
+                    "label": cand.display_label or cand.label or cand.candidate_key,
+                    "done": self._finished,
+                    "total": self.total,
+                    "accuracy": 0.0,
+                    "failed": True,
+                    "note": reason,
+                    "stage": status,
+                    "percent": 100,
+                    "elapsed_s": max(
+                        0.0,
+                        time.monotonic()
+                        - self._started_at.get(cand.candidate_key, time.monotonic()),
+                    ),
+                }
+            )
+        self._pending.clear()
 
     @property
     def candidates(self) -> List[CandidateAnswer]:
@@ -751,7 +948,7 @@ class PipelinedJudge:
             temperature=self.temperature,
             gold_reference=self.gold_reference,
             api_key=self.api_key,
-            verifier_model=self.verifier_model,
+            verifier_model="",
             progress_callback=lambda stage, percent: self._worker_progress.put(
                 {
                     "key": cand.candidate_key,
@@ -761,6 +958,133 @@ class PipelinedJudge:
                 }
             ),
         )
+
+    def _verifier_is_independent(self) -> bool:
+        verifier = (self.verifier_model or "").strip()
+        if not verifier or verifier == self.judge_model:
+            return False
+        candidate_models = {
+            str(c.meta.model or "").strip()
+            for c in self._candidates
+        } | {
+            str(c.meta.requested_model or "").strip()
+            for c in self._candidates
+        }
+        return verifier not in candidate_models
+
+    def _needs_whole_run_verifier(self) -> bool:
+        recoverable_statuses = {
+            "judge_transport_failed",
+            "judge_schema_invalid",
+            "judge_evidence_invalid",
+            "timed_out",
+        }
+        technical_failures = sum(
+            result.status in recoverable_statuses
+            for result in self._by_key.values()
+        )
+        fixed_cohort = max(self.expected_total, len(self._candidates), 1)
+        threshold = max(2, (3 * fixed_cohort + 9) // 10)
+        return (
+            self._verifier_is_independent()
+            and technical_failures >= threshold
+        )
+
+    def _verify_whole_run(self) -> None:
+        eligible = [
+            cand
+            for cand in self._candidates
+            if not cand.meta.error
+            and _candidate_has_answer(cand)
+            and not _candidate_missing_sections(self.case, cand)
+            and (cand.meta.finish_reason or "").lower()
+            not in {"length", "max_tokens", "content_filter"}
+        ]
+        if not eligible:
+            return
+        remaining = max(
+            1.0, self.max_wall_s - (time.monotonic() - self._pipeline_started)
+        )
+        workers = min(self._workers, len(eligible))
+        executor = ThreadPoolExecutor(max_workers=max(1, workers))
+        futures: Dict[Future, CandidateAnswer] = {}
+        for cand in eligible:
+            self._emit(
+                {
+                    "phase": "progress",
+                    "key": cand.candidate_key,
+                    "label": cand.display_label or cand.label or cand.candidate_key,
+                    "stage": "independent verifier",
+                    "percent": 92,
+                    "done": self._finished,
+                    "total": self.total,
+                }
+            )
+            futures[
+                executor.submit(
+                    judge_candidate,
+                    self.case,
+                    cand,
+                    self.verifier_model,
+                    0.0,
+                    self.gold_reference,
+                    self.api_key,
+                    "",
+                    False,
+                )
+            ] = cand
+        done, pending = wait(tuple(futures), timeout=remaining)
+        for fut in done:
+            cand = futures[fut]
+            try:
+                result = fut.result()
+            except Exception as exc:
+                result = _zero_judgment(
+                    self.case,
+                    cand,
+                    self.verifier_model,
+                    f"Verifier exception: {type(exc).__name__}: {exc}",
+                    cand.meta,
+                )
+            result.failure_reason = (
+                f"Whole-run verifier activated after primary judge failure; "
+                f"effective judge={self.verifier_model}. "
+                + (result.failure_reason or "")
+            ).strip()
+            self._by_key[cand.candidate_key] = result
+        for fut in pending:
+            cand = futures[fut]
+            fut.cancel()
+            timed_out = _zero_judgment(
+                self.case,
+                cand,
+                self.verifier_model,
+                "Whole-run verifier exceeded the judge wall-clock budget",
+                cand.meta,
+            )
+            timed_out.status = "timed_out"
+            timed_out.failure_reason = "Whole-run verifier timed out"
+            self._by_key[cand.candidate_key] = timed_out
+        executor.shutdown(wait=False, cancel_futures=True)
+
+    def _ensure_terminal_rows(self) -> None:
+        """Guarantee exactly one terminal result for every submitted candidate."""
+        for cand in self._candidates:
+            if cand.candidate_key in self._by_key:
+                continue
+            result = _zero_judgment(
+                self.case,
+                cand,
+                self.judge_model,
+                "Judge pipeline ended without a terminal result",
+                cand.meta,
+            )
+            result.status = "judge_transport_failed"
+            result.failure_reason = "Missing terminal judge result"
+            for score in result.question_scores:
+                score.errors = ["missing_terminal_result"]
+            self._by_key[cand.candidate_key] = result
+            self._finished += 1
 
     def _drain_worker_progress(self) -> None:
         while True:
@@ -857,6 +1181,9 @@ class PipelinedJudge:
                 "done": self._finished,
                 "total": self.total,
                 "accuracy": result.weighted_accuracy,
+                "coverage": result.coverage_score,
+                "quality": result.quality_score,
+                "discipline": result.discipline_score,
                 "failed": is_failed_judgment(result),
                 "note": (result.judge_meta.error if result.judge_meta else None) or "",
                 "stage": "complete",
@@ -884,6 +1211,19 @@ class PipelinedJudge:
         """Wait for judges, retry recoverable failures, or stop cooperatively."""
         while self._pending:
             if is_cancelled(self.run_scope):
+                self._finish_pending_as(
+                    status="cancelled",
+                    reason="Judging cancelled by user",
+                    marker="cancelled",
+                )
+                self.close(cancel_pending=True)
+                break
+            if time.monotonic() - self._pipeline_started >= self.max_wall_s:
+                self._finish_pending_as(
+                    status="timed_out",
+                    reason=f"Judge pipeline exceeded {self.max_wall_s:.0f}s wall-clock budget",
+                    marker="judge_timeout",
+                )
                 self.close(cancel_pending=True)
                 break
             done, _ = wait(
@@ -904,8 +1244,16 @@ class PipelinedJudge:
             if c.candidate_key in self._by_key
         ]
         cand_by = {c.candidate_key: c for c in self._candidates}
+        retry_attempts = 0
         for j in list(ordered):
             if is_cancelled(self.run_scope):
+                break
+            if retry_attempts >= self.max_retries:
+                break
+            remaining = self.max_wall_s - (
+                time.monotonic() - self._pipeline_started
+            )
+            if remaining <= 0:
                 break
             if not _is_rejudgable_failure(j):
                 continue
@@ -929,15 +1277,47 @@ class PipelinedJudge:
                 }
             )
             time.sleep(1.5)
-            retry = judge_candidate(
+            retry_attempts += 1
+            retry_future = self._pool.submit(
+                judge_candidate,
                 self.case,
                 cand,
                 self.judge_model,
                 temperature=self.temperature,
                 gold_reference=self.gold_reference,
                 api_key=self.api_key,
-                verifier_model=self.verifier_model,
+                verifier_model="",
+                progress_callback=lambda stage, percent: self._worker_progress.put(
+                    {
+                        "key": cand.candidate_key,
+                        "label": cand.display_label
+                        or cand.label
+                        or cand.candidate_key,
+                        "stage": stage,
+                        "percent": percent,
+                    }
+                ),
             )
+            remaining = max(
+                0.0,
+                self.max_wall_s - (time.monotonic() - self._pipeline_started),
+            )
+            retry_done, _ = wait((retry_future,), timeout=max(0.0, remaining))
+            if retry_future in retry_done:
+                retry = retry_future.result()
+            else:
+                retry_future.cancel()
+                retry = _zero_judgment(
+                    self.case,
+                    cand,
+                    self.judge_model,
+                    "Corrective retry exceeded the judge wall-clock budget",
+                    cand.meta,
+                )
+                retry.status = "timed_out"
+                retry.failure_reason = "Corrective retry timed out"
+            retry.retry_count += 1
+            self._drain_worker_progress()
             self._by_key[j.candidate_key] = retry
             self._emit(
                 {
@@ -947,6 +1327,9 @@ class PipelinedJudge:
                     "done": self._finished,
                     "total": self.total,
                     "accuracy": retry.weighted_accuracy,
+                    "coverage": retry.coverage_score,
+                    "quality": retry.quality_score,
+                    "discipline": retry.discipline_score,
                     "failed": is_failed_judgment(retry),
                     "stage": "complete",
                     "percent": 100,
@@ -957,6 +1340,9 @@ class PipelinedJudge:
                     ),
                 }
             )
+        if self._needs_whole_run_verifier() and not is_cancelled(self.run_scope):
+            self._verify_whole_run()
+        self._ensure_terminal_rows()
         ordered = [
             self._by_key[c.candidate_key]
             for c in self._candidates
@@ -984,6 +1370,30 @@ class PipelinedJudge:
             pass
         _unregister_active_pipe(self)
 
+    def cancel_and_snapshot(self) -> Dict[str, Any]:
+        """Cancel pending work and retain every submitted candidate/result."""
+        if self._pending:
+            self._finish_pending_as(
+                status="cancelled",
+                reason="Judging cancelled by user",
+                marker="cancelled",
+            )
+        snapshot = {
+            "case": self.case,
+            "candidates": list(self._candidates),
+            "judgments": [
+                self._by_key[candidate.candidate_key]
+                for candidate in self._candidates
+                if candidate.candidate_key in self._by_key
+            ],
+            "judge_model": self.judge_model,
+            "gold_reference": self.gold_reference,
+            "started_at": self.started_at,
+            "benchmark_track": self.benchmark_track,
+        }
+        self.close(cancel_pending=True)
+        return snapshot
+
 
 # Registry is partitioned by an unguessable Streamlit session/run scope.
 _ACTIVE_PIPES: Dict[str, List["PipelinedJudge"]] = {}
@@ -1005,17 +1415,16 @@ def _unregister_active_pipe(pipe: "PipelinedJudge") -> None:
         _ACTIVE_PIPES.pop(pipe.run_scope, None)
 
 
-def abandon_all_pipelines(run_scope: str) -> int:
-    """Cancel only pipelines owned by one session/run scope."""
-    n = 0
+def abandon_all_pipelines(run_scope: str) -> List[Dict[str, Any]]:
+    """Cancel pipelines in one scope and return persistence-ready snapshots."""
+    snapshots: List[Dict[str, Any]] = []
     for pipe in list(_ACTIVE_PIPES.get(run_scope, [])):
         try:
-            pipe.close(cancel_pending=True)
-            n += 1
+            snapshots.append(pipe.cancel_and_snapshot())
         except Exception:
             pass
     _ACTIVE_PIPES.pop(run_scope, None)
-    return n
+    return snapshots
 
 
 def judge_candidates_parallel(
@@ -1030,6 +1439,7 @@ def judge_candidates_parallel(
     api_key: Optional[str] = None,
     verifier_model: str = "",
     run_scope: str = "",
+    benchmark_track: str = "controlled",
 ) -> List[JudgeResult]:
     """Score all candidates in parallel while preserving legitimate ties.
 
@@ -1049,6 +1459,7 @@ def judge_candidates_parallel(
         api_key=api_key,
         verifier_model=verifier_model,
         run_scope=run_scope,
+        benchmark_track=benchmark_track,
     )
     for c in candidates:
         pipe.submit(c)
@@ -1065,6 +1476,9 @@ def build_ranking(judgments: List[JudgeResult]) -> List[Dict[str, Any]]:
                 "key": j.candidate_key,
                 "blind_id": j.blind_id,
                 "accuracy": None if failed else j.weighted_accuracy,
+                "coverage": None if failed else j.coverage_score,
+                "quality": None if failed else j.quality_score,
+                "discipline": None if failed else j.discipline_score,
                 "status": "n/a" if failed else "ok",
                 "status_note": ", ".join(flags[:4]) if flags else "",
             }

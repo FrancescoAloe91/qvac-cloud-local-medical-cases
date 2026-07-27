@@ -80,6 +80,7 @@ def summarize_runs(artifacts: List[RunArtifact]) -> MultiRunSummary:
     if len(cohort_ids) > 1:
         raise ValueError("Cannot summarize mixed cohorts")
     scores: Dict[str, List[float]] = {}
+    subscales: Dict[str, Dict[str, List[float]]] = {}
     requested: Dict[str, int] = {}
     failures: Dict[str, Dict[str, int]] = {}
     for art in artifacts:
@@ -97,6 +98,12 @@ def summarize_runs(artifacts: List[RunArtifact]) -> MultiRunSummary:
                 )
                 continue
             scores.setdefault(key, []).append(float(accuracy))
+            for component in ("coverage", "quality", "discipline"):
+                value = row.get(component)
+                if value is not None:
+                    subscales.setdefault(key, {}).setdefault(component, []).append(
+                        float(value)
+                    )
 
     stats: Dict[str, Dict[str, Any]] = {}
     outliers: List[str] = []
@@ -117,6 +124,7 @@ def summarize_runs(artifacts: List[RunArtifact]) -> MultiRunSummary:
                 "n_requested": float(requested[key]),
                 "n_valid": 0.0,
                 "n_failed": float(requested[key]),
+                "failure_rate": 1.0,
                 "failure_reasons": failures.get(key, {}),
             }
             continue
@@ -149,7 +157,18 @@ def summarize_runs(artifacts: List[RunArtifact]) -> MultiRunSummary:
             "n_requested": float(requested.get(key, n_runs)),
             "n_valid": float(n_runs),
             "n_failed": float(max(0, requested.get(key, n_runs) - n_runs)),
+            "failure_rate": round(
+                max(0, requested.get(key, n_runs) - n_runs)
+                / max(requested.get(key, n_runs), 1),
+                4,
+            ),
             "failure_reasons": failures.get(key, {}),
+            **{
+                f"{component}_mean": (
+                    round(statistics.fmean(values), 2) if values else None
+                )
+                for component, values in subscales.get(key, {}).items()
+            },
         }
         # Flag high variance (prefer N≥5 for stable CV reads)
         if len(vals) >= 3 and std is not None and std > 15:
@@ -177,6 +196,10 @@ def summarize_runs(artifacts: List[RunArtifact]) -> MultiRunSummary:
             "n_runs": int(v.get("n_runs") or v.get("n") or 0),
             "n_requested": int(v.get("n_requested") or 0),
             "n_failed": int(v.get("n_failed") or 0),
+            "failure_rate": v.get("failure_rate"),
+            "coverage_mean": v.get("coverage_mean"),
+            "quality_mean": v.get("quality_mean"),
+            "discipline_mean": v.get("discipline_mean"),
             "exploratory": True,
         }
         for k, v in stats.items()
@@ -192,6 +215,66 @@ def summarize_runs(artifacts: List[RunArtifact]) -> MultiRunSummary:
             last_rank = i
         row["rank"] = last_rank
 
+    paired_values: Dict[str, List[float]] = {key: [] for key in all_keys}
+    paired_components: Dict[str, Dict[str, List[float]]] = {
+        key: {component: [] for component in ("coverage", "quality", "discipline")}
+        for key in all_keys
+    }
+    paired_n = 0
+    for art in artifacts:
+        if not art.batch_id:
+            continue
+        by_key = {
+            str(row.get("key") or ""): row
+            for row in art.ranking
+            if is_current_roster_key(str(row.get("key") or ""))
+        }
+        if not all_keys or any(
+            key not in by_key
+            or str(by_key[key].get("status") or "ok") != "ok"
+            or by_key[key].get("accuracy") is None
+            for key in all_keys
+        ):
+            continue
+        paired_n += 1
+        for key in all_keys:
+            paired_values[key].append(float(by_key[key]["accuracy"]))
+            for component in ("coverage", "quality", "discipline"):
+                value = by_key[key].get(component)
+                if value is not None:
+                    paired_components[key][component].append(float(value))
+
+    paired_ranking: List[Dict[str, Any]] = []
+    if paired_n >= 5:
+        paired_ranking = [
+            {
+                "key": key,
+                "accuracy_mean": round(statistics.fmean(values), 2),
+                "n_runs": paired_n,
+                **{
+                    f"{component}_mean": (
+                        round(statistics.fmean(component_values), 2)
+                        if len(component_values) == paired_n
+                        else None
+                    )
+                    for component, component_values in paired_components[key].items()
+                },
+                "paired": True,
+                "exploratory": True,
+            }
+            for key, values in paired_values.items()
+            if len(values) == paired_n
+        ]
+        paired_ranking.sort(key=lambda row: row["accuracy_mean"], reverse=True)
+        last_mean = None
+        last_rank = 0
+        for index, row in enumerate(paired_ranking, 1):
+            mean_value = float(row["accuracy_mean"])
+            if last_mean is None or mean_value != last_mean:
+                last_mean = mean_value
+                last_rank = index
+            row["rank"] = last_rank
+
     total_cost = sum(a.total_cost_usd for a in artifacts)
     excluded = sorted(all_keys - eligible_keys)
     return MultiRunSummary(
@@ -199,6 +282,8 @@ def summarize_runs(artifacts: List[RunArtifact]) -> MultiRunSummary:
         n=min((len(scores.get(key, [])) for key in eligible_keys), default=0),
         candidate_stats=stats,
         ranking_mean=ranking_mean,
+        paired_ranking=paired_ranking,
+        paired_n=paired_n,
         run_ids=[a.run_id for a in artifacts],
         total_cost_usd=round(total_cost, 6),
         outliers=outliers
@@ -511,7 +596,7 @@ def rebuild_multi_from_history(
         "n_used": len(rescored_arts),
         "summary": summary,
         "per_run": per_run,
-        "formula": "evidence-linked claim correctness · same immutable cohort only",
+        "formula": "reference-relative Clinical Composite Score · same immutable cohort only",
         "api_cost_usd": 0.0,
         "cohort_id": latest_cohort,
         "official": True,

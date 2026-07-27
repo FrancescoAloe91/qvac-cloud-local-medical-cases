@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from benchmark.gold import (
     SECTION_IDS,
     cohort_id,
     confirmed_gold,
     extract_json_object,
+    load_confirmed_gold,
     parse_extraction,
 )
 from benchmark.schema import GoldSection
@@ -52,6 +55,11 @@ def _payload():
 def test_extractor_requires_verbatim_source_quotes():
     sections = parse_extraction(RAW, _payload())
     assert set(sections) == set(SECTION_IDS)
+    assert sections["safety"].claims[0].critical is False
+    assert (
+        sections["diagnosis"].claims[0].text
+        == sections["diagnosis"].claims[0].source_quote
+    )
 
     bad = _payload()
     bad["sections"]["diagnosis"]["claims"][0]["source_quote"] = "Invented diagnosis"
@@ -61,6 +69,32 @@ def test_extractor_requires_verbatim_source_quotes():
         assert "verbatim source quote" in str(exc)
     else:
         raise AssertionError("invented source quote was accepted")
+
+
+def test_extractor_rejects_duplicate_source_quotes_across_sections():
+    payload = _payload()
+    payload["sections"]["tests"]["claims"][0]["source_quote"] = (
+        payload["sections"]["diagnosis"]["claims"][0]["source_quote"]
+    )
+
+    with pytest.raises(ValueError, match="Duplicate source quote"):
+        parse_extraction(RAW, payload)
+
+
+def test_loading_existing_gold_relocks_text_to_source_quote():
+    gold = confirmed_gold(
+        raw_text=RAW,
+        sections=parse_extraction(RAW, _payload()),
+        extraction_model="test",
+    )
+    gold.sections["diagnosis"].claims[0].text = "rewritten diagnosis"
+    gold.sections["diagnosis"].claims[0].critical = True
+
+    loaded = load_confirmed_gold(gold)
+
+    claim = loaded.sections["diagnosis"].claims[0]
+    assert claim.text == claim.source_quote
+    assert claim.critical is False
 
 
 def test_extractor_accepts_markdown_or_commentary_around_json():
@@ -120,12 +154,20 @@ def test_graded_score_treats_helpful_and_neutral_additions_proportionally():
         {"classification": "unsupported", "severity": 0.4},
     ]
     discipline = evidence_discipline_score(additions, total_reference=4)
-    assert discipline == 0.975
+    assert discipline == 0.9
     assert graded_clinical_score(
         coverage=0.8,
         quality=0.9,
         discipline=discipline,
-    ) == 86.12
+    ) == 85.0
+
+
+@pytest.mark.parametrize("classification", ["unsupported", "contradictory", "dangerous"])
+def test_discipline_penalty_is_invariant_to_reference_claim_count(classification):
+    additions = [{"classification": classification, "severity": 0.6}]
+    assert evidence_discipline_score(
+        additions, total_reference=1
+    ) == evidence_discipline_score(additions, total_reference=20)
 
 
 def test_cohort_changes_with_protocol_or_reference():

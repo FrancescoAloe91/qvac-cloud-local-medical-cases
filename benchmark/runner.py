@@ -75,9 +75,131 @@ def _git_sha() -> str:
         return os.environ.get("GIT_COMMIT", "")
 
 
+def build_run_artifact(
+    *,
+    config_snapshot: Dict[str, Any],
+    blind_seed: Optional[int] = None,
+    judge_temperature: float = 0.0,
+    **artifact_fields: Any,
+) -> RunArtifact:
+    """Build equivalent Streamlit/CLI artifacts with one reproducibility manifest."""
+    existing = dict(artifact_fields.pop("reproducibility", {}) or {})
+    models_config = dict(artifact_fields.get("models_config") or {})
+    candidates = list(artifact_fields.get("candidates") or [])
+    judgments = list(artifact_fields.get("judgments") or [])
+    track = str(artifact_fields.get("benchmark_track") or "controlled")
+    judge_cfg = models_config.get("judge") or config_snapshot.get("judge") or {}
+    configured_candidates = {
+        str(candidate.get("key") or ""): candidate
+        for candidate in (models_config.get("candidates") or [])
+        if isinstance(candidate, dict)
+    }
+    primary_judge = str(judge_cfg.get("model") or "")
+    effective_judges = sorted(
+        {str(judgment.judge_model) for judgment in judgments if judgment.judge_model}
+    )
+    verifier_activated = bool(
+        primary_judge
+        and any(model != primary_judge for model in effective_judges)
+    )
+    manifest = {
+        "git_sha": _git_sha(),
+        "python": platform.python_version(),
+        "platform": platform.platform(),
+        "models_config_sha256": hashlib.sha256(
+            json.dumps(config_snapshot, sort_keys=True, default=str).encode("utf-8")
+        ).hexdigest(),
+        "prompts_sha256": _file_sha256(
+            Path(__file__).resolve().parent / "prompts.py"
+        ),
+        "scoring_sha256": _file_sha256(
+            Path(__file__).resolve().parent / "scoring.py"
+        ),
+        "blind_seed": blind_seed,
+        "benchmark_track": track,
+        "candidate_temperature": 0.2 if track == "controlled" else None,
+        "candidate_sampling": (
+            "controlled_temperature_0.2"
+            if track == "controlled"
+            else "provider_parameters_omitted_where_supported"
+        ),
+        "candidate_max_output_tokens": CANDIDATE_MAX_OUTPUT_TOKENS,
+        "judge_temperature": judge_temperature,
+        "primary_judge": primary_judge,
+        "effective_judge": (
+            effective_judges[0]
+            if len(effective_judges) == 1
+            else ("mixed" if effective_judges else primary_judge)
+        ),
+        "effective_judges": effective_judges,
+        "verifier_activated": verifier_activated,
+        "retry_count": sum(judgment.retry_count for judgment in judgments),
+        "failure_categories": {
+            status: sum(1 for judgment in judgments if judgment.status == status)
+            for status in sorted({judgment.status for judgment in judgments})
+            if status != "valid"
+        },
+        "candidate_calls": [
+            {
+                "key": candidate.candidate_key,
+                "requested_model": candidate.meta.requested_model
+                or candidate.meta.model,
+                "routed_model": candidate.meta.routed_model or candidate.meta.model,
+                "routed_provider": candidate.meta.routed_provider
+                or candidate.meta.provider,
+                "finish_reason": candidate.meta.finish_reason,
+                "prompt_tokens": candidate.meta.prompt_tokens,
+                "completion_tokens": candidate.meta.completion_tokens,
+                "context": (
+                    configured_candidates.get(candidate.candidate_key, {}).get(
+                        "context"
+                    )
+                    or configured_candidates.get(candidate.candidate_key, {}).get(
+                        "n_ctx"
+                    )
+                    or configured_candidates.get(candidate.candidate_key, {}).get(
+                        "context_size"
+                    )
+                ),
+                "configured_sampling": configured_candidates.get(
+                    candidate.candidate_key, {}
+                ).get("sampling"),
+                "ram_mb": candidate.meta.ram_mb,
+                "gguf_mb": candidate.meta.gguf_mb,
+            }
+            for candidate in candidates
+        ],
+    }
+    manifest.update(existing)
+    artifact_fields["reproducibility"] = manifest
+    return RunArtifact(**artifact_fields)
+
+
 def _emit(on_event: EventCallback, event: Dict[str, Any]) -> None:
     if on_event:
         on_event(event)
+
+
+def _validate_judge_separation(
+    cfg: Dict[str, Any], candidates_cfg: Sequence[Dict[str, Any]]
+) -> None:
+    judge_cfg = cfg.get("judge") or {}
+    verifier = str(judge_cfg.get("verifier_model") or "").strip()
+    if not verifier:
+        return
+    primary = str(judge_cfg.get("model") or "").strip()
+    candidate_models = {
+        str(candidate.get("model") or "").strip() for candidate in candidates_cfg
+    }
+    extractor = os.environ.get(
+        "BENCHMARK_GOLD_EXTRACTOR_MODEL", "google/gemini-3.5-flash"
+    ).strip()
+    if verifier == primary or verifier in candidate_models:
+        raise ValueError(
+            "Verifier must be outside the primary judge and candidate roster"
+        )
+    if verifier.split("/", 1)[0] == extractor.split("/", 1)[0]:
+        raise ValueError("Verifier must be outside the gold extractor model family")
 
 
 def estimate_run_cost_usd(
@@ -275,7 +397,7 @@ def dry_run_estimate(
     }
 
 
-def _collect_candidate(
+def _collect_candidate_once(
     case: Case,
     cand_cfg: Dict[str, Any],
     blind_id: str,
@@ -316,9 +438,7 @@ def _collect_candidate(
     ]
 
     if provider == "openrouter":
-        temperature = 0.2 if benchmark_track == "controlled" else float(
-            cand_cfg.get("native_temperature", 0.3)
-        )
+        temperature = 0.2 if benchmark_track == "controlled" else None
         raw, meta = openrouter.chat_stream(
             model_id,
             messages,
@@ -415,6 +535,61 @@ def _collect_candidate(
         },
     )
     return cand
+
+
+def _collect_candidate(
+    case: Case,
+    cand_cfg: Dict[str, Any],
+    blind_id: str,
+    on_event: EventCallback = None,
+    benchmark_track: str = "controlled",
+    api_key: Optional[str] = None,
+) -> CandidateAnswer:
+    """Collect once, retrying only transport failure or explicit truncation."""
+    first = _collect_candidate_once(
+        case,
+        cand_cfg,
+        blind_id,
+        on_event,
+        benchmark_track,
+        api_key,
+    )
+    transport_failure = bool(
+        first.meta.error and openrouter.is_retryable_error(first.meta.error)
+    )
+    truncation = (first.meta.finish_reason or "").lower() in {
+        "length",
+        "max_tokens",
+    }
+    if not (transport_failure or truncation):
+        return first
+    _emit(
+        on_event,
+        {
+            "type": "candidate_retry",
+            "key": first.candidate_key,
+            "reason": "transport" if transport_failure else "truncation",
+        },
+    )
+    second = _collect_candidate_once(
+        case,
+        cand_cfg,
+        blind_id,
+        on_event,
+        benchmark_track,
+        api_key,
+    )
+    first_cost = float(first.meta.cost_usd or 0.0)
+    second_cost = float(second.meta.cost_usd or 0.0)
+    second.meta.cost_usd = round(first_cost + second_cost, 8)
+    second.meta.prompt_tokens += first.meta.prompt_tokens
+    second.meta.completion_tokens += first.meta.completion_tokens
+    second.meta.latency_s = round(
+        float(first.meta.latency_s or 0.0) + float(second.meta.latency_s or 0.0),
+        3,
+    )
+    second.meta.retry_count = 1
+    return second
 
 
 def iter_collect_parallel(
@@ -539,6 +714,19 @@ def iter_collect_live(
                 start_at[key] = _time.time()
 
         def on_event(evt: Dict[str, Any]) -> None:
+            if evt.get("type") == "candidate_retry":
+                with lock:
+                    first_token_at.pop(key, None)
+                    char_count[key] = 0
+                    start_at[key] = _time.time()
+                q.put(
+                    {
+                        "type": "retry",
+                        "key": key,
+                        "reason": evt.get("reason") or "retryable failure",
+                    }
+                )
+                return
             if evt.get("type") != "candidate_token":
                 return
             delta = evt.get("delta") or ""
@@ -658,6 +846,7 @@ def prepare_run(
         triple_qvac=bool(triple_qvac) and include_qvac,
         include_qvac=include_qvac,
     )
+    _validate_judge_separation(cfg, candidates_cfg)
     has_qvac_cfg = any(c.get("provider") == "qvac" for c in candidates_cfg)
 
     if require_qvac and not has_qvac_cfg:
@@ -697,6 +886,7 @@ def run_once(
     triple_qvac: bool = False,
     benchmark_track: str = "controlled",
     api_key: Optional[str] = None,
+    batch_id: str = "",
 ) -> RunArtifact:
     gold_contract = load_confirmed_gold(gold_reference)
     prep = prepare_run(
@@ -788,6 +978,7 @@ def run_once(
         gold_reference=gold_reference,
         api_key=api_key,
         verifier_model=str(judge_cfg.get("verifier_model") or ""),
+        benchmark_track=benchmark_track,
     )
     for j in judgments:
         _emit(
@@ -829,12 +1020,16 @@ def run_once(
     if has_qvac_cfg and not any(is_qvac_key(c.candidate_key) for c in collected):
         notes = "QVAC skipped (sidecar unavailable). Start sidecar for full compare."
 
-    artifact = RunArtifact(
+    artifact = build_run_artifact(
+        config_snapshot=cfg,
+        blind_seed=seed,
+        judge_temperature=judge_temp,
         run_id=run_id,
         case_id=case_id,
         started_at=started,
         finished_at=utc_now_iso(),
         n_index=n_index,
+        batch_id=batch_id or uuid.uuid4().hex,
         models_config={
             "profile": cfg.get("profile"),
             "candidates": candidates_cfg,
@@ -853,9 +1048,13 @@ def run_once(
         prompt_version="gold-only-v1",
         benchmark_track=benchmark_track,
         run_status=(
-            "complete"
-            if all(j.status == "valid" for j in judgments)
-            else "partial"
+            "cancelled"
+            if any(j.status == "cancelled" for j in judgments)
+            else (
+                "complete"
+                if all(j.status == "valid" for j in judgments)
+                else "partial"
+            )
         ),
         reproducibility={
             "git_sha": _git_sha(),
@@ -915,6 +1114,7 @@ def run_n(
         out = out_dir
     out.mkdir(parents=True, exist_ok=True)
     artifacts: List[RunArtifact] = []
+    batch_id = uuid.uuid4().hex
     base_seed = seed if seed is not None else random.randint(0, 10**9)
     for i in range(1, n + 1):
         art = run_once(
@@ -930,6 +1130,7 @@ def run_n(
             triple_qvac=triple_qvac,
             benchmark_track=benchmark_track,
             api_key=api_key,
+            batch_id=batch_id,
         )
         write_artifact(art, out)
         artifacts.append(art)

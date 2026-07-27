@@ -96,8 +96,8 @@ def evidence_discipline_score(
         except (TypeError, ValueError) as exc:
             raise ValueError("Added-content severity must be a 0-1 number") from exc
         penalty += factors[classification] * severity
-    scale = max(int(total_reference), 1)
-    return round(max(0.0, 1.0 - penalty / scale), 4)
+    # Fixed bounded scale: extractor claim granularity must not dilute harm.
+    return round(max(0.0, 1.0 - min(1.0, penalty)), 4)
 
 
 def linear_item_score(
