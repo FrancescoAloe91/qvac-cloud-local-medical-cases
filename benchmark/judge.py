@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import json
+import queue
 import re
 import time
+import unicodedata
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from typing import Any, Callable, Dict, List, Optional
 
@@ -95,9 +97,13 @@ def _as_pos_int(value: Any, default: int = 1) -> int:
 
 
 def _evidence_normalized(text: str) -> str:
-    """Normalize whitespace/case and presentation-only Markdown markers."""
-    without_markdown = re.sub(r"[*_`#]+", "", text or "")
-    return re.sub(r"\s+", " ", without_markdown.strip()).casefold()
+    """Normalize presentation without changing or approximating any word."""
+    canonical = unicodedata.normalize("NFKC", text or "")
+    without_markdown = re.sub(r"[*_`#]+", "", canonical)
+    # Compare the same ordered word sequence while ignoring punctuation styling.
+    # This remains deliberately stricter than fuzzy or semantic matching.
+    tokens = re.findall(r"\w+", without_markdown.casefold(), flags=re.UNICODE)
+    return " ".join(tokens)
 
 
 def _evidence_quote_present(quote: str, answer_norm: str) -> bool:
@@ -488,6 +494,7 @@ def judge_candidate(
     api_key: Optional[str] = None,
     verifier_model: str = "",
     allow_verifier: bool = True,
+    progress_callback: Optional[Callable[[str, int], None]] = None,
 ) -> JudgeResult:
     load_confirmed_gold(gold_reference)  # validate before any paid request
     messages = [
@@ -502,6 +509,11 @@ def judge_candidate(
     raw, meta = "", None
     last_validation_error = ""
     for attempt in range(2):
+        if progress_callback:
+            progress_callback(
+                "judge request" if attempt == 0 else "corrective retry",
+                25 if attempt == 0 else 75,
+            )
         raw, meta = openrouter.chat(
             judge_model,
             messages,
@@ -512,6 +524,8 @@ def judge_candidate(
             timeout=240.0,
             api_key=api_key,
         )
+        if progress_callback:
+            progress_callback("validating response", 70 if attempt == 0 else 88)
         if meta.error:
             if attempt == 0 and openrouter.is_retryable_error(meta.error):
                 continue
@@ -584,6 +598,8 @@ def judge_candidate(
 
     assert meta is not None
     if allow_verifier and verifier_model and verifier_model != judge_model:
+        if progress_callback:
+            progress_callback("independent verifier", 92)
         verified = judge_candidate(
             case,
             candidate,
@@ -646,6 +662,9 @@ class PipelinedJudge:
         self._pending: Dict[Future, CandidateAnswer] = {}
         self._by_key: Dict[str, JudgeResult] = {}
         self._candidates: List[CandidateAnswer] = []
+        self._worker_progress: queue.Queue[Dict[str, Any]] = queue.Queue()
+        self._started_at: Dict[str, float] = {}
+        self._progress_state: Dict[str, Dict[str, Any]] = {}
         self._finished = 0
         self._shutdown = False
         _register_active_pipe(self)
@@ -733,7 +752,56 @@ class PipelinedJudge:
             gold_reference=self.gold_reference,
             api_key=self.api_key,
             verifier_model=self.verifier_model,
+            progress_callback=lambda stage, percent: self._worker_progress.put(
+                {
+                    "key": cand.candidate_key,
+                    "label": cand.display_label or cand.label or cand.candidate_key,
+                    "stage": stage,
+                    "percent": percent,
+                }
+            ),
         )
+
+    def _drain_worker_progress(self) -> None:
+        while True:
+            try:
+                evt = self._worker_progress.get_nowait()
+            except queue.Empty:
+                break
+            key = str(evt.get("key") or "")
+            self._progress_state[key] = dict(evt)
+            self._emit(
+                {
+                    "phase": "progress",
+                    **evt,
+                    "elapsed_s": max(
+                        0.0, time.monotonic() - self._started_at.get(key, time.monotonic())
+                    ),
+                    "done": self._finished,
+                    "total": self.total,
+                }
+            )
+
+    def _emit_heartbeats(self) -> None:
+        now = time.monotonic()
+        for cand in self._pending.values():
+            key = cand.candidate_key
+            state = self._progress_state.get(key) or {
+                "stage": "queued",
+                "percent": 10,
+            }
+            self._emit(
+                {
+                    "phase": "progress",
+                    "key": key,
+                    "label": cand.display_label or cand.label or key,
+                    "stage": state.get("stage") or "judging",
+                    "percent": int(state.get("percent") or 10),
+                    "elapsed_s": max(0.0, now - self._started_at.get(key, now)),
+                    "done": self._finished,
+                    "total": self.total,
+                }
+            )
 
     def submit(self, cand: CandidateAnswer) -> bool:
         """Queue one candidate for DeepSeek. Returns False if duplicate / closed."""
@@ -742,6 +810,11 @@ class PipelinedJudge:
         if any(c.candidate_key == cand.candidate_key for c in self._candidates):
             return False
         self._candidates.append(cand)
+        self._started_at[cand.candidate_key] = time.monotonic()
+        self._progress_state[cand.candidate_key] = {
+            "stage": "queued",
+            "percent": 10,
+        }
         self._emit(
             {
                 "phase": "queued",
@@ -749,6 +822,9 @@ class PipelinedJudge:
                 "label": cand.display_label or cand.label or cand.candidate_key,
                 "done": self._finished,
                 "total": self.total,
+                "stage": "queued",
+                "percent": 10,
+                "elapsed_s": 0.0,
             }
         )
         fut = self._pool.submit(self._one_safe, cand)
@@ -783,16 +859,25 @@ class PipelinedJudge:
                 "accuracy": result.weighted_accuracy,
                 "failed": is_failed_judgment(result),
                 "note": (result.judge_meta.error if result.judge_meta else None) or "",
+                "stage": "complete",
+                "percent": 100,
+                "elapsed_s": max(
+                    0.0,
+                    time.monotonic()
+                    - self._started_at.get(cand.candidate_key, time.monotonic()),
+                ),
             }
         )
 
     def poll(self) -> int:
         """Non-blocking: harvest finished futures. Call from the UI/script thread."""
+        self._drain_worker_progress()
         n = 0
         for fut in list(self._pending):
             if fut.done():
                 self._harvest(fut)
                 n += 1
+        self._drain_worker_progress()
         return n
 
     def finalize(self) -> List[JudgeResult]:
@@ -803,8 +888,12 @@ class PipelinedJudge:
                 break
             done, _ = wait(
                 tuple(self._pending.keys()),
+                timeout=1.0,
                 return_when=FIRST_COMPLETED,
             )
+            self._drain_worker_progress()
+            if not done:
+                self._emit_heartbeats()
             for fut in done:
                 if fut in self._pending:
                     self._harvest(fut)
@@ -830,6 +919,13 @@ class PipelinedJudge:
                     "label": cand.display_label or cand.label or cand.candidate_key,
                     "done": self._finished,
                     "total": self.total,
+                    "stage": "corrective retry",
+                    "percent": 75,
+                    "elapsed_s": max(
+                        0.0,
+                        time.monotonic()
+                        - self._started_at.get(cand.candidate_key, time.monotonic()),
+                    ),
                 }
             )
             time.sleep(1.5)
@@ -852,6 +948,13 @@ class PipelinedJudge:
                     "total": self.total,
                     "accuracy": retry.weighted_accuracy,
                     "failed": is_failed_judgment(retry),
+                    "stage": "complete",
+                    "percent": 100,
+                    "elapsed_s": max(
+                        0.0,
+                        time.monotonic()
+                        - self._started_at.get(cand.candidate_key, time.monotonic()),
+                    ),
                 }
             )
         ordered = [

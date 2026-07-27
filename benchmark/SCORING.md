@@ -16,6 +16,13 @@ contradictory, or dangerous. Every nonzero coverage decision and every added
 claim needs verbatim candidate evidence. The host rejects invalid evidence
 rather than converting it to a low score.
 
+Evidence validation is presentation-tolerant but text-strict. It normalizes
+Markdown, whitespace, letter case, Unicode presentation, and punctuation.
+It also accepts a judge quote assembled from multiple non-contiguous sentences
+only when every substantial sentence is textually present in the candidate
+answer. No fuzzy or semantic quote matching is used, so changed or invented
+clinical words remain invalid.
+
 For each section:
 
 ```text
@@ -50,12 +57,21 @@ observations. They are excluded from means and reported with reason counts.
 There is no synthetic zero, fallback score, score cap, or forced tie-break.
 Exact ties keep the same rank.
 
+Retryable transport errors receive bounded retries. A schema/evidence rejection
+receives a corrective retry, followed—when configured—by one independent
+verifier. These recovery paths may repair formatting or judge-output defects;
+they do not relax candidate completeness, evidence integrity, or the scoring
+formula.
+
 ## Repeated runs
 
-An aggregate ranking is withheld until every compared model has the same minimum
-of five valid observations from one immutable cohort. A cohort hash includes the
-case, confirmed reference, model configuration, prompt/scoring versions, and
-protocol track. Controlled and native-default runs never mix.
+Each model enters the aggregate ranking when it has at least five valid
+observations from one immutable cohort. Models may therefore have different N:
+an N/A for one model neither removes nor delays valid data from another. Every
+mean exposes its own valid and failed counts, and no missing score is imputed. A
+cohort hash includes the case, confirmed reference, model configuration,
+prompt/scoring versions, and protocol track. Controlled and native-default runs
+never mix.
 
 N=5 is labelled exploratory. Sample SD, median, and IQR describe repeatability
 for that exact case/reference; they do not establish general clinical validity.

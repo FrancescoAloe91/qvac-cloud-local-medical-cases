@@ -37,11 +37,11 @@ def test_mixed_cohorts_are_rejected():
         summarize_runs([_artifact(0), _artifact(1, cohort="cohort-b")])
 
 
-def test_failure_is_excluded_and_equal_n_gate_withholds_ranking():
+def test_failure_excludes_only_under_threshold_model():
     artifacts = [_artifact(i) for i in range(5)]
     artifacts[2] = _artifact(2, failure=True)
     summary = summarize_runs(artifacts)
-    assert summary.ranking_mean == []
+    assert [row["key"] for row in summary.ranking_mean] == ["claude"]
     assert summary.candidate_stats["chatgpt"]["n_valid"] == 4
     assert summary.candidate_stats["chatgpt"]["n_failed"] == 1
     assert summary.candidate_stats["claude"]["n_valid"] == 5
@@ -53,4 +53,14 @@ def test_equal_five_valid_runs_enable_exploratory_ranking():
     assert len(summary.ranking_mean) == 2
     assert all(row["exploratory"] for row in summary.ranking_mean)
     assert summary.candidate_stats["chatgpt"]["std"] is not None
+
+
+def test_unequal_valid_n_keeps_all_eligible_models():
+    artifacts = [_artifact(i) for i in range(6)]
+    artifacts[1] = _artifact(1, failure=True)
+    summary = summarize_runs(artifacts)
+    assert {row["key"] for row in summary.ranking_mean} == {"chatgpt", "claude"}
+    assert summary.candidate_stats["chatgpt"]["n_valid"] == 5
+    assert summary.candidate_stats["claude"]["n_valid"] == 6
+    assert summary.n == 5
 

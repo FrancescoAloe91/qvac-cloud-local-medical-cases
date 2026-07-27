@@ -119,6 +119,20 @@ def test_markdown_only_quote_differences_are_accepted():
     assert score.score == 95.0
 
 
+def test_punctuation_and_case_only_quote_differences_are_accepted():
+    answer = _evidence_normalized(
+        "URGENT—give calcium gluconate; then monitor the ECG."
+    )
+    assert _evidence_quote_present(
+        "Urgent: give calcium gluconate, then monitor the ECG!",
+        answer,
+    )
+    assert not _evidence_quote_present(
+        "Urgent: give potassium, then monitor the ECG!",
+        answer,
+    )
+
+
 def test_combined_noncontiguous_verbatim_sentences_are_accepted():
     answer = _evidence_normalized(
         "Give insulin now. An unrelated bullet. Monitor glucose hourly."

@@ -428,7 +428,8 @@ Final correctness = 30% diagnosis + 25% safety + 20% plan + 15% tests + 10% urge
   <tr><td>Failure status</td><td>N/A</td><td>Transport, timeout, malformed evidence or cancellation</td></tr>
 </table>
 <p>Synonyms and faithful paraphrases count. Every match/contradiction must cite candidate evidence.</p>
-<p>Aggregate ranking appears only when every model has the same minimum 5 valid runs;
+<p>Each model enters the aggregate ranking after 5 valid runs, independently of
+other models' N/A results. Every mean keeps its own N; missing scores are never imputed.
 N=5 remains exploratory and measures repeatability on this reference, not general clinical validity.</p>
 <p style="opacity:.8;font-size:0.8rem">This window is browser-only — opening it does <b>not</b> pause collect/judge.</p>
 """
@@ -1607,7 +1608,7 @@ with _run_r2[1]:
         "and Multi run the 6 on-device models."
     )
 st.caption(
-    "**Minimum aggregate:** Multi ×5 equal valid N (exploratory repeatability). "
+    "**Minimum aggregate:** 5 valid runs per model; N/A does not block other models. "
     "With Cloud OFF, Multi is the on-device bake-off (Gemma/Llama/Phi + 3× MedPsy). "
     "QVAC only = MedPsy rehearsal without cloud."
 )
@@ -2658,9 +2659,24 @@ if st.session_state.get("confirmed_run"):
                         "status": "judging",
                         "accuracy": None,
                         "queue_i": lo_ui["queue_i"],
+                        "progress_pct": int(evt.get("percent") or 10),
+                        "progress_label": str(evt.get("stage") or "queued"),
+                        "elapsed_s": float(evt.get("elapsed_s") or 0),
                     }
                     _paint_lo_board()
-                elif phase == "done":
+                elif phase == "progress" and key:
+                    prev = lo_board.get(key) or {}
+                    lo_board[key] = {
+                        **prev,
+                        "label": name,
+                        "status": "judging",
+                        "accuracy": None,
+                        "progress_pct": int(evt.get("percent") or 10),
+                        "progress_label": str(evt.get("stage") or "judging"),
+                        "elapsed_s": float(evt.get("elapsed_s") or 0),
+                    }
+                    _paint_lo_board()
+                elif phase in ("done", "retry_done"):
                     prev_q = (lo_board.get(key) or {}).get("queue_i")
                     if evt.get("failed"):
                         lo_board[key] = {
@@ -2668,6 +2684,9 @@ if st.session_state.get("confirmed_run"):
                             "status": "failed",
                             "accuracy": float(evt.get("accuracy") or 0),
                             "queue_i": prev_q,
+                            "progress_pct": 100,
+                            "progress_label": "complete",
+                            "elapsed_s": float(evt.get("elapsed_s") or 0),
                         }
                         if key in status_boxes:
                             status_boxes[key].markdown(
@@ -2681,6 +2700,9 @@ if st.session_state.get("confirmed_run"):
                             "status": "scored",
                             "accuracy": acc,
                             "queue_i": prev_q,
+                            "progress_pct": 100,
+                            "progress_label": "complete",
+                            "elapsed_s": float(evt.get("elapsed_s") or 0),
                         }
                         if key in status_boxes:
                             status_boxes[key].markdown(
@@ -2707,6 +2729,11 @@ if st.session_state.get("confirmed_run"):
                             "queue_i": (lo_board.get(key) or {}).get(
                                 "queue_i", lo_ui["queue_i"]
                             ),
+                            "progress_pct": int(evt.get("percent") or 75),
+                            "progress_label": str(
+                                evt.get("stage") or "corrective retry"
+                            ),
+                            "elapsed_s": float(evt.get("elapsed_s") or 0),
                         }
                         _paint_lo_board()
                 progress_slot.progress(
@@ -3812,9 +3839,38 @@ if st.session_state.get("confirmed_run"):
                         "status": "judging",
                         "accuracy": None,
                         "queue_i": qi,
+                        "progress_pct": int(evt.get("percent") or 10),
+                        "progress_label": str(evt.get("stage") or "queued"),
+                        "elapsed_s": float(evt.get("elapsed_s") or 0),
                     }
                     _paint_full_board()
-                elif phase == "done":
+                elif phase == "progress" and key:
+                    prev = full_board.get(key) or {}
+                    full_board[key] = {
+                        **prev,
+                        "label": name,
+                        "status": "judging",
+                        "accuracy": None,
+                        "progress_pct": int(evt.get("percent") or 10),
+                        "progress_label": str(evt.get("stage") or "judging"),
+                        "elapsed_s": float(evt.get("elapsed_s") or 0),
+                    }
+                    _paint_full_board()
+                elif phase == "retry" and key:
+                    prev = full_board.get(key) or {}
+                    full_board[key] = {
+                        **prev,
+                        "label": name,
+                        "status": "judging",
+                        "accuracy": None,
+                        "progress_pct": int(evt.get("percent") or 75),
+                        "progress_label": str(
+                            evt.get("stage") or "corrective retry"
+                        ),
+                        "elapsed_s": float(evt.get("elapsed_s") or 0),
+                    }
+                    _paint_full_board()
+                elif phase in ("done", "retry_done"):
                     prev_q = (full_board.get(key) or {}).get("queue_i")
                     if evt.get("failed"):
                         full_board[key] = {
@@ -3822,6 +3878,9 @@ if st.session_state.get("confirmed_run"):
                             "status": "failed",
                             "accuracy": float(evt.get("accuracy") or 0),
                             "queue_i": prev_q,
+                            "progress_pct": 100,
+                            "progress_label": "complete",
+                            "elapsed_s": float(evt.get("elapsed_s") or 0),
                         }
                         if key in status_boxes:
                             status_boxes[key].markdown(
@@ -3835,6 +3894,9 @@ if st.session_state.get("confirmed_run"):
                             "status": "scored",
                             "accuracy": acc,
                             "queue_i": prev_q,
+                            "progress_pct": 100,
+                            "progress_label": "complete",
+                            "elapsed_s": float(evt.get("elapsed_s") or 0),
                         }
                         if key in status_boxes:
                             status_boxes[key].markdown(
@@ -4761,13 +4823,13 @@ st.markdown(
 )
 st.caption(
     f"**{case_display_name(case_id)}** · use only the newest immutable cohort. "
-    "Every model needs the same minimum five valid observations; legacy artifacts "
-    "stay experimental. **No API calls**."
+    "Each model is ranked after five valid observations; N/A never removes valid "
+    "data from others. Legacy artifacts stay experimental. **No API calls**."
 )
 _hist_for_case = artifacts_for_case(WORKSPACE_DIR, case_id)
 _avail_n = len(_hist_for_case)
 
-# Equal valid N; N=5 remains exploratory.
+# Per-model valid N; N=5 remains exploratory.
 _n_options = [5, 10, 20, 30]
 _rb1, _rb2 = st.columns([1, 2])
 with _rb1:

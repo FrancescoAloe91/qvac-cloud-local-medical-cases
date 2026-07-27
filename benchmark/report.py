@@ -162,10 +162,7 @@ def summarize_runs(artifacts: List[RunArtifact]) -> MultiRunSummary:
                 outliers.append(f"{key}: possible bimodal gap={mid_gap:.1f}")
 
     all_keys = set(requested)
-    equal_valid_n = {len(scores.get(key, [])) for key in all_keys}
-    aggregate_ready = bool(all_keys) and len(equal_valid_n) == 1 and next(
-        iter(equal_valid_n), 0
-    ) >= 5
+    eligible_keys = {key for key in all_keys if len(scores.get(key, [])) >= 5}
     ranking_mean = [
         {
             "key": k,
@@ -183,7 +180,8 @@ def summarize_runs(artifacts: List[RunArtifact]) -> MultiRunSummary:
             "exploratory": True,
         }
         for k, v in stats.items()
-    ] if aggregate_ready else []
+        if k in eligible_keys
+    ]
     ranking_mean.sort(key=lambda r: r["accuracy_mean"], reverse=True)
     last_mean: Optional[float] = None
     last_rank = 0
@@ -195,9 +193,10 @@ def summarize_runs(artifacts: List[RunArtifact]) -> MultiRunSummary:
         row["rank"] = last_rank
 
     total_cost = sum(a.total_cost_usd for a in artifacts)
+    excluded = sorted(all_keys - eligible_keys)
     return MultiRunSummary(
         case_id=case_id,
-        n=min(equal_valid_n) if aggregate_ready else 0,
+        n=min((len(scores.get(key, [])) for key in eligible_keys), default=0),
         candidate_stats=stats,
         ranking_mean=ranking_mean,
         run_ids=[a.run_id for a in artifacts],
@@ -205,10 +204,13 @@ def summarize_runs(artifacts: List[RunArtifact]) -> MultiRunSummary:
         outliers=outliers
         + (
             []
-            if aggregate_ready
+            if not excluded
             else [
-                "Aggregate ranking withheld: every model needs the same minimum of "
-                "5 valid observations; technical failures are N/A."
+                "Excluded until 5 valid observations: "
+                + ", ".join(
+                    f"{key} ({len(scores.get(key, []))}/5)" for key in excluded
+                )
+                + ". Technical failures are N/A; other models keep their valid data."
             ]
         ),
     )
@@ -243,12 +245,14 @@ def reliability_caption(summary: MultiRunSummary) -> str:
     """One-line plain-language guide for the multi-run mean."""
     if not summary.ranking_mean:
         return (
-            "Aggregate ranking withheld — every model needs the same minimum of "
-            "5 valid runs. Technical failures are N/A, never zero."
+            "No model has 5 valid runs yet. Technical failures are N/A, never zero; "
+            "valid scores and KPIs remain stored."
         )
+    eligible = len(summary.ranking_mean)
     return (
-        f"Exploratory repeatability across equal valid N={summary.n} · "
-        "sample SD + median/IQR · this does not measure clinical generalization."
+        f"Exploratory ranking for {eligible} model(s) with at least 5 valid runs · "
+        "each mean shows its own N; technical N/A never discard other models' data · "
+        "sample SD + median/IQR do not measure clinical generalization."
     )
 
 

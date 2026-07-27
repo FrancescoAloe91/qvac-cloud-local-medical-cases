@@ -207,6 +207,8 @@ def live_judging_board_html(
         )
         qi = int(r.get("queue_i") or 0) or "—"
         st = str(r.get("status") or "pending")
+        progress_pct = max(0, min(100, int(r.get("progress_pct") or 0)))
+        elapsed_s = max(0, int(float(r.get("elapsed_s") or 0)))
         flash = " rank-row-flash" if highlight_key and key == highlight_key else ""
         if st in ("scored", "failed") and r.get("accuracy") is not None:
             acc = float(r.get("accuracy") or 0)
@@ -221,6 +223,9 @@ def live_judging_board_html(
                     f"<span class='rank-live-acc-num'>{acc:.1f}</span>"
                     f"<span class='rank-live-acc-unit'>%</span>"
                 )
+            acc_col += (
+                f"<span class='rank-live-note'>100% complete · {elapsed_s}s</span>"
+            )
             body.append(
                 f"<tr class='rank-live-row scored{flash}' data-key='{html.escape(key)}'>"
                 f"<td class='rank-live-pos'>{qi}</td>"
@@ -235,13 +240,21 @@ def live_judging_board_html(
                 if st in ("pending", "queued", "retry", "judging")
                 else ("collecting…" if st == "collecting" else st)
             )
+            progress_label = str(r.get("progress_label") or waiting)
+            progress = (
+                "<div class='rank-live-progress-meta'>"
+                f"<span>{progress_pct}%</span><span>{html.escape(progress_label)}</span>"
+                "</div>"
+                "<div class='rank-live-progress-track'>"
+                f"<span style='width:{progress_pct}%'></span></div>"
+                f"<div class='rank-live-note'>{elapsed_s}s elapsed</div>"
+            )
             body.append(
                 f"<tr class='rank-live-row pending' data-key='{html.escape(key)}'>"
                 f"<td class='rank-live-pos' style='color:#64748b'>{qi}</td>"
                 f"<td class='rank-live-name' style='opacity:.85'>{html.escape(nm)}"
                 f"<div class='rank-live-ver'>{html.escape(ver)}</div></td>"
-                f"<td class='rank-live-acc'><span class='rank-live-wait'>"
-                f"{html.escape(waiting)}</span></td>"
+                f"<td class='rank-live-acc'>{progress}</td>"
                 f"</tr>"
             )
 
@@ -255,7 +268,7 @@ def live_judging_board_html(
     n_scored = len(scored)
     table = (
         "<table class='rank-live-table'><thead><tr>"
-        "<th>#</th><th>Model</th><th>Score</th>"
+        "<th>#</th><th>Model</th><th>Progress / score</th>"
         "</tr></thead><tbody>"
         + "".join(body)
         + "</tbody></table>"
@@ -271,7 +284,8 @@ def live_judging_board_html(
         f'<div class="rank-live-title">{html.escape(title)}</div>'
         f'<div class="rank-live-sub">{n_scored} scored · left = collect order (fixed) · '
         f"right = <b>Prov.</b> ranking (slides as scores arrive)"
-        f"{' · latest highlighted' if highlight_key else ''}</div>"
+        f"{' · latest highlighted' if highlight_key else ''}"
+        " · progress % = completed pipeline stages, not ETA</div>"
         f'<div class="rank-live-grid">'
         f'<div class="rank-live-col table-col">'
         f'<div class="rank-live-hist-cap">Judge queue · FIFO</div>{table}</div>'
