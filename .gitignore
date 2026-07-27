@@ -7,7 +7,7 @@ data/wallet.json
 .case_snapshots.json
 .streamlit/secrets.toml
 .env
-.ip_key_vault.json
+.cache/
 
 # Private History — prompts, model outputs, judge scores, multi-run means.
 # Never commit. Each OpenRouter key gets artifacts/owners/<fingerprint>/.

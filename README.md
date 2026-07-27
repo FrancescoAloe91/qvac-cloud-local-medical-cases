@@ -1,223 +1,173 @@
-# QVAC vs Cloud LLMs — Health Test
+# QVAC vs Cloud LLMs — Gold-only Health Benchmark
 
-Reproducible clinical benchmark: **3 cloud LLMs** (OpenRouter, **BYOK**) vs **on-device GGUFs** via the **QVAC SDK** sidecar (**Band B peers** + **Tether MedPsy**), scored by a **blind LLM-as-judge** (**DeepSeek R1**).
+Experimental, open-source comparison of pinned OpenRouter API models and
+on-device GGUFs through the QVAC SDK. It uses frozen, user-supplied reference claims,
+a blind DeepSeek R1 judge, strict evidence validation, and an independent Claude
+verifier only when the primary judge returns invalid schema/evidence.
 
-| | Local (full demo) | Streamlit Cloud |
-|---|---|---|
-| OpenRouter candidates + judge | ✅ your API key | ✅ visitor BYOK |
-| On-device GGUFs (MedPsy + peers) | ✅ QVAC SDK sidecar | ❌ skipped (cloud-only) |
-| Automated Benchmark (main app) | ✅ up to **9 models** | ✅ cloud + judge |
-| Private History / KPIs / means | ✅ scoped to **your key** (+ key remembered per **IP**) | ✅ same |
-| Typical cloud spend (3 cloud + judge) | ~**$0.25–1.50** / case × 1 run | same |
+This is a research/demo tool, not a medical device. It does not validate the
+clinical truth of user input. If the case or reference is wrong or incomplete,
+the result is not clinically meaningful.
 
-**Live app:** https://francescoaloe91-qvac-vs-cloud-llms-health-test-app-wihxyd.streamlit.app  
-**Repo:** https://github.com/FrancescoAloe91/qvac-vs-cloud-llms-health-test
+Live app: https://francescoaloe91-qvac-vs-cloud-llms-health-test-app-wihxyd.streamlit.app
+Repository: https://github.com/FrancescoAloe91/qvac-vs-cloud-llms-health-test
 
----
+## Active protocol
 
-## Privacy: IP + API key (BYOK) + private History
+1. Paste one anonymized real/custom clinical case.
+2. Paste a free-form reference covering diagnosis, tests, urgency, safety, and
+   initial plan.
+3. When Run is clicked, the reference is frozen and a pinned cloud extractor
+   automatically reorganizes only source-supported claims before any candidate
+   is called. There is no separate extraction/review step.
+4. Run either the `controlled` or `native_defaults` track. They are separate
+   cohorts and are never pooled.
+5. Candidate identities are blinded for judging.
+6. The host computes each section from 50% graded reference coverage, 35%
+   clinical quality, and 15% evidence discipline. Helpful and neutral additions
+   are unpenalized; unsupported, contradictory, and dangerous content has a
+   proportional effect.
+7. Transport, timeout, malformed evidence, cancellation, and empty output are
+   technical N/A—not synthetic zero scores.
 
-Every user’s **scripts, dashboard, KPIs, rankings, Rebuild mean, and saved run outputs** are tied to **that user**, not to a shared global log.
+Demo cases, rubric scoring, fallback scores, score caps, and forced tie-breaks
+have been removed from the active benchmark. Exact ties remain ties.
 
-| Mechanism | What it does |
-|--|--|
-| **API key (BYOK)** | OpenRouter spend + **History folder** `artifacts/owners/<sha256(key)[:24]>/` (fingerprint only; raw key never in paths) |
-| **Client IP** | Remembers / prefills **your** key on refresh for **that IP only**. Another IP sees an empty key field |
-| **Same key** | Same History, KPIs, multi-run means, Custom Case gold |
-| **Different key** | Cannot see another user’s prompts, outputs, scores, or means |
+Full scoring contract: [benchmark/SCORING.md](benchmark/SCORING.md).
 
-**How to use the key:**
+## Models and claims
 
-1. Paste your OpenRouter key in the **welcome popup** → **Save / update key** (or sidebar).  
-2. Same PC/IP → field comes **pre-filled** (••••).  
-3. Different IP → empty field (cannot spend your credits).  
-4. Do **not** put `OPENROUTER_API_KEY` in Streamlit Cloud **Secrets** (shared wallet for every visitor). BYOK in the UI is correct.
+Cloud candidates are exact API routes pinned in
+[benchmark/models.yaml](benchmark/models.yaml):
 
-### What ships on GitHub vs what stays on your machine
+- `openai/gpt-5.5`
+- `anthropic/claude-sonnet-5`
+- `google/gemini-3.5-flash`
 
-| On GitHub (public) | Local only (gitignored · **never** published) |
-|--|--|
-| App / benchmark code, teaching demo cases, scoring docs | `artifacts/` — **your** prompts, model outputs, judge scores, multi-run means, KPIs |
-| Install + **download scripts** for GGUFs | `models/*.gguf` — weights fetched from Hugging Face onto **your** disk |
-| | `.env`, API keys, `.case_snapshots.json` |
+These are OpenRouter API comparisons. They are not claims about the consumer
+ChatGPT, Claude, or Gemini free web tiers.
 
-Cloning the repo does **not** include anyone else’s History or GGUF weights. Each user builds an empty private History after their first runs.
+The primary judge is `deepseek/deepseek-r1`. The anomaly verifier is
+`anthropic/claude-sonnet-5`. Requested and routed model/provider metadata are
+stored when OpenRouter supplies them.
 
----
+Local candidates are loaded from gitignored GGUF files through the QVAC SDK
+sidecar:
 
-## Models (live 9-model grid)
+- Gemma 2 2B IT Q4
+- Llama 3.2 3B Instruct Q4
+- Phi-3.5 Mini Instruct Q4
+- MedPsy 1.7B Q4, 4B Q4, and 4B Q8
 
-Pinned in [`benchmark/models.yaml`](benchmark/models.yaml) + [`benchmark/qvac_variants.py`](benchmark/qvac_variants.py).
+Latency and throughput are descriptive operational metrics; they are not
+hardware-normalized comparisons between cloud and local execution.
 
-**Band A — cloud (OpenRouter $):**
+## Statistics and reproducibility
 
-| Role | OpenRouter ID |
-|--|--|
-| ChatGPT Instant | `openai/gpt-5.5` |
-| Claude Sonnet 5 | `anthropic/claude-sonnet-5` |
-| Gemini Flash | `google/gemini-3.5-flash` |
+Each artifact uses schema v2 and includes:
 
-**Band B — open Q4 GGUFs on-device** (same QVAC sidecar · $0 inference · prompt stays local):
+- immutable cohort hash;
+- case/reference and model configuration;
+- scoring and prompt versions;
+- requested/routed model metadata;
+- blind map and protocol track;
+- git/config/prompt/scoring hashes where available;
+- per-candidate validity status and failure reason;
+- requested, valid, and failed observation counts.
 
-| Role | GGUF under `models/` |
-|--|--|
-| Gemma 2 2B IT | `gemma-2-2b-it-Q4_K_M.gguf` |
-| Llama 3.2 3B | `Llama-3.2-3B-Instruct-Q4_K_M.gguf` |
-| Phi-3.5 mini | `Phi-3.5-mini-instruct-Q4_K_M.gguf` |
+Aggregate ranking is withheld until every model has the same minimum five valid
+observations in one cohort. N=5 is explicitly exploratory. The dashboard reports
+sample SD, median, and IQR as repeatability signals for that exact
+case/reference—not general clinical validity.
 
-**QVAC MedPsy — on-device** (same sidecar):
+## Privacy and hosted persistence
 
-| Role | GGUF |
-|--|--|
-| MedPsy-1.7B Q4 | `medpsy-1.7b-q4_k_m-imat.gguf` |
-| MedPsy-4B Q4 (default) | `medpsy-4b-q4_k_m-imat.gguf` |
-| MedPsy-4B Q8 | `medpsy-4b-q8_0.gguf` |
+The app no longer stores raw keys in an IP-address vault and never copies a
+visitor key into process-global environment state.
 
-| Role | Runtime |
-|--|--|
-| Judge (blind) | `deepseek/deepseek-r1` (cloud) |
+- Local mode: key and data are scoped to the current session/local workspace.
+- Hosted mode: configure Supabase Auth, apply
+  `supabase/migrations/202607270001_secure_benchmark.sql`, and provide a Fernet
+  `APP_ENCRYPTION_KEY`.
+- Supabase Row Level Security restricts rows to `auth.uid()`.
+- API keys and full artifacts (case, reference, answers, judgments) are encrypted
+  before storage.
+- Files under `artifacts/`, `.env`, secrets, and GGUF weights are gitignored.
 
-**Live grid:** **3× QVAC** on (default) = **3 cloud + 3 local peers + 3 MedPsy (9)**. Toggle off = only MedPsy-4B Q4 (7).  
-**Only local ×N** = 6 on-device GGUFs, no cloud collect (judge $ only).  
-**Recommended:** Multi / Only local with **N = 5–30** for stable means (per-model **Runs** column can differ if you repeat local more than cloud).
+See [.env.example](.env.example) for deployment variables. Keep the encryption
+key in the hosting secret manager, never in git.
 
----
+## Install and run
 
-## Optional: download the **complete** local package
-
-GGUF weights are **not** stored in git (GitHub size limits). Anyone can still get a **full offline model pack** from Hugging Face with one command (~**14 GB**: 3 MedPsy + Gemma + Llama + Phi).
-
-```bash
-# After clone — full on-device grid
-./install.sh --full-models
-# or later:
-./scripts/download_all_ggufs.sh
-```
-
-| Install mode | What you get | Size |
-|--|--|--|
-| `./install.sh` (default) | Python + sidecar + **MedPsy-4B Q4 only** | ~2.5 GB |
-| `./install.sh --full-models` | Above + **all 3 MedPsy + 3 Band B peers** | ~14 GB |
-| `./scripts/download_local_peers.sh` | Band B only | ~6 GB |
-| `./scripts/download_medpsy_gguf.sh` | One MedPsy quant (see env vars) | varies |
-
-Details: [`models/README.md`](models/README.md).  
-Downloading GGUFs does **not** copy or overwrite private History under `artifacts/`.
-
----
-
-## Scoring (LLM judge)
-
-Full write-up: **[benchmark/SCORING.md](benchmark/SCORING.md)**.
-
-**In short:**
-
-1. DeepSeek R1 scores each section blind (Candidate 1/2/…).  
-2. Host computes a **linear** section score (judge’s raw number is ignored):
-
-   Gold: `100 × (0.50·alignment + 0.30·quality + 0.20·stem_spec)`;  
-   Rubric: `100 × (0.30·must + 0.20·acceptable + 0.40·quality + 0.10·stem_spec)` → **cap 96.5**
-
-3. **Ranking %** = weighted mean of sections (case weights; diagnosis/safety usually heaviest).  
-4. Candidates get **distinct** accuracies (tie-break: safety → quality → stem → diagnosis).
-
-| Parameter (gold) | Weight | Meaning |
-|-----------|--------|---------|
-| **alignment** | 50% | Semantic closeness to gold thesis |
-| **quality** | 30% | Clinical judgment — not writing style |
-| **stem_spec** | 20% | Case-specific anchors |
-
-**Rebuild mean across N runs** (UI, $0 API) rescores **your** saved artifacts (3 / 5 / 10 / 20 / 30) with this formula. Tables/charts show only the **current 9 models**, with a **Runs** column (how many scored passes that model/version contributed).
-
----
-
-## Clone & run (local)
+Requirements: Python 3.9+, Node.js 22.17+, and OpenSSL 3 on macOS for the local
+sidecar.
 
 ```bash
 git clone https://github.com/FrancescoAloe91/qvac-vs-cloud-llms-health-test.git
 cd qvac-vs-cloud-llms-health-test
 
-# Lightweight (~2.5 GB) OR full pack (~14 GB)
-chmod +x install.sh && ./install.sh
-# ./install.sh --full-models
+chmod +x install.sh
+./install.sh                 # MedPsy 4B Q4
+# ./install.sh --full-models # all local GGUFs
 
-# edit .env → OPENROUTER_API_KEY=sk-or-v1-…  (full key: https://openrouter.ai/keys)
-
-# Terminal A — QVAC sidecar
+# Terminal A
 cd sidecar && npm start
 
-# Terminal B — dashboard
-source .venv/bin/activate && streamlit run app.py
-# → http://localhost:8501
+# Terminal B
+source .venv/bin/activate
+streamlit run app.py
 ```
 
-**Needs:** Python 3.10+, Node.js ≥ 22.17, network for Hugging Face downloads.  
-**macOS:** OpenSSL 3 via `scripts/setup_qvac_sidecar.sh`.  
-**Windows:** `install.ps1`, then sidecar + `streamlit run app.py`.
+Application dependencies are fully pinned with hashes in `requirements.txt`.
+Tests use `requirements-dev.txt`. Edit `requirements.in` /
+`requirements-dev.in`, then regenerate locks with `pip-compile`; do not hand-edit
+the lock files.
 
-### Typical session
-
-1. Paste **your** OpenRouter key (welcome / sidebar) — unlocks private History for **this key**  
-2. **Custom Case** or **Demo Case 1 / 2** + optional gold  
-3. Cost estimate under Single / Multi / QVAC-only / Only local  
-4. Confirm spend → live panels + KPIs  
-5. During DeepSeek judging: **live board** (see below)  
-6. Ranking + matrix; files under `artifacts/owners/<your-fingerprint>/`  
-7. **Rebuild mean** (offline) · KPI popup  
-8. Sidebar **History** → only runs saved with **this** key  
-
-### Live judging board (during a run)
-
-While DeepSeek R1 scores answers (pipelined with collect), the judge panel shows:
-
-| Panel | Behaviour |
-|--|--|
-| **Left — Judge queue (FIFO)** | Fixed **collect order**. Rows do not reorder; a finished model only **colors** and shows its %. |
-| **Right — Provisional ranking + histogram** | **Dynamic**: scored models sort high→low and **slide** as each judge returns. `Prov. N` = provisional place until all finish. Latest score gets a short highlight glow. |
-
-Progress bar = judge count only. The old repeated text log (`⏳ judging…` / `✅ score…`) under the board was removed — status lives in the FIFO table + histogram.
-
-**Note:** editing app files while a run is open can trigger Streamlit’s “File change” rerun and **abort** an in-flight judge (UI may freeze mid-model). Use **STOP** / refresh, then re-run; do not wait on a frozen last model with 0% CPU / no OpenRouter traffic.
-
-**CLI** (same private folder when `OPENROUTER_API_KEY` is set):
+The CLI is also gold-only:
 
 ```bash
 python -m benchmark list-cases
-python -m benchmark dry-run --case caseA --n 1
-python -m benchmark run --case caseA --n 3
+python -m benchmark dry-run --case caseC --stem-file case.txt --gold-file gold.json
+python -m benchmark run --case caseC --stem-file case.txt --gold-file gold.json --n 5
 ```
 
----
+`gold.json` must be the confirmed five-section contract emitted by the UI or an
+equivalent schema-valid file.
 
-## Streamlit Cloud (shared demo URL)
+## Live judging UI
 
-Deploy from `main` / `app.py` — see **[DEPLOY.md](DEPLOY.md)**.
+- Left: FIFO collect order. Rows never reorder.
+- Right: dynamic provisional claim-correctness histogram.
+- Completed technical failures display `N/A · technical`.
+- Repeated text logs were removed to avoid duplicating the queue state.
+- Responsive rules stack the board and review cards on narrow screens and force
+  long labels/claims to wrap instead of overlap.
 
-- Visitors bring **their own** OpenRouter key (BYOK).  
-- Key remembered per **visitor IP**; History / KPIs per **key fingerprint**.  
-- QVAC sidecar **cannot** run on Streamlit Cloud — use a local install for on-device GGUFs.
+## Verification
 
-Live: https://francescoaloe91-qvac-vs-cloud-llms-health-test-app-wihxyd.streamlit.app  
+Offline checks never call a paid API:
 
-Pushing to `main` redeploys the cloud app.
+```bash
+python -m compileall -q app.py benchmark lib tests
+pytest -q
+node --check sidecar/qvac_server.mjs
+```
 
----
+GitHub Actions runs these checks, installs hashed dependencies, uses `npm ci`,
+runs `npm audit --omit=dev --audit-level=high`, and verifies that private/runtime
+files are not tracked.
 
 ## Project layout
 
-```
-app.py                      # Automated Benchmark (Streamlit entry)
-lib/benchmark_multi_ui.py   # Live judging board (FIFO + provisional histogram)
-assets/dashboard.css        # Dashboard + live-board styles
-benchmark/                  # cases, OpenRouter, judge, runner, CLI
-benchmark/workspace.py      # per-API-key private artifact folders
-benchmark/models.yaml       # cloud model IDs
-benchmark/cases/            # teaching demos + custom case ids
-sidecar/                    # QVAC SDK HTTP bridge (npm; no node_modules in git)
-models/                     # GGUFs downloaded locally (gitignored)
-artifacts/                  # gitignored — owners/<fingerprint>/ per key
-scripts/download_all_ggufs.sh
-scripts/download_local_peers.sh
-scripts/download_medpsy_gguf.sh
-install.sh / install.ps1
+```text
+app.py                         Streamlit app
+benchmark/gold.py              extraction validation + cohort identity
+benchmark/judge.py             evidence validation, N/A semantics, verifier
+benchmark/scoring.py           deterministic balanced claim scoring
+benchmark/report.py            atomic artifacts + homogeneous statistics
+benchmark/cases/caseC.json     only active case template
+lib/secure_account_store.py    Supabase Auth/RLS encrypted persistence
+supabase/migrations/           hosted storage schema and policies
+sidecar/qvac_server.mjs        QVAC SDK bridge and track sampling
+tests/                         offline methodology/runtime tests
 ```

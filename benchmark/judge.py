@@ -9,17 +9,16 @@ from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from typing import Any, Callable, Dict, List, Optional
 
 from benchmark import openrouter
-from benchmark.prompts import judge_system, judge_user, use_gold_ground_truth
+from benchmark.gold import load_confirmed_gold
+from benchmark.run_control import is_cancelled
+from benchmark.prompts import judge_system, judge_user
 from benchmark.schema import Case, CandidateAnswer, JudgeResult, QuestionScore
 from benchmark.scoring import (
-    ITEM_SCORE_CAP,
     WEIGHTED_CAP,
-    ensure_unique_accuracies,
-    linear_item_score,
+    claim_correctness_score,
+    evidence_discipline_score,
+    graded_clinical_score,
     scoring_legend,
-    semantic_item_score,
-    soft_alignment_from_checklist,
-    stem_specificity,
 )
 
 
@@ -95,136 +94,250 @@ def _as_pos_int(value: Any, default: int = 1) -> int:
     return max(1, min(n, 24))
 
 
+def _evidence_normalized(text: str) -> str:
+    """Normalize whitespace/case and presentation-only Markdown markers."""
+    without_markdown = re.sub(r"[*_`#]+", "", text or "")
+    return re.sub(r"\s+", " ", without_markdown.strip()).casefold()
+
+
+def _evidence_quote_present(quote: str, answer_norm: str) -> bool:
+    normalized = _evidence_normalized(quote)
+    if normalized and normalized in answer_norm:
+        return True
+    # Judges occasionally combine two exact, non-contiguous bullet sentences
+    # into one quote. Accept only when every substantial sentence is verbatim.
+    chunks = [
+        _evidence_normalized(chunk)
+        for chunk in re.split(r"(?<=[.!?])\s+", quote or "")
+        if len(_evidence_normalized(chunk)) >= 12
+    ]
+    return len(chunks) >= 2 and all(chunk in answer_norm for chunk in chunks)
+
+
 def _score_from_judge_item(
     case: Case,
     item: Dict[str, Any],
     *,
     answer_text: str,
-    gold_mode: bool = False,
+    gold_reference: str,
 ) -> QuestionScore:
     qid = str(item.get("question_id", ""))
-    qdef = next((q for q in case.questions if q.id == qid), None)
+    gold = load_confirmed_gold(gold_reference)
+    if qid not in gold.sections:
+        raise ValueError(f"Unknown question_id: {qid}")
+    reference_claims = gold.sections[qid].claims
+    reference_ids = {claim.id for claim in reference_claims}
 
-    err_raw = item.get("errors")
-    if isinstance(err_raw, list):
-        raw_errors = [str(e) for e in err_raw]
-    elif err_raw is None or err_raw == "":
-        raw_errors = []
-    else:
-        raw_errors = [str(err_raw)]
-    rationale = str(item.get("rationale") or "")
-    evidence = str(item.get("evidence") or "")
-    spec = stem_specificity(case, answer_text)
-
-    try:
-        quality = float(item.get("quality"))
-    except (TypeError, ValueError):
-        quality = None
-
-    # --- GOLD: semantic alignment (no checklist atomization) ---
-    if gold_mode:
-        alignment = None
-        try:
-            if item.get("alignment") is not None:
-                alignment = float(item.get("alignment"))
-        except (TypeError, ValueError):
-            alignment = None
-
-        # Fallback for older judge JSON that only had m/a counts
-        if alignment is None and quality is not None:
+    assessments_raw = item.get("claim_assessments")
+    if isinstance(assessments_raw, list):
+        answer_norm = _evidence_normalized(answer_text)
+        coverage_by_id: Dict[str, float] = {}
+        evidence_rows: List[Dict[str, Any]] = []
+        for row in assessments_raw:
+            if not isinstance(row, dict):
+                raise ValueError("Invalid claim_assessments object")
+            claim_id = str(row.get("reference_claim_id") or "")
+            if claim_id not in reference_ids or claim_id in coverage_by_id:
+                raise ValueError("Unknown or duplicate graded reference claim id")
             try:
-                m_hit = int(item.get("m_hit"))
-                a_hit = int(item.get("a_hit"))
-            except (TypeError, ValueError):
-                m_hit = a_hit = None
-            if m_hit is not None and a_hit is not None:
-                alignment = soft_alignment_from_checklist(
-                    m_hit=m_hit,
-                    m_total=_as_pos_int(item.get("m_total"), 1),
-                    a_hit=a_hit,
-                    a_total=_as_pos_int(item.get("a_total"), 1),
-                    quality=quality,
+                coverage = min(max(float(row.get("coverage")), 0.0), 1.0)
+            except (TypeError, ValueError) as exc:
+                raise ValueError("Claim coverage must be a 0-1 number") from exc
+            quotes_raw = row.get("candidate_quotes")
+            if not isinstance(quotes_raw, list):
+                raise ValueError("candidate_quotes must be a list")
+            quotes = [str(value).strip() for value in quotes_raw if str(value).strip()]
+            if coverage > 0 and not quotes:
+                raise ValueError("Nonzero claim coverage requires candidate evidence")
+            if any(not _evidence_quote_present(quote, answer_norm) for quote in quotes):
+                raise ValueError("Judge evidence quote is not present in candidate answer")
+            coverage_by_id[claim_id] = coverage
+            evidence_rows.append(
+                {
+                    "reference_claim_id": claim_id,
+                    "coverage": coverage,
+                    "candidate_quotes": quotes,
+                    "rationale": str(row.get("rationale") or ""),
+                }
+            )
+        if set(coverage_by_id) != reference_ids:
+            raise ValueError(f"Judge did not grade every reference claim for {qid}")
+
+        additions_raw = item.get("additional_claims")
+        if not isinstance(additions_raw, list):
+            raise ValueError("additional_claims must be a list")
+        additions: List[Dict[str, Any]] = []
+        allowed_classes = {
+            "helpful",
+            "neutral",
+            "unsupported",
+            "contradictory",
+            "dangerous",
+        }
+        for row in additions_raw:
+            if not isinstance(row, dict):
+                raise ValueError("Invalid additional_claims object")
+            quote = str(row.get("candidate_quote") or "").strip()
+            classification = str(row.get("classification") or "").strip().lower()
+            if not quote or not _evidence_quote_present(quote, answer_norm):
+                raise ValueError(
+                    "Added-content quote is not present in candidate answer"
                 )
-
-        if alignment is None or quality is None:
+            if classification not in allowed_classes:
+                raise ValueError("Invalid added-content classification")
             try:
-                fallback = float(item.get("score", 0))
-            except (TypeError, ValueError):
-                fallback = 0.0
-            score = round(min(max(fallback, 0.0), min(92.0, ITEM_SCORE_CAP)), 2)
-            raw_errors = list(raw_errors) + ["schema_fallback"]
-            rationale = (
-                f"schema_fallback≤{score} spec={spec:.2f} | {rationale}"
-            ).strip(" |")
-        else:
-            quality = min(float(quality), 0.92)
-            alignment = min(max(float(alignment), 0.0), 1.0)
-            score = semantic_item_score(
-                alignment=alignment,
-                quality=quality,
-                specificity=spec,
+                severity = min(max(float(row.get("severity")), 0.0), 1.0)
+            except (TypeError, ValueError) as exc:
+                raise ValueError("Added-content severity must be a 0-1 number") from exc
+            additions.append(
+                {
+                    "candidate_quote": quote,
+                    "classification": classification,
+                    "severity": severity,
+                    "rationale": str(row.get("rationale") or ""),
+                }
             )
-            rationale = (
-                f"align={alignment:.2f} quality={quality:.2f} "
-                f"spec={spec:.2f} → {score}"
-                + (f" | {rationale}" if rationale else "")
-            )
-    else:
-        # --- RUBRIC: checklist + quality (quality-weighted) ---
-        m_rub = len(qdef.rubric.must_include) if qdef else 0
-        a_rub = len(qdef.rubric.acceptable) if qdef else 0
-        m_total = m_rub if m_rub > 0 else _as_pos_int(item.get("m_total"), 1)
-        a_total = a_rub if a_rub > 0 else _as_pos_int(item.get("a_total"), 1)
-        m_total = max(m_total, 1)
-        a_total = max(a_total, 1)
 
         try:
-            m_hit = int(item.get("m_hit"))
-        except (TypeError, ValueError):
-            m_hit = None
-        try:
-            a_hit = int(item.get("a_hit"))
-        except (TypeError, ValueError):
-            a_hit = None
-
-        if m_hit is None or a_hit is None or quality is None:
-            try:
-                fallback = float(item.get("score", 0))
-            except (TypeError, ValueError):
-                fallback = 0.0
-            score = round(min(max(fallback, 0.0), min(92.0, ITEM_SCORE_CAP)), 2)
-            raw_errors = list(raw_errors) + ["schema_fallback"]
-            rationale = (
-                f"schema_fallback≤{score} spec={spec:.2f} | {rationale}"
-            ).strip(" |")
-        else:
-            quality = min(float(quality), 0.92)
-            score = linear_item_score(
-                m_hit=m_hit,
-                m_total=m_total,
-                a_hit=a_hit,
-                a_total=a_total,
-                quality=quality,
-                specificity=spec,
-            )
-            rationale = (
-                f"m={m_hit}/{m_total} a={a_hit}/{a_total} "
-                f"quality={quality:.2f} spec={spec:.2f} → {score}"
+            quality = min(max(float(item.get("quality")), 0.0), 1.0)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("quality must be a 0-1 number") from exc
+        weighted_total = sum(1.5 if claim.critical else 1.0 for claim in reference_claims)
+        coverage = sum(
+            coverage_by_id[claim.id] * (1.5 if claim.critical else 1.0)
+            for claim in reference_claims
+        ) / max(weighted_total, 1.0)
+        discipline = evidence_discipline_score(
+            additions,
+            total_reference=len(reference_claims),
+        )
+        score = graded_clinical_score(
+            coverage=coverage,
+            quality=quality,
+            discipline=discipline,
+        )
+        unsupported = [
+            str(row.get("rationale") or row["candidate_quote"])
+            for row in additions
+            if row["classification"] == "unsupported"
+        ]
+        contradictions = [
+            str(row.get("rationale") or row["candidate_quote"])
+            for row in additions
+            if row["classification"] in {"contradictory", "dangerous"}
+        ]
+        err_raw = item.get("errors")
+        raw_errors = [str(value) for value in err_raw] if isinstance(err_raw, list) else []
+        rationale = str(item.get("rationale") or "")
+        matched = [
+            claim_id for claim_id, value in coverage_by_id.items() if value >= 0.75
+        ]
+        missed = [
+            claim_id for claim_id, value in coverage_by_id.items() if value <= 0.25
+        ]
+        return QuestionScore(
+            question_id=qid,
+            score=score,
+            rationale=(
+                f"graded={score:.2f} coverage={coverage:.4f} "
+                f"quality={quality:.4f} discipline={discipline:.4f}"
                 + (f" | {rationale}" if rationale else "")
-            )
+            ),
+            evidence=json.dumps(evidence_rows, ensure_ascii=False),
+            errors=raw_errors,
+            matched_claim_ids=matched,
+            missed_claim_ids=missed,
+            unsupported_claims=unsupported,
+            contradictions=contradictions,
+            claim_coverage=coverage_by_id,
+            added_content=additions,
+            precision=discipline,
+            recall=round(coverage, 4),
+            quality=quality,
+        )
 
-    trap_hints = ("must_not", "safety trap", "nitrate", "lithium without", "ignored")
-    if any(any(h in e.lower() for h in trap_hints) for e in raw_errors):
-        if qdef and qdef.kind in ("safety", "diagnosis") and score > 20:
-            score = min(score, 20.0)
-            rationale += " | must_not/safety cap≤20"
+    def _strings(value: Any, *, field: str) -> List[str]:
+        if not isinstance(value, list):
+            raise ValueError(f"{field} must be a list")
+        return [str(v) for v in value]
+
+    matched = _strings(item.get("matched_claim_ids"), field="matched_claim_ids")
+    missed = _strings(item.get("missed_claim_ids"), field="missed_claim_ids")
+    if set(matched) - reference_ids or set(missed) - reference_ids:
+        raise ValueError(f"Judge returned unknown claim ids for {qid}")
+    if set(matched) & set(missed):
+        raise ValueError(f"Claim both matched and missed for {qid}")
+    if set(matched) | set(missed) != reference_ids:
+        raise ValueError(f"Judge did not classify every reference claim for {qid}")
+
+    evidence_raw = item.get("evidence")
+    if not isinstance(evidence_raw, list):
+        raise ValueError("evidence must be a list")
+    answer_norm = _evidence_normalized(answer_text)
+    evidence_by_id: Dict[str, str] = {}
+    for ev in evidence_raw:
+        if not isinstance(ev, dict):
+            raise ValueError("Invalid evidence object")
+        claim_id = str(ev.get("reference_claim_id") or "")
+        quote = str(ev.get("candidate_quote") or "").strip()
+        if claim_id not in reference_ids or not quote:
+            raise ValueError("Invalid evidence claim or quote")
+        if not _evidence_quote_present(quote, answer_norm):
+            raise ValueError("Judge evidence quote is not present in candidate answer")
+        evidence_by_id[claim_id] = quote
+    if any(claim_id not in evidence_by_id for claim_id in matched):
+        raise ValueError("Every matched claim requires candidate evidence")
+
+    def _claim_objects(field: str) -> tuple[List[str], List[str]]:
+        value = item.get(field)
+        if not isinstance(value, list):
+            raise ValueError(f"{field} must be a list")
+        labels: List[str] = []
+        quotes: List[str] = []
+        for row in value:
+            if not isinstance(row, dict):
+                raise ValueError(f"Invalid {field} object")
+            quote = str(row.get("candidate_quote") or "").strip()
+            if not quote or not _evidence_quote_present(quote, answer_norm):
+                raise ValueError(f"{field} quote is not present in candidate answer")
+            quotes.append(quote)
+            labels.append(str(row.get("reason") or quote))
+        return labels, quotes
+
+    unsupported, _ = _claim_objects("unsupported_claims")
+    contradictions, _ = _claim_objects("contradictions")
+    try:
+        quality = min(max(float(item.get("quality")), 0.0), 1.0)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("quality must be a 0-1 number") from exc
+    score, precision, recall = claim_correctness_score(
+        matched=len(matched),
+        total_reference=len(reference_ids),
+        unsupported=len(unsupported),
+        contradictions=len(contradictions),
+        quality=quality,
+    )
+    err_raw = item.get("errors")
+    raw_errors = [str(v) for v in err_raw] if isinstance(err_raw, list) else []
+    rationale = str(item.get("rationale") or "")
 
     return QuestionScore(
         question_id=qid,
         score=float(score),
-        rationale=rationale,
-        evidence=evidence,
+        rationale=(
+            f"balanced={score:.2f} coverage={recall:.4f} "
+            f"quality={quality:.4f} precision={precision:.4f}"
+            + (f" | {rationale}" if rationale else "")
+        ),
+        evidence=json.dumps(evidence_raw, ensure_ascii=False),
         errors=raw_errors,
+        matched_claim_ids=matched,
+        missed_claim_ids=missed,
+        unsupported_claims=unsupported,
+        contradictions=contradictions,
+        precision=precision,
+        recall=recall,
+        quality=quality,
     )
 
 
@@ -236,12 +349,36 @@ def _zero_judgment(
     meta,
     raw: str = "",
 ) -> JudgeResult:
+    """Create an invalid/N/A observation.
+
+    Internal section values remain numeric for schema compatibility, but `status`
+    prevents them from entering rankings or statistics.
+    """
+    lower = rationale.lower()
+    if "candidate error" in lower:
+        status = "collect_failed"
+        marker = "candidate_error"
+    elif "partial candidate" in lower:
+        status = "candidate_partial"
+        marker = "candidate_partial"
+    elif "empty answer" in lower:
+        status = "candidate_empty"
+        marker = "empty_answer"
+    elif "timeout" in lower:
+        status = "timed_out"
+        marker = "judge_error"
+    elif "schema" in lower or "json" in lower:
+        status = "judge_schema_invalid"
+        marker = "judge_retry_failed"
+    else:
+        status = "judge_transport_failed"
+        marker = "judge_error"
     zeros = [
         QuestionScore(
             question_id=q.id,
             score=0.0,
             rationale=rationale,
-            errors=["candidate_error" if "Candidate" in rationale else "judge_error"],
+            errors=[marker],
         )
         for q in case.questions
     ]
@@ -253,6 +390,8 @@ def _zero_judgment(
         judge_model=judge_model,
         judge_meta=meta,
         raw_judge_json=raw,
+        status=status,
+        failure_reason=rationale,
     )
 
 
@@ -261,6 +400,14 @@ def _candidate_has_answer(candidate: CandidateAnswer) -> bool:
     if raw:
         return True
     return any((v or "").strip() for v in (candidate.answers or {}).values())
+
+
+def _candidate_missing_sections(case: Case, candidate: CandidateAnswer) -> List[str]:
+    return [
+        q.id
+        for q in case.questions
+        if not ((candidate.answers or {}).get(q.id) or "").strip()
+    ]
 
 
 def judgment_flags(j: JudgeResult) -> List[str]:
@@ -279,10 +426,13 @@ def judgment_flags(j: JudgeResult) -> List[str]:
 
 
 def is_failed_judgment(j: JudgeResult) -> bool:
-    """True when accuracy 0 is not a fair clinical grade (transport / empty / crash)."""
+    """True when this observation is technical N/A, not a clinical grade."""
+    if j.status != "valid":
+        return True
     markers = {
         "judge_error",
         "candidate_error",
+        "candidate_partial",
         "judge_retry_failed",
         "empty_answer",
         "judge_exception",
@@ -335,8 +485,11 @@ def judge_candidate(
     judge_model: str,
     temperature: float = 0.0,
     gold_reference: str = "",
+    api_key: Optional[str] = None,
+    verifier_model: str = "",
+    allow_verifier: bool = True,
 ) -> JudgeResult:
-    gold_mode = use_gold_ground_truth(gold_reference)
+    load_confirmed_gold(gold_reference)  # validate before any paid request
     messages = [
         {"role": "system", "content": judge_system()},
         {
@@ -347,7 +500,7 @@ def judge_candidate(
         },
     ]
     raw, meta = "", None
-    data: Dict[str, Any] = {}
+    last_validation_error = ""
     for attempt in range(2):
         raw, meta = openrouter.chat(
             judge_model,
@@ -357,6 +510,7 @@ def judge_candidate(
             response_format={"type": "json_object"},
             max_attempts=3 if attempt == 0 else 2,
             timeout=240.0,
+            api_key=api_key,
         )
         if meta.error:
             if attempt == 0 and openrouter.is_retryable_error(meta.error):
@@ -373,59 +527,86 @@ def judge_candidate(
         if not isinstance(data, dict):
             data = {}
         qs = data.get("question_scores") or []
-        if isinstance(qs, list) and qs:
-            break
-        if attempt == 0:
-            # Empty / unusable JSON after a paid call — one extra attempt
-            continue
-        z = _zero_judgment(
-            case,
-            candidate,
-            judge_model,
-            "Judge retry failed: empty or unusable JSON",
-            meta,
-            raw=raw or "",
-        )
-        for qs_row in z.question_scores:
-            qs_row.errors = ["judge_retry_failed"]
-        return z
+        try:
+            if not isinstance(qs, list) or not qs:
+                raise ValueError("empty or unusable JSON")
+            q_scores: List[QuestionScore] = []
+            for item in qs:
+                if not isinstance(item, dict):
+                    raise ValueError("question_scores contains a non-object")
+                if not isinstance(item.get("claim_assessments"), list):
+                    raise ValueError("graded claim_assessments schema is required")
+                qid = str(item.get("question_id", ""))
+                answer = (
+                    (candidate.answers or {}).get(qid)
+                    or candidate.raw_response
+                    or ""
+                )
+                q_scores.append(
+                    _score_from_judge_item(
+                        case,
+                        item,
+                        answer_text=answer,
+                        gold_reference=gold_reference,
+                    )
+                )
+            required = {q.id for q in case.questions}
+            have = {score.question_id for score in q_scores}
+            if have != required or len(q_scores) != len(required):
+                raise ValueError(
+                    f"section mismatch: expected {sorted(required)}, got {sorted(have)}"
+                )
+            assert meta is not None
+            return JudgeResult(
+                blind_id=candidate.blind_id,
+                candidate_key=candidate.candidate_key,
+                question_scores=q_scores,
+                weighted_accuracy=_weighted_accuracy(case, q_scores),
+                judge_model=judge_model,
+                judge_meta=meta,
+                raw_judge_json=raw,
+                status="valid",
+            )
+        except (TypeError, ValueError, AttributeError) as exc:
+            last_validation_error = str(exc)
+            if attempt == 0:
+                messages = messages + [
+                    {
+                        "role": "user",
+                        "content": (
+                            "Deterministic validation rejected the previous output: "
+                            f"{last_validation_error}. Return a complete corrected JSON "
+                            "object and never invent evidence."
+                        ),
+                    }
+                ]
+                continue
 
     assert meta is not None
-    q_scores: List[QuestionScore] = []
-    for item in data.get("question_scores") or []:
-        if not isinstance(item, dict):
-            continue
-        try:
-            qid = str(item.get("question_id", ""))
-            ans = (candidate.answers or {}).get(qid) or candidate.raw_response or ""
-            q_scores.append(
-                _score_from_judge_item(
-                    case, item, answer_text=ans, gold_mode=gold_mode
-                )
+    if allow_verifier and verifier_model and verifier_model != judge_model:
+        verified = judge_candidate(
+            case,
+            candidate,
+            verifier_model,
+            temperature=0.0,
+            gold_reference=gold_reference,
+            api_key=api_key,
+            verifier_model="",
+            allow_verifier=False,
+        )
+        if verified.status == "valid":
+            verified.failure_reason = (
+                f"Primary judge invalid ({judge_model}: {last_validation_error}); "
+                f"accepted independent verifier {verifier_model}"
             )
-        except (TypeError, ValueError, AttributeError):
-            continue
-
-    have = {s.question_id for s in q_scores}
-    for q in case.questions:
-        if q.id not in have:
-            q_scores.append(
-                QuestionScore(
-                    question_id=q.id,
-                    score=0.0,
-                    rationale="Missing from judge JSON",
-                    errors=["missing_score"],
-                )
-            )
-
-    return JudgeResult(
-        blind_id=candidate.blind_id,
-        candidate_key=candidate.candidate_key,
-        question_scores=q_scores,
-        weighted_accuracy=_weighted_accuracy(case, q_scores),
-        judge_model=judge_model,
-        judge_meta=meta,
-        raw_judge_json=raw,
+            return verified
+    return _zero_judgment(
+        case,
+        candidate,
+        judge_model,
+        f"Judge schema/evidence invalid after retry: {last_validation_error}",
+        meta,
+        raw=raw or "",
     )
 
 
@@ -446,6 +627,9 @@ class PipelinedJudge:
         max_workers: Optional[int] = None,
         expected_total: int = 0,
         on_progress: Optional[Callable[[Dict[str, Any]], None]] = None,
+        api_key: Optional[str] = None,
+        verifier_model: str = "",
+        run_scope: str = "",
     ) -> None:
         self.case = case
         self.judge_model = judge_model
@@ -453,6 +637,9 @@ class PipelinedJudge:
         self.gold_reference = gold_reference or ""
         self.expected_total = max(0, int(expected_total or 0))
         self.on_progress = on_progress
+        self.api_key = api_key
+        self.verifier_model = verifier_model
+        self.run_scope = run_scope or f"pipe-{id(self)}"
         n_hint = max(self.expected_total, 1)
         self._workers = max(1, min(n_hint, max_workers or n_hint))
         self._pool = ThreadPoolExecutor(max_workers=self._workers)
@@ -516,17 +703,41 @@ class PipelinedJudge:
             for qs in z.question_scores:
                 qs.errors = ["empty_answer"]
             return z
+        if (cand.meta.finish_reason or "").lower() in {
+            "length",
+            "max_tokens",
+            "content_filter",
+        }:
+            return _zero_judgment(
+                self.case,
+                cand,
+                self.judge_model,
+                f"Partial candidate output — finish_reason={cand.meta.finish_reason}",
+                cand.meta,
+            )
+        missing = _candidate_missing_sections(self.case, cand)
+        if missing:
+            return _zero_judgment(
+                self.case,
+                cand,
+                self.judge_model,
+                "Partial candidate output — missing required sections: "
+                + ", ".join(missing),
+                cand.meta,
+            )
         return judge_candidate(
             self.case,
             cand,
             self.judge_model,
             temperature=self.temperature,
             gold_reference=self.gold_reference,
+            api_key=self.api_key,
+            verifier_model=self.verifier_model,
         )
 
     def submit(self, cand: CandidateAnswer) -> bool:
         """Queue one candidate for DeepSeek. Returns False if duplicate / closed."""
-        if self._shutdown:
+        if self._shutdown or is_cancelled(self.run_scope):
             return False
         if any(c.candidate_key == cand.candidate_key for c in self._candidates):
             return False
@@ -585,8 +796,11 @@ class PipelinedJudge:
         return n
 
     def finalize(self) -> List[JudgeResult]:
-        """Wait for outstanding judges, serial retry, unique accuracies, shutdown."""
+        """Wait for judges, retry recoverable failures, or stop cooperatively."""
         while self._pending:
+            if is_cancelled(self.run_scope):
+                self.close(cancel_pending=True)
+                break
             done, _ = wait(
                 tuple(self._pending.keys()),
                 return_when=FIRST_COMPLETED,
@@ -602,6 +816,8 @@ class PipelinedJudge:
         ]
         cand_by = {c.candidate_key: c for c in self._candidates}
         for j in list(ordered):
+            if is_cancelled(self.run_scope):
+                break
             if not _is_rejudgable_failure(j):
                 continue
             cand = cand_by.get(j.candidate_key)
@@ -623,6 +839,8 @@ class PipelinedJudge:
                 self.judge_model,
                 temperature=self.temperature,
                 gold_reference=self.gold_reference,
+                api_key=self.api_key,
+                verifier_model=self.verifier_model,
             )
             self._by_key[j.candidate_key] = retry
             self._emit(
@@ -641,19 +859,6 @@ class PipelinedJudge:
             for c in self._candidates
             if c.candidate_key in self._by_key
         ]
-
-        fair = [j for j in ordered if not is_failed_judgment(j)]
-        failed = [j for j in ordered if is_failed_judgment(j)]
-        if fair:
-            unique_fair, _notes = ensure_unique_accuracies(self.case, fair)
-            by_u = {j.candidate_key: j for j in unique_fair}
-            for j in failed:
-                by_u[j.candidate_key] = j
-            ordered = [
-                by_u[c.candidate_key]
-                for c in self._candidates
-                if c.candidate_key in by_u
-            ]
 
         self.close(cancel_pending=False)
         return ordered
@@ -677,32 +882,36 @@ class PipelinedJudge:
         _unregister_active_pipe(self)
 
 
-# Process-wide registry so sidebar STOP can best-effort cancel in-flight judges.
-_ACTIVE_PIPES: List["PipelinedJudge"] = []
+# Registry is partitioned by an unguessable Streamlit session/run scope.
+_ACTIVE_PIPES: Dict[str, List["PipelinedJudge"]] = {}
 
 
 def _register_active_pipe(pipe: "PipelinedJudge") -> None:
-    if pipe not in _ACTIVE_PIPES:
-        _ACTIVE_PIPES.append(pipe)
+    bucket = _ACTIVE_PIPES.setdefault(pipe.run_scope, [])
+    if pipe not in bucket:
+        bucket.append(pipe)
 
 
 def _unregister_active_pipe(pipe: "PipelinedJudge") -> None:
+    bucket = _ACTIVE_PIPES.get(pipe.run_scope, [])
     try:
-        _ACTIVE_PIPES.remove(pipe)
+        bucket.remove(pipe)
     except ValueError:
         pass
+    if not bucket:
+        _ACTIVE_PIPES.pop(pipe.run_scope, None)
 
 
-def abandon_all_pipelines() -> int:
-    """Best-effort cancel of all live PipelinedJudge pools (STOP / hard abort)."""
+def abandon_all_pipelines(run_scope: str) -> int:
+    """Cancel only pipelines owned by one session/run scope."""
     n = 0
-    for pipe in list(_ACTIVE_PIPES):
+    for pipe in list(_ACTIVE_PIPES.get(run_scope, [])):
         try:
             pipe.close(cancel_pending=True)
             n += 1
         except Exception:
             pass
-    _ACTIVE_PIPES.clear()
+    _ACTIVE_PIPES.pop(run_scope, None)
     return n
 
 
@@ -715,8 +924,11 @@ def judge_candidates_parallel(
     gold_reference: str = "",
     max_workers: Optional[int] = None,
     on_progress: Optional[Callable[[Dict[str, Any]], None]] = None,
+    api_key: Optional[str] = None,
+    verifier_model: str = "",
+    run_scope: str = "",
 ) -> List[JudgeResult]:
-    """Score all candidates in parallel; enforce unique accuracies.
+    """Score all candidates in parallel while preserving legitimate ties.
 
     ``on_progress`` receives dicts:
       {"phase": "queued"|"done"|"retry"|"retry_done", "key", "label", "done", "total", ...}
@@ -731,6 +943,9 @@ def judge_candidates_parallel(
         max_workers=max_workers or len(candidates),
         expected_total=len(candidates),
         on_progress=on_progress,
+        api_key=api_key,
+        verifier_model=verifier_model,
+        run_scope=run_scope,
     )
     for c in candidates:
         pipe.submit(c)
@@ -746,8 +961,8 @@ def build_ranking(judgments: List[JudgeResult]) -> List[Dict[str, Any]]:
             {
                 "key": j.candidate_key,
                 "blind_id": j.blind_id,
-                "accuracy": j.weighted_accuracy,
-                "status": "error" if failed else "ok",
+                "accuracy": None if failed else j.weighted_accuracy,
+                "status": "n/a" if failed else "ok",
                 "status_note": ", ".join(flags[:4]) if flags else "",
             }
         )
@@ -757,8 +972,17 @@ def build_ranking(judgments: List[JudgeResult]) -> List[Dict[str, Any]]:
             -float(r["accuracy"] or 0),
         )
     )
+    last_score: Optional[float] = None
+    last_rank = 0
     for i, row in enumerate(rows, 1):
-        row["rank"] = i
+        if row["status"] != "ok":
+            row["rank"] = None
+            continue
+        score = float(row["accuracy"])
+        if last_score is None or score != last_score:
+            last_rank = i
+            last_score = score
+        row["rank"] = last_rank
     return rows
 
 
@@ -789,7 +1013,7 @@ def explain_run_scores(case: Case, judgments: List[JudgeResult]) -> Dict[str, An
         **legend,
         "per_model": per_model,
         "note": (
-            f"100% is not used (item cap {ITEM_SCORE_CAP}, run cap {WEIGHTED_CAP}). "
-            "Ties broken by safety → quality → stem specificity → diagnosis."
+            "Correctness balances graded coverage, clinical quality, and discipline. "
+            "Technical failures are N/A; exact ties keep the same rank."
         ),
     }

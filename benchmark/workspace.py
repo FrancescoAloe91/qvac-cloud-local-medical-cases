@@ -38,9 +38,9 @@ def current_api_key() -> str:
     return normalize_api_key(os.environ.get("OPENROUTER_API_KEY"))
 
 
-def owner_id_for_current_key() -> str:
+def owner_id_for_current_key(key: str | None = None) -> str:
     """Workspace id for the active key, or LOCAL_NO_KEY_ID when none."""
-    fp = owner_fingerprint(current_api_key())
+    fp = owner_fingerprint(key if key is not None else current_api_key())
     return fp or LOCAL_NO_KEY_ID
 
 
@@ -111,17 +111,9 @@ def claim_unscoped_root_artifacts(dest: Path | None = None) -> int:
 
 
 def maybe_claim_legacy_root_artifacts() -> int:
-    """Compatibility wrapper — claim root runs into the current key workspace."""
-    if not owner_fingerprint(current_api_key()):
-        # Local machine without key: still recover history into _local_no_key
-        # so Custom Case Rebuild mean works after refresh.
-        if not ARTIFACTS_DIR.is_dir():
-            return 0
-        root_files = [
-            p
-            for p in ARTIFACTS_DIR.glob("*.json")
-            if p.is_file() and "-summary-" not in p.name
-        ]
-        if not root_files:
-            return 0
-    return claim_unscoped_root_artifacts()
+    """Automatic ownership claims are intentionally disabled.
+
+    Legacy files have no trustworthy owner metadata. They remain local/read-only
+    until an explicit migration tool is run by the operator.
+    """
+    return 0

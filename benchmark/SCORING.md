@@ -1,80 +1,61 @@
-# How ranking is calculated
+# Gold-only scoring contract
 
-Blind judge (DeepSeek R1) scores each model **per clinical section**  
-(`diagnosis`, `tests`, `urgency`, `safety`, `plan`).  
-The host then applies a **fixed linear formula** (the judge’s raw `score` field is ignored).
+Every active run requires an anonymized real/custom case and a user-supplied
+reference covering diagnosis, tests, urgency, safety, and plan. Demo/rubric
+scoring is not part of the active benchmark.
 
-The judge grades **clinical meaning** (same thesis, same intent, synonyms / near-equivalents).  
-It does **not** atomize the gold into keyword checklists or demand exact acronyms.
+The cloud extractor may reorganize free-form text, but each atomic claim needs a
+verbatim source quote. The reference is frozen and organized automatically
+before model collection starts.
 
-## Ground truth: gold vs rubric
+## Primary correctness
 
-| Situation | Ground truth | Effect |
-|-----------|--------------|--------|
-| **Confirmed diagnosis / gold pasted** (Custom Case required; Demo 1/2 optional) | **GOLD wins** | Judge returns continuous `alignment` (semantic closeness to the gold thesis for that section) + `quality`. Empty teaching rubrics are ignored. |
-| **No gold pasted** (typical Demo Case 1/2) | **Rubric wins** | Soft checklist on `must_include[]` / `acceptable[]` by meaning + `quality`. |
+The blind judge grades coverage of every frozen reference claim continuously
+from 0 to 1 and classifies additional content as helpful, neutral, unsupported,
+contradictory, or dangerous. Every nonzero coverage decision and every added
+claim needs verbatim candidate evidence. The host rejects invalid evidence
+rather than converting it to a low score.
 
-Near-perfect alignment can land in the **80–95%** band; a literal **100%** is still unused (caps below).
+For each section:
 
----
+```text
+graded coverage = critical-weighted mean of per-claim coverage values (0..1)
+discipline starts at 1.0
+helpful or neutral addition penalty = 0
+unsupported penalty = 0.25 × severity
+contradictory penalty = 0.75 × severity
+dangerous penalty = 1.00 × severity
+discipline = max(0, 1 - total penalty / number of reference claims)
+section correctness = 50% coverage + 35% clinical quality + 15% discipline
+```
 
-## Gold mode — per-section score (0–96.5)
+The final primary correctness is the predeclared weighted mean:
 
-\[
-\text{section} = 100 \times (0.50\cdot A + 0.30\cdot Q + 0.20\cdot S)
-\]
+- Diagnosis: 30%
+- Safety: 25%
+- Plan: 20%
+- Tests: 15%
+- Urgency: 10%
 
-then **capped at 96.5**.
+Coverage remains the largest component. Clinical quality rewards coherence,
+prioritization, usefulness, and appropriate caution. Discipline discourages
+speculation and harm without penalizing reasonable additions. Nothing is
+converted to a binary pass/fail merely for convenience.
 
-| Symbol | Weight | What it is |
-|--------|--------|------------|
-| **A** (alignment) | **50%** | Holistic semantic closeness to the gold for that section: diagnosis framing, workup intent, advice, next steps. Near-equivalent formulations count. |
-| **Q** (quality) | **30%** | Clinical judgment quality (correct primary call, coherent plan, case-specific, not dangerous). |
-| **S** (stem specificity) | **20%** | Host-computed: case anchors from stem/gold present in the answer (anti-generic-paste). |
+## Failure semantics and ranking
 
-### What the judge must evaluate (gold)
+Collection errors, empty/partial output, timeout, judge transport failure,
+invalid schema, invalid evidence, and cancellation are technical N/A
+observations. They are excluded from means and reported with reason counts.
+There is no synthetic zero, fallback score, score cap, or forced tie-break.
+Exact ties keep the same rank.
 
-1. **Diagnosis / framing** — same clinical thesis?  
-2. **Tests / workup** — same investigative intent?  
-3. **Urgency** — same acuity band / red-flag thinking?  
-4. **Safety / advice** — same traps avoided?  
-5. **Plan / next steps** — same stepwise strategy?
+## Repeated runs
 
-Partial credit when the idea is right but incomplete. Wrong primary frame (e.g. fibromyalgia-as-primary) still hurts hard.
+An aggregate ranking is withheld until every compared model has the same minimum
+of five valid observations from one immutable cohort. A cohort hash includes the
+case, confirmed reference, model configuration, prompt/scoring versions, and
+protocol track. Controlled and native-default runs never mix.
 
----
-
-## Rubric mode — per-section score (0–96.5)
-
-\[
-\text{section} = 100 \times (0.30\cdot m + 0.20\cdot a + 0.40\cdot Q + 0.10\cdot S)
-\]
-
-| Symbol | Weight | What it is |
-|--------|--------|------------|
-| **m** (must) | **30%** | Fraction of rubric must concepts by **meaning** |
-| **a** (acceptable) | **20%** | Extra completeness |
-| **Q** (quality) | **40%** | Clinical judgment |
-| **S** (stem specificity) | **10%** | Case-specific anchors |
-
-Quality dominates over checklist so near-synonyms are not punished.
-
----
-
-## Final accuracy (ranking %)
-
-\[
-\text{Accuracy} = \sum_i w_i \cdot \text{section}_i
-\]
-
-`w_i` = fixed **section weights** in the case JSON. Run total capped near **97%**.  
-Ties broken by **safety → mean quality → stem specificity → diagnosis**.
-
----
-
-## What you see in the dashboard
-
-1. **Ranking** = Accuracy %  
-2. **Scores by clinical dimension** = each section’s score  
-3. **Why these scores** = weights / strongest–weakest sections  
-4. Rationale lines show `align=… quality=… spec=… → score` (gold) or `m=… a=… quality=… → score` (rubric)
+N=5 is labelled exploratory. Sample SD, median, and IQR describe repeatability
+for that exact case/reference; they do not establish general clinical validity.

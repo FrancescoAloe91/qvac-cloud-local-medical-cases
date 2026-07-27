@@ -1,0 +1,8 @@
+streamlit
+plotly
+pandas
+pydantic
+PyYAML
+huggingface_hub
+supabase
+cryptography

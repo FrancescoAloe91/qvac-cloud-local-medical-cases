@@ -188,6 +188,8 @@ def _parse_chat_payload(
         if isinstance(choices, list) and choices:
             first = choices[0] if isinstance(choices[0], dict) else {}
             content = _message_text(first.get("message") or {})
+        else:
+            first = {}
         if on_token and content:
             on_token(content)
 
@@ -203,8 +205,12 @@ def _parse_chat_payload(
             else None
         )
         return content.strip(), ModelCallMeta(
-            model=model,
+            model=str(data.get("model") or model),
             provider="openrouter",
+            requested_model=model,
+            routed_model=str(data.get("model") or ""),
+            routed_provider=str(data.get("provider") or ""),
+            finish_reason=str(first.get("finish_reason") or ""),
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
             cost_usd=round(float(cost), 6),
@@ -232,8 +238,9 @@ def _chat_once(
     timeout: float,
     on_token: TokenCallback,
     display_label: str,
+    api_key: Optional[str] = None,
 ) -> Tuple[str, ModelCallMeta]:
-    key = openrouter_api_key()
+    key = (api_key or "").strip() or openrouter_api_key()
     payload: Dict[str, Any] = {
         "model": model,
         "messages": messages,
@@ -280,6 +287,7 @@ def chat(
     on_token: TokenCallback = None,
     display_label: str = "",
     max_attempts: int = 3,
+    api_key: Optional[str] = None,
 ) -> Tuple[str, ModelCallMeta]:
     """Non-streaming chat (used by judge). Retries truncated / empty transport."""
     last: Tuple[str, ModelCallMeta] = ("", ModelCallMeta(model=model, provider="openrouter"))
@@ -294,6 +302,7 @@ def chat(
             timeout=timeout,
             on_token=on_token,
             display_label=display_label,
+            api_key=api_key,
         )
         last = (text, meta)
         ok_text = bool((text or "").strip())
@@ -320,9 +329,10 @@ def chat_stream(
     timeout: float = 180.0,
     on_token: TokenCallback = None,
     display_label: str = "",
+    api_key: Optional[str] = None,
 ) -> Tuple[str, ModelCallMeta]:
     """Streaming chat — measures TTFT and TPS from first token."""
-    key = openrouter_api_key()
+    key = (api_key or "").strip() or openrouter_api_key()
     payload: Dict[str, Any] = {
         "model": model,
         "messages": messages,
@@ -340,6 +350,9 @@ def chat_stream(
     prompt_tokens = 0
     completion_tokens = 0
     cost: Optional[float] = None
+    routed_model = ""
+    routed_provider = ""
+    finish_reason = ""
 
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
@@ -357,6 +370,10 @@ def chat_stream(
                     continue
                 if not isinstance(data, dict):
                     continue
+                if data.get("model"):
+                    routed_model = str(data.get("model"))
+                if data.get("provider"):
+                    routed_provider = str(data.get("provider"))
                 if data.get("error"):
                     err = data["error"]
                     msg = err if isinstance(err, str) else json.dumps(err)[:400]
@@ -373,6 +390,8 @@ def chat_stream(
                 if not isinstance(choices, list) or not choices:
                     continue
                 first = choices[0] if isinstance(choices[0], dict) else {}
+                if first.get("finish_reason"):
+                    finish_reason = str(first.get("finish_reason"))
                 delta = _content_to_text((first.get("delta") or {}).get("content"))
                 if not delta:
                     delta = _message_text(first.get("message") or {})
@@ -405,8 +424,12 @@ def chat_stream(
             )
         )
         return text, ModelCallMeta(
-            model=model,
+            model=routed_model or model,
             provider="openrouter",
+            requested_model=model,
+            routed_model=routed_model,
+            routed_provider=routed_provider,
+            finish_reason=finish_reason,
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
             cost_usd=round(float(cost or 0), 6),

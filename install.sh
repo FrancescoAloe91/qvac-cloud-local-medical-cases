@@ -45,8 +45,7 @@ fi
 # shellcheck disable=SC1091
 source .venv/bin/activate
 pip install -q --upgrade pip
-pip install -q -r requirements.txt
-pip install -q huggingface_hub
+pip install -q --require-hashes -r requirements.txt
 
 if [[ ! -f .env ]]; then
   cp -n .env.example .env 2>/dev/null || cp .env.example .env

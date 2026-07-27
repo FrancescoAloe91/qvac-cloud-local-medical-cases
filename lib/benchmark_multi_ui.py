@@ -214,7 +214,7 @@ def live_judging_board_html(
             if failed:
                 acc_col = (
                     "<span class='rank-live-acc-num fail'>—</span>"
-                    "<span class='rank-live-note'>failed</span>"
+                    "<span class='rank-live-note'>N/A · technical</span>"
                 )
             else:
                 acc_col = (
@@ -276,7 +276,7 @@ def live_judging_board_html(
         f'<div class="rank-live-col table-col">'
         f'<div class="rank-live-hist-cap">Judge queue · FIFO</div>{table}</div>'
         f'<div class="rank-live-col hist-col">'
-        f'<div class="rank-live-hist-cap">Provisional ranking · histogram</div>{hist}</div>'
+        f'<div class="rank-live-hist-cap">Provisional claim correctness</div>{hist}</div>'
         f"</div></div>"
     )
 
@@ -332,7 +332,7 @@ def _run_summary_body_html(ranking: List[Dict[str, Any]]) -> str:
         '<div class="rank-live-grid run-summary-grid">'
         f'<div class="rank-live-col table-col">{_ranking_table_html(rows)}</div>'
         f'<div class="rank-live-col hist-col">'
-        f'<div class="rank-live-hist-cap">Accuracy % · histogram</div>'
+        f'<div class="rank-live-hist-cap">Primary correctness %</div>'
         f"{accuracy_histogram_html(rows)}"
         f"</div></div>"
     )

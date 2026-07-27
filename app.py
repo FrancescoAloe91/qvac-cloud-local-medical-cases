@@ -17,7 +17,16 @@ if str(ROOT) not in os.sys.path:
     os.sys.path.insert(0, str(ROOT))
 
 from benchmark.config import is_usable_openrouter_key, load_models_config
-from benchmark.cases_loader import case_display_name, list_case_ids, load_case
+from benchmark import openrouter
+from benchmark.cases_loader import case_display_name, load_case
+from benchmark.gold import (
+    SCORING_VERSION,
+    cohort_id as build_cohort_id,
+    confirmed_gold as build_confirmed_gold,
+    extract_with_chat,
+    gold_json,
+    load_confirmed_gold,
+)
 from benchmark.workspace import (
     assert_path_in_workspace,
     maybe_claim_legacy_root_artifacts,
@@ -25,19 +34,12 @@ from benchmark.workspace import (
     scoped_artifacts_dir,
     short_owner_label,
 )
-from lib.ip_key_store import (
-    client_identity,
-    identity_caption,
-    is_streamlit_cloud,
-    load_key_for_client,
-    save_key_for_client,
-)
+from lib.deployment import is_local_install, is_streamlit_cloud
 from benchmark.judge import (
     PipelinedJudge,
     abandon_all_pipelines,
     build_ranking,
     explain_run_scores,
-    judge_candidates_parallel,
     systemic_judge_failure,
 )
 from benchmark.qvac_bridge import available as qvac_available
@@ -58,18 +60,16 @@ from benchmark.report import (
     artifacts_for_case,
     list_run_artifacts,
     load_artifact,
-    print_summary_table,
     rebuild_multi_from_history,
     reliability_caption,
     summarize_runs,
     write_artifact,
     write_summary,
 )
+from benchmark.run_control import cancel_run, finish_run, is_cancelled, start_run
 from benchmark.runner import (
-    dry_run_estimate,
     estimate_cost_breakdown,
     iter_collect_live,
-    iter_collect_parallel,
     prepare_run,
 )
 from benchmark.schema import CandidateAnswer, Case, ModelCallMeta, RunArtifact, utc_now_iso
@@ -86,6 +86,16 @@ from lib.model_labels import (
     filter_current_roster_rows,
     name_and_version,
     rerank_rows,
+)
+from lib.secure_account_store import (
+    AccountSession,
+    configured as account_store_configured,
+    list_artifacts as account_list_artifacts,
+    load_openrouter_key as account_load_key,
+    save_artifact as account_save_artifact,
+    save_openrouter_key as account_save_key,
+    sign_in as account_sign_in,
+    sign_up as account_sign_up,
 )
 import streamlit.components.v1 as components
 
@@ -129,6 +139,14 @@ st.set_page_config(
 )
 
 LIVE_BOX_H = 168
+if "_run_scope" not in st.session_state:
+    st.session_state["_run_scope"] = uuid.uuid4().hex
+
+
+def _finish_scope_run() -> None:
+    run_id = st.session_state.pop("_active_run_id", None)
+    if run_id:
+        finish_run(st.session_state["_run_scope"], str(run_id))
 
 # --- .env ---
 env_path = ROOT / ".env"
@@ -149,8 +167,8 @@ if env_path.exists():
 
 # --- API key: never share one Streamlit Secret / .env key with every visitor ---
 # On Streamlit Cloud, strip any process-wide OPENROUTER_API_KEY so visitor B cannot
-# silently spend visitor A's credits. Prefill comes only from the per-IP vault
-# (or this browser session after Save). Local .env still helps the developer machine.
+# silently spend visitor A's credits. Prefill comes only from an authenticated
+# encrypted account vault (or this browser session). Local .env remains developer-only.
 _server_env_key = (os.environ.get("OPENROUTER_API_KEY") or "").strip()
 if is_streamlit_cloud():
     os.environ.pop("OPENROUTER_API_KEY", None)
@@ -217,48 +235,39 @@ qvac_up = qvac_reachable()  # sidecar HTTP up (may still be loading)
 # Sidecar up is enough — /load can hot-swap GGUFs before generate.
 qvac_run_ok = bool(qvac_ok or qvac_up)
 
-# Per-IP remembered key (same PC/network → prefilled; other IP → empty)
-_ip_saved_key = load_key_for_client()
-if _ip_saved_key and is_usable_openrouter_key(_ip_saved_key):
-    if not st.session_state.get("or_key_session"):
-        st.session_state["or_key_session"] = _ip_saved_key
-elif (
+# Restore only from an authenticated encrypted vault; never from IP identity.
+_account_session = st.session_state.get("account_session")
+if (
+    account_store_configured()
+    and isinstance(_account_session, AccountSession)
+    and not st.session_state.get("_account_key_loaded")
+):
+    try:
+        _account_key = account_load_key(_account_session)
+        if is_usable_openrouter_key(_account_key):
+            st.session_state["or_key_session"] = _account_key
+        st.session_state["_account_key_loaded"] = True
+    except Exception as _account_exc:
+        st.session_state["_account_key_error"] = str(_account_exc)
+
+# Local install may prefill .env; cloud keys must come from the authenticated/session vault.
+if (
     (not is_streamlit_cloud())
-    and client_identity() == "local"
+    and is_local_install()
     and is_usable_openrouter_key(_server_env_key)
     and not st.session_state.get("or_key_session")
-    and not _ip_saved_key
 ):
-    # Local install convenience: .env prefills only on this machine (identity=local)
     st.session_state["or_key_session"] = _server_env_key
 
-_raw_key = (os.environ.get("OPENROUTER_API_KEY") or "").strip()
-# Drop unusable placeholders left in the process env
-if _raw_key and not is_usable_openrouter_key(_raw_key):
-    os.environ.pop("OPENROUTER_API_KEY", None)
-    _raw_key = ""
-has_key = is_usable_openrouter_key(_raw_key)
-if st.session_state.get("or_key_session") and is_usable_openrouter_key(
-    st.session_state["or_key_session"]
-):
-    os.environ["OPENROUTER_API_KEY"] = st.session_state["or_key_session"]
-    has_key = True
-elif st.session_state.get("or_key_session") and not is_usable_openrouter_key(
-    st.session_state["or_key_session"]
-):
+_session_key = (st.session_state.get("or_key_session") or "").strip()
+if _session_key and not is_usable_openrouter_key(_session_key):
     st.session_state.pop("or_key_session", None)
-    os.environ.pop("OPENROUTER_API_KEY", None)
-    has_key = False
-else:
-    # No session key for this visitor — do not keep a leftover process env key
-    if not has_key:
-        os.environ.pop("OPENROUTER_API_KEY", None)
+    _session_key = ""
+has_key = is_usable_openrouter_key(_session_key)
 
-# Private History: runs live under artifacts/owners/<sha256(key)[:24]>/
-# Same OpenRouter key → same history (login). Different key → empty / own runs only.
-# Always pull leftover root-level JSON (pre-owners layout) into this workspace —
-# that is where the ~6 Custom Case (caseC) runs still lived.
-WORKSPACE_DIR = scoped_artifacts_dir()
+# Local fallback workspace is explicitly scoped from this session's key. Cloud
+# account-backed persistence replaces this filesystem in configured deployments.
+WORKSPACE_DIR = scoped_artifacts_dir(_session_key)
 _moved_legacy = maybe_claim_legacy_root_artifacts()
 if _moved_legacy and not st.session_state.get("_legacy_artifacts_toast"):
     st.session_state["_legacy_artifacts_toast"] = True
@@ -271,7 +280,18 @@ if _moved_legacy and not st.session_state.get("_legacy_artifacts_toast"):
     except Exception:
         pass
 # Refresh workspace path after claim (same dir, now populated)
-WORKSPACE_DIR = scoped_artifacts_dir()
+WORKSPACE_DIR = scoped_artifacts_dir(_session_key)
+if (
+    account_store_configured()
+    and isinstance(_account_session, AccountSession)
+    and not st.session_state.get("_account_artifacts_synced")
+):
+    try:
+        for _cloud_row in account_list_artifacts(_account_session, limit=200):
+            write_artifact(_cloud_row["artifact"], WORKSPACE_DIR)
+        st.session_state["_account_artifacts_synced"] = True
+    except Exception as _sync_exc:
+        st.session_state["_account_sync_error"] = str(_sync_exc)
 
 # --- Startup dialogs: every browser refresh starts a new session → show again ---
 # Within one session: API key popup first, then QVAC status (good for screen recordings).
@@ -298,7 +318,8 @@ def _hard_abort_run(*, flash: bool = True) -> None:
     """Kill pending/active run state and wipe live panels. History on disk stays."""
     # Best-effort: cancel queued DeepSeek futures (in-flight HTTP may still finish).
     try:
-        abandon_all_pipelines()
+        cancel_run(st.session_state["_run_scope"])
+        abandon_all_pipelines(st.session_state["_run_scope"])
     except Exception:
         pass
     for k in (
@@ -323,6 +344,7 @@ def _hard_abort_run(*, flash: bool = True) -> None:
         "inline_run_kind",
     ):
         st.session_state.pop(k, None)
+    _finish_scope_run()
     st.session_state["benchmark_running"] = False
     if flash:
         st.session_state["run_aborted_flash"] = True
@@ -391,26 +413,23 @@ Check <code>curl -s http://127.0.0.1:8787/health</code>.</p>
 """
     rank_body = """
 <h3>How ranking works</h3>
-<p>Blind DeepSeek R1 · host recomputes scores · literal 100% is not used ·
-four models always get distinct accuracies.</p>
-<pre>Gold: 100 × (0.50·alignment + 0.30·quality + 0.20·stem)
-Rubric: 100 × (0.30·must + 0.20·acceptable + 0.40·quality + 0.10·stem)
-→ capped at 96.5
-Accuracy = Σ (section_weight × section_score) · run cap ≈ 97%</pre>
+<p>Blind DeepSeek R1 · strict evidence validation · Claude verifier on anomalies ·
+technical failures are N/A and exact ties remain ties.</p>
+<pre>Section score = 50% graded coverage + 35% clinical quality + 15% discipline
+coverage = continuous 0..1 for every frozen reference claim
+helpful / neutral additions = no penalty
+unsupported / contradictory / dangerous = proportional discipline penalty
+Final correctness = 30% diagnosis + 25% safety + 20% plan + 15% tests + 10% urgency</pre>
 <table>
-  <tr><th>Param (gold)</th><th>Wt</th><th>Meaning</th></tr>
-  <tr><td>alignment</td><td>50%</td><td>Semantic closeness to gold thesis (synonyms / near-equivalents OK)</td></tr>
-  <tr><td>quality</td><td>30%</td><td>Clinical judgment 0–1 (not writing style)</td></tr>
-  <tr><td>stem</td><td>20%</td><td>Case-specific anchors (anti-generic paste)</td></tr>
+  <tr><th>Signal</th><th>Role</th><th>Meaning</th></tr>
+  <tr><td>Graded coverage</td><td>50%</td><td>Partial and complete semantic coverage on a 0..1 continuum</td></tr>
+  <tr><td>Clinical quality</td><td>35%</td><td>Coherence, prioritization, usefulness and caution</td></tr>
+  <tr><td>Discipline</td><td>15%</td><td>Only genuinely unsupported, contradictory or dangerous additions reduce it</td></tr>
+  <tr><td>Failure status</td><td>N/A</td><td>Transport, timeout, malformed evidence or cancellation</td></tr>
 </table>
-<p>Judge scores <b>clinical meaning</b> — not exact keywords or acronyms.</p>
-<h3>Gold vs rubric</h3>
-<ul>
-  <li><b>GOLD pasted</b> (Custom Case required; Demo 1/2 optional) → 0–100 vs that diagnosis thesis</li>
-  <li><b>Gold empty</b> (Demo cases) → teaching rubric in the case JSON wins</li>
-</ul>
-<p>Strong answers can land ~80–95%. Tie-break: safety → quality → stem → diagnosis.
-Multi ×N / Rebuild mean: Mean ± std, CV% reliability (High / Medium / Low).</p>
+<p>Synonyms and faithful paraphrases count. Every match/contradiction must cite candidate evidence.</p>
+<p>Aggregate ranking appears only when every model has the same minimum 5 valid runs;
+N=5 remains exploratory and measures repeatability on this reference, not general clinical validity.</p>
 <p style="opacity:.8;font-size:0.8rem">This window is browser-only — opening it does <b>not</b> pause collect/judge.</p>
 """
     return (
@@ -610,21 +629,23 @@ def qvac_status_dialog(online: bool, loaded: bool):
 
 
 def _remember_openrouter_key(key: str) -> None:
-    """Activate key for this browser session and remember it for this IP only."""
+    """Activate a key in this Streamlit session; never mutate process-global env."""
     key = (key or "").strip()
     if not is_usable_openrouter_key(key):
         return
-    os.environ["OPENROUTER_API_KEY"] = key
     st.session_state["or_key_session"] = key
-    saved = save_key_for_client(key)
-    st.session_state["_ip_key_remembered"] = bool(saved)
+    account = st.session_state.get("account_session")
+    if account_store_configured() and isinstance(account, AccountSession):
+        account_save_key(account, key)
+        st.session_state["_account_key_remembered"] = True
+    else:
+        st.session_state["_account_key_remembered"] = False
 
 
 @st.dialog("OpenRouter API key", width="small")
 def key_welcome_dialog():
-    """Shown on every fresh page load — prefilled only if this IP saved a key before."""
-    # Prefer per-IP vault (survives refresh). Never prefill from a shared Cloud Secret.
-    existing = (load_key_for_client() or st.session_state.get("or_key_session") or "").strip()
+    """Shown on every fresh page load; key is isolated to this session/account."""
+    existing = (st.session_state.get("or_key_session") or "").strip()
     if existing and not is_usable_openrouter_key(existing):
         existing = ""
 
@@ -633,13 +654,52 @@ def key_welcome_dialog():
         "for cloud models + DeepSeek R1 judge. "
         "Or continue without a key to rehearse **Run QVAC only · $0** (no ranking)."
     )
-    st.caption(identity_caption())
+    account = st.session_state.get("account_session")
+    if account_store_configured() and not isinstance(account, AccountSession):
+        st.markdown("**Private account storage**")
+        email = st.text_input("Email", key="account_email")
+        password = st.text_input("Password", type="password", key="account_password")
+        auth_in, auth_up = st.columns(2)
+        with auth_in:
+            if st.button("Sign in", use_container_width=True, key="account_sign_in"):
+                try:
+                    account = account_sign_in(email, password)
+                    st.session_state["account_session"] = account
+                    st.session_state.pop("_account_key_loaded", None)
+                    st.session_state.pop("_account_artifacts_synced", None)
+                    st.rerun()
+                except Exception as exc:
+                    st.error(f"Sign-in failed: {exc}")
+        with auth_up:
+            if st.button("Create account", use_container_width=True, key="account_sign_up"):
+                try:
+                    account = account_sign_up(email, password)
+                    if account is None:
+                        st.success("Check your email, confirm the account, then sign in.")
+                    else:
+                        st.session_state["account_session"] = account
+                        st.session_state.pop("_account_key_loaded", None)
+                        st.session_state.pop("_account_artifacts_synced", None)
+                        st.rerun()
+                except Exception as exc:
+                    st.error(f"Account creation failed: {exc}")
+        st.caption(
+            "API key and benchmark artifacts are encrypted before storage; "
+            "Supabase RLS restricts every row to the authenticated user."
+        )
+    elif isinstance(account, AccountSession):
+        st.success(f"Signed in · {account.email}")
+    elif is_streamlit_cloud():
+        st.warning(
+            "Encrypted account storage is not configured on this deployment; "
+            "the key remains only in this browser session."
+        )
+    st.caption("Keys are never copied into process-global environment variables.")
     if existing:
-        st.info(f"Key remembered for this IP (hidden): `{_mask_api_key(existing)}`")
+        st.info(f"Key available for this session (hidden): `{_mask_api_key(existing)}`")
     else:
         st.caption(
-            "No key on file for this IP — field stays empty so other visitors "
-            "cannot use your OpenRouter credits."
+            "No key is active. Other sessions cannot use your OpenRouter credits."
         )
     st.caption(
         "Field below hides characters (••••). Keys with `...` placeholders get HTTP 401. "
@@ -661,7 +721,7 @@ def key_welcome_dialog():
             _advance_boot("qvac")
     with c2:
         if st.button(
-            "Use saved key",
+            "Confirm current key",
             use_container_width=True,
             disabled=not bool(existing),
             key="boot_key_keep",
@@ -669,15 +729,10 @@ def key_welcome_dialog():
             _remember_openrouter_key(existing)
             _advance_boot("qvac")
     with c3:
-        if st.button("Save / update key", type="primary", use_container_width=True, key="boot_key_save"):
+        if st.button("Use / update key", type="primary", use_container_width=True, key="boot_key_save"):
             typed = (k or "").strip()
             if is_usable_openrouter_key(typed):
                 _remember_openrouter_key(typed)
-                if not st.session_state.get("_ip_key_remembered") and is_streamlit_cloud():
-                    st.warning(
-                        "Saved for this browser session only — could not bind to an IP "
-                        "(proxy). Other visitors still start with an empty field."
-                    )
                 _advance_boot("qvac")
             elif existing and (not typed or typed == existing):
                 _remember_openrouter_key(existing)
@@ -728,6 +783,11 @@ def _render_saved_run_panel(path_str: str, *, key_prefix: str = "saved") -> None
         return
 
     when = (hist.finished_at or hist.started_at or "")[:19].replace("T", " ")
+    if hist.schema_version != "2.0" or not hist.cohort_id:
+        st.warning(
+            "Legacy experimental artifact · old rubric/semantic formula and labels. "
+            "Visible for audit only; excluded from gold-only cohort rankings."
+        )
     st.caption(
         f"{case_display_name(hist.case_id)} · run {hist.n_index} · {when} · "
         f"${hist.total_cost_usd:.4f} · `{Path(path_str).name}`"
@@ -931,7 +991,7 @@ def _reliability_table_html(ranking_mean: list) -> str:
 
 
 @st.dialog(
-    "Rebuild mean · N runs · 50/30/20 · $0",
+    "Rebuild mean · same cohort only · $0",
     width="large",
     on_dismiss=_clear_all_kpi_popups,
 )
@@ -959,7 +1019,7 @@ def history_mean_rebuild_dialog():
 
     st.success(
         f"**{case_display_name(summary.case_id)}** · mean over **N={summary.n}** runs · "
-        f"rescored **50% alignment / 30% quality / 20% stem** · "
+        f"same-cohort **evidence-linked claim correctness** · "
         f"**$0 API** (no OpenRouter / DeepSeek calls)"
     )
     st.caption(reliability_caption(summary))
@@ -978,7 +1038,7 @@ def history_mean_rebuild_dialog():
         key="hm_dlg_mean_chart",
     )
 
-    with st.expander("Per-run accuracy (after 50/30/20 rescore)", expanded=False):
+    with st.expander("Per-run primary correctness", expanded=False):
         pr_rows = []
         for pr in payload.get("per_run") or []:
             when = (pr.get("finished_at") or "")[:19].replace("T", " ")
@@ -1002,7 +1062,7 @@ def scoring_guide_dialog():
     """Wide, shallow popup: formula + parameters side-by-side (not a deep expander)."""
     st.caption(
         "Blind DeepSeek R1 · host recomputes scores · literal 100% is not used · "
-        "four models always get distinct accuracies · "
+        "exact ties remain ties · technical failures are N/A · "
         "GOLD pasted → score vs gold; empty → teaching rubric"
     )
     left, right = st.columns(2, gap="large")
@@ -1106,28 +1166,27 @@ elif not _pending_spend:
 if st.session_state.get("or_key_session") and is_usable_openrouter_key(
     st.session_state["or_key_session"]
 ):
-    os.environ["OPENROUTER_API_KEY"] = st.session_state["or_key_session"]
     has_key = True
 
 st.markdown('<p class="demo-hero">QVAC vs Cloud · Automated Benchmark</p>', unsafe_allow_html=True)
 st.markdown(
     '<p class="demo-sub">On-device MedPsy via QVAC SDK · BYOK OpenRouter · DeepSeek R1 blind judge · '
-    "semantic scoring 50/30/20 · live TTFT / TPS</p>",
+    "evidence-linked claim scoring · technical failures = N/A · live TTFT / TPS</p>",
     unsafe_allow_html=True,
 )
 st.markdown(
     """
 <div class="steps-bar">
-  <div class="step-pill"><b>Step 1</b> Pick clinical case</div>
-  <div class="step-pill"><b>Step 2</b> Confirmed diagnosis</div>
-  <div class="step-pill"><b>Step 3</b> Run all models → judge → ranking</div>
+  <div class="step-pill"><b>Step 1</b> Paste anonymized case</div>
+  <div class="step-pill"><b>Step 2</b> Extract + confirm five sections</div>
+  <div class="step-pill"><b>Step 3</b> Run one protocol cohort</div>
 </div>
 """,
     unsafe_allow_html=True,
 )
 st.caption(
-    "**Naming:** Steps 1–3 = workflow · **Custom Case** (main) or **Demo Case 1/2** · "
-    "ranking uses real model names (ChatGPT / Claude / Gemini / QVAC)."
+    "**Workflow:** anonymized case → free-form reference → automatic frozen gold · "
+    "cloud cards show exact OpenRouter API models, not consumer free-tier equivalents."
 )
 
 # Client-side guide overlays in main DOM (sidebar labels toggle via for=… — no run interrupt)
@@ -1171,12 +1230,12 @@ with st.sidebar:
         st.success("Key OK · cloud + R1")
     else:
         st.warning("No full key · Single/Multi off")
-    st.caption(identity_caption())
+    st.caption("Session/account isolated · never shared through process environment")
     key_in = st.text_input(
         "OPENROUTER_API_KEY",
         value="",
         type="password",
-        help="Full sk-or-v1-… from openrouter.ai/keys — remembered for this IP only",
+        help="Full sk-or-v1-… from openrouter.ai/keys — scoped to this session/account",
         placeholder="sk-or-v1-…",
         label_visibility="collapsed",
     )
@@ -1186,6 +1245,18 @@ with st.sidebar:
             has_key = True
         else:
             st.error("Key truncated / too short")
+    _signed_account = st.session_state.get("account_session")
+    if isinstance(_signed_account, AccountSession):
+        st.caption(f"Account · {_signed_account.email}")
+        if st.button("Sign out account", use_container_width=True):
+            for _key in (
+                "account_session",
+                "or_key_session",
+                "_account_key_loaded",
+                "_account_artifacts_synced",
+            ):
+                st.session_state.pop(_key, None)
+            st.rerun()
 
     st.markdown("**QVAC · MedPsy**")
     if qvac_up:
@@ -1236,128 +1307,65 @@ with st.sidebar:
         unsafe_allow_html=True,
     )
 
-# --- Steps 1–2 side by side (less scroll) ---
-# Internal ids stay caseA/caseB/caseC so saved History (esp. Custom = caseC) keeps working.
-CASE_PICKER = {
-    "caseC": "Custom Case · your anonymized real case (main)",
-    "caseA": "Demo Case 1 · STEMI + sildenafil (teaching)",
-    "caseB": "Demo Case 2 · Mania + CKD (teaching)",
-}
-case_ids = [c for c in ("caseC", "caseA", "caseB") if c in set(list_case_ids())]
-st.markdown('<div class="sec-label">Case</div>', unsafe_allow_html=True)
-
-
-def _on_case_change() -> None:
-    """Case picker only swaps stem/gold fields — never opens KPI popups."""
-    _clear_all_kpi_popups()
-    st.session_state.pop("show_scoring_guide", None)
-    st.session_state.pop("show_qvac_guide", None)
-    # Reset sidebar History to placeholder so it does not look "selected"
-    opts = st.session_state.get("_hist_sidebar_opts") or {}
-    placeholder = next((k for k, v in opts.items() if v is None), "— select a run —")
-    st.session_state["hist_sidebar_pick"] = placeholder
-    # Hide previous case's ranking strip until user runs again or opens History
-    st.session_state.pop("last_ranking", None)
-    st.session_state.pop("last_multi_summary", None)
-    st.session_state.pop("last_multi_paths", None)
-    st.session_state.pop("last_multi_n", None)
-    st.session_state.pop("multi_progress", None)
-    st.session_state.pop("show_last_run_costs", None)
-
-
-_default_case_idx = case_ids.index("caseC") if "caseC" in case_ids else 0
-case_id = st.selectbox(
-    "Case",
-    case_ids,
-    index=_default_case_idx,
-    format_func=lambda cid: CASE_PICKER.get(cid, cid),
-    label_visibility="collapsed",
-    key="case_pick",
-    on_change=_on_case_change,
-)
-st.caption(
-    "**Custom Case** (main) = paste symptoms (step 1) + confirmed diagnosis (step 2). "
-    "**Demo Case 1 / 2** = recall a teaching vignette + built-in rubric "
-    "(gold box can stay empty)."
-)
+# --- Gold-only real-case workflow ---
+case_id = "caseC"
 preset = load_case(case_id)
-is_custom_real = (preset.mode or "") == "custom_real"
+is_custom_real = True
+st.markdown('<div class="sec-label">Gold-only clinical case</div>', unsafe_allow_html=True)
+st.info(
+    "Paste an anonymized case and your reference answer. The benchmark measures "
+    "agreement with your reference; incorrect or incomplete input invalidates the result."
+)
 
-if is_custom_real:
-    st.warning(
-        "**Custom Case** — paste your anonymized clinical text (step 1) and confirmed "
-        "diagnosis / safety traps (step 2). No teaching answer grid. "
-        "Your previous Custom Case runs remain in History."
-    )
+if "demo_case_stem" not in st.session_state:
+    st.session_state["demo_case_stem"] = st.session_state.get("_persist_case_stem", "")
+if "demo_gold_ref" not in st.session_state:
+    st.session_state["demo_gold_ref"] = st.session_state.get("_persist_gold_ref", "")
 
-# Sync stem when case changes. Demos: prefill stem, clear gold. Custom: empty both.
-# Restore from non-widget snapshot if Streamlit dropped widget keys (spend st.stop bug).
-if "demo_case_stem" not in st.session_state and st.session_state.get("_persist_case_stem") is not None:
-    st.session_state["demo_case_stem"] = st.session_state["_persist_case_stem"]
-if "demo_gold_ref" not in st.session_state and st.session_state.get("_persist_gold_ref") is not None:
-    st.session_state["demo_gold_ref"] = st.session_state["_persist_gold_ref"]
-if st.session_state.get("_stem_case_id") != case_id:
-    st.session_state["demo_case_stem"] = preset.stem if not is_custom_real else ""
-    st.session_state["demo_gold_ref"] = ""
-    st.session_state["_stem_case_id"] = case_id
-    st.session_state.pop("_persist_case_stem", None)
-    st.session_state.pop("_persist_gold_ref", None)
-
-col_case, col_gold = st.columns([3, 2], gap="small")
+col_case, col_gold = st.columns([1, 1], gap="large")
 with col_case:
-    st.markdown('<div class="sec-label">Step 1 · Clinical case</div>', unsafe_allow_html=True)
+    st.markdown('<div class="sec-label">1 · Clinical case</div>', unsafe_allow_html=True)
     case_stem = st.text_area(
         "case",
-        height=96 if not is_custom_real else 110,
+        height=180,
         key="demo_case_stem",
         label_visibility="collapsed",
-        placeholder="Paste anonymized real case here…" if is_custom_real else "",
+        placeholder="Paste the anonymized symptoms, history, findings and context…",
         on_change=_on_case_fields_edit,
     )
+    st.caption("No names, dates of birth, addresses, IDs or other identifying data.")
 with col_gold:
     st.markdown(
-        '<div class="sec-label">Step 2 · Confirmed diagnosis'
-        + (
-            " (required · Custom Case · GOLD wins)"
-            if is_custom_real
-            else " (optional · Demo · empty = RUBRIC wins)"
-        )
-        + "</div>",
+        '<div class="sec-label">2 · Free-form reference (required)</div>',
         unsafe_allow_html=True,
     )
     gold_reference = st.text_area(
         "gold",
-        height=96 if not is_custom_real else 110,
+        height=180,
         placeholder=(
-            "Custom Case · required gold (0–100 vs this thesis):\n"
-            "PRIMARY + must-include / traps / plan cues…"
-            if is_custom_real
-            else "Optional. Leave empty → score vs teaching rubric. "
-            "Paste a confirmed diagnosis → 0–100 vs that gold (GOLD wins)."
+            "Write the confirmed/reference diagnosis, tests, urgency, safety traps "
+            "and initial plan in any order. The extractor may reorganize but cannot add facts."
         ),
         key="demo_gold_ref",
         label_visibility="collapsed",
-        disabled=False,
         on_change=_on_case_fields_edit,
     )
-    # Keep non-widget copies so spend-confirm st.stop cannot erase case/gold.
-    st.session_state["_persist_case_stem"] = st.session_state.get("demo_case_stem") or ""
-    st.session_state["_persist_gold_ref"] = st.session_state.get("demo_gold_ref") or ""
-    if is_custom_real:
-        st.caption(
-            "Custom Case: scores are **0–100 against this gold** "
-            "(rubric arrays stay empty on purpose)."
-        )
-    else:
-        st.caption(
-            "**Empty** → RUBRIC wins (must/acceptable in the demo case). "
-            "**Filled** → GOLD wins (same 0–100 scale against your diagnosis)."
-        )
+    st.caption("This is an experimental user reference, not medically certified by the app.")
 
-live_case = preset.model_copy(update={"stem": (case_stem or "").strip() or preset.stem})
-# Only user-pasted gold counts. Empty demo → rubric; Custom Case requires paste.
+st.session_state["_persist_case_stem"] = case_stem or ""
+st.session_state["_persist_gold_ref"] = gold_reference or ""
+raw_gold_fingerprint = str(hash((gold_reference or "").strip()))
+if st.session_state.get("_gold_source_fingerprint") != raw_gold_fingerprint:
+    st.session_state.pop("_confirmed_gold_json", None)
+    st.session_state.pop("_gold_sections", None)
+st.caption(
+    "No extra setup: the reference is frozen and organized automatically before "
+    "model collection starts."
+)
+
+live_case = preset.model_copy(update={"stem": (case_stem or "").strip()})
 gold_reference = (gold_reference or "").strip()
-effective_gold = gold_reference
+effective_gold = st.session_state.get("_confirmed_gold_json", "")
 
 # --- Models roster: Band A cloud + Band B local peers + MedPsy ---
 # Apply forced 3× QVAC BEFORE the toggle widget exists (Only local click → next rerun).
@@ -1374,9 +1382,33 @@ elif not st.session_state.get("_triple_qvac_default_on_v1"):
         st.session_state["_triple_qvac_default_on_v1"] = True
 
 include_qvac = bool(qvac_ok or qvac_up)
-# No cloud-only mode in the UI — on-device is always attempted when sidecar is up.
-# Special path without cloud = "Only local ×N" button (not a roster toggle).
 skip_qvac = False
+include_cloud = st.toggle(
+    "Include 3 Cloud API models · OpenAI / Claude / Gemini",
+    value=True,
+    key="include_cloud_models",
+)
+st.caption(
+    "ON = 9 models (3 Cloud + 3 local peers + 3 MedPsy). "
+    "OFF = 6 on-device models only."
+)
+with st.expander("Advanced · generation settings", expanded=False):
+    st.caption(
+        "Controlled is recommended for comparable runs. Provider defaults is a "
+        "different experiment and its results are kept separate."
+    )
+    benchmark_track = st.radio(
+        "Generation settings",
+        options=["controlled", "native_defaults"],
+        format_func=lambda value: (
+            "Controlled · same low temperature"
+            if value == "controlled"
+            else "Provider defaults · ecological"
+        ),
+        horizontal=True,
+        key="benchmark_track",
+        label_visibility="collapsed",
+    )
 n_multi = st.number_input(
     "Multi N",
     min_value=1,
@@ -1387,6 +1419,8 @@ n_multi = st.number_input(
     "1 = single pass.",
 )
 
+if not include_cloud and not st.session_state.get("benchmark_running"):
+    st.session_state.triple_qvac_toggle = True
 st.toggle(
     "3× QVAC · 1.7B / 4B Q4 / 4B Q8",
     key="triple_qvac_toggle",
@@ -1399,8 +1433,8 @@ st.toggle(
 triple_qvac = bool(st.session_state.triple_qvac_toggle) and include_qvac
 
 roster = merge_roster(
-    list(cfg.get("candidates") or []),
-    triple_qvac=triple_qvac,
+    list(cfg.get("candidates") or []) if include_cloud else [],
+    triple_qvac=triple_qvac if include_cloud else True,
     include_qvac=include_qvac,
 )
 n_models = len(roster)
@@ -1415,14 +1449,17 @@ with st.expander(
     st.code(candidate_user(live_case))
 
 st.markdown(
-    f'<div class="sec-label">Models ({n_models} on the same case'
-    f'{" · 3× QVAC · 3×3" if triple_qvac else " · 3 cloud + 3 local + MedPsy · 3+3+1"})</div>',
+    f'<div class="sec-label">Models ({n_models} on the same case · '
+    f'{"3 Cloud + 6 on-device" if include_cloud else "6 on-device · Cloud excluded"})</div>',
     unsafe_allow_html=True,
 )
 st.caption(
-    "**Band A** Instant / Sonnet 5 / Flash · cloud (OpenRouter $) · "
-    "**Band B** Gemma-2-2B / Llama-3.2-3B / Phi-3.5-mini · **on-device GGUF** "
-    "(same privacy as QVAC · download: `./scripts/download_local_peers.sh`)."
+    (
+        "**Cloud API** OpenAI / Anthropic / Google via OpenRouter ($) · "
+        if include_cloud
+        else "**Cloud API excluded** · "
+    )
+    + "**On-device** Gemma / Llama / Phi + three MedPsy GGUFs."
 )
 _chip_n = 3 if n_models >= 6 else min(3, max(1, n_models))
 chip_cols = st.columns(_chip_n)
@@ -1454,7 +1491,7 @@ bd = estimate_cost_breakdown(
     cfg,
     live_case,
     include_qvac=include_qvac,
-    gold_reference=effective_gold,
+    gold_reference=effective_gold or gold_reference,
     n=1,
     triple_qvac=triple_qvac,
 )
@@ -1462,7 +1499,7 @@ bd_multi = estimate_cost_breakdown(
     cfg,
     live_case,
     include_qvac=include_qvac,
-    gold_reference=effective_gold,
+    gold_reference=effective_gold or gold_reference,
     n=int(n_multi),
     triple_qvac=triple_qvac,
 )
@@ -1470,7 +1507,7 @@ bd_local_only = estimate_cost_breakdown(
     cfg,
     live_case,
     include_qvac=True,
-    gold_reference=effective_gold,
+    gold_reference=effective_gold or gold_reference,
     n=1,
     triple_qvac=True,
     local_only=True,
@@ -1479,7 +1516,7 @@ bd_local_only_multi = estimate_cost_breakdown(
     cfg,
     live_case,
     include_qvac=True,
-    gold_reference=effective_gold,
+    gold_reference=effective_gold or gold_reference,
     n=int(n_multi),
     triple_qvac=True,
     local_only=True,
@@ -1516,28 +1553,32 @@ def _fmt_cost_multi(breakdown: dict, n: int) -> str:
 
 
 st.markdown('<div class="sec-label">Step 3 · Run</div>', unsafe_allow_html=True)
-# Strict 2×2: each cell = button then cost line (no extra headers — keeps rows aligned).
+selected_bd = bd if include_cloud else bd_local_only
+selected_bd_multi = bd_multi if include_cloud else bd_local_only_multi
+selected_mode = "full" if include_cloud else "local_only"
+selected_scope = f"{n_models} models" if include_cloud else f"{n_models} on-device"
+selected_unavailable = not has_key or (not include_cloud and not qvac_run_ok)
 _run_r1 = st.columns(2, gap="small")
 with _run_r1[0]:
     single_clicked = st.button(
-        "Single run",
+        f"Single run · {selected_scope}",
         type="secondary",
         use_container_width=True,
-        disabled=not has_key,
+        disabled=selected_unavailable,
         help="Quick one-shot. For published-style comparison prefer Multi ×5.",
     )
-    st.markdown(_fmt_cost_single(bd), unsafe_allow_html=True)
+    st.markdown(_fmt_cost_single(selected_bd), unsafe_allow_html=True)
 with _run_r1[1]:
     multi_clicked = st.button(
-        f"Multi run ×{int(n_multi)} · recommended",
+        f"Multi run ×{int(n_multi)} · {selected_scope}",
         type="primary",
         use_container_width=True,
-        disabled=not has_key,
+        disabled=selected_unavailable,
         help="Official path: mean/median/std across N runs (default 5 for reliability).",
     )
-    st.markdown(_fmt_cost_multi(bd_multi, int(n_multi)), unsafe_allow_html=True)
+    st.markdown(_fmt_cost_multi(selected_bd_multi, int(n_multi)), unsafe_allow_html=True)
 
-_run_r2 = st.columns(2, gap="small")
+_run_r2 = st.columns([1, 1], gap="small")
 with _run_r2[0]:
     _qvac_only_label = (
         "Run 3× QVAC only · $0" if triple_qvac else "Run QVAC only · $0"
@@ -1561,28 +1602,13 @@ with _run_r2[0]:
         unsafe_allow_html=True,
     )
 with _run_r2[1]:
-    _n_lo = int(n_multi)
-    _j_lo = float((bd_local_only.get("judge") or {}).get("estimated_usd") or 0)
-    _j_lo_n = float(bd_local_only_multi.get("total_usd_for_n") or (_j_lo * _n_lo))
-    local_only_clicked = st.button(
-        f"Only local ×{_n_lo} · 6 on-device",
-        key="local_only_btn",
-        use_container_width=True,
-        disabled=not (qvac_run_ok and has_key),
-        help="Skip all cloud. Each run: 3 open GGUFs + 3 MedPsy ($0 collect). "
-        "DeepSeek starts as each GGUF finishes (overlaps next loads). "
-        "Uses Multi N · mean Acc/KPI. API = judge only.",
-    )
-    st.markdown(
-        f'<div class="cost-compact cost-multi only-local-cost run-cost-cell">'
-        f"<b>$0 collect</b> · 6 GGUFs · "
-        f"judge ~${_j_lo:.3f} × {_n_lo} → <b>~${_j_lo_n:.3f}</b></div>",
-        unsafe_allow_html=True,
+    st.info(
+        "Use the Cloud toggle above: ON compares all 9 models; OFF makes Single "
+        "and Multi run the 6 on-device models."
     )
 st.caption(
-    "**Recommended:** Multi ×5 for stable ranking / CV reliability. "
-    f"**Only local ×N** = on-device bake-off (Gemma/Llama/Phi + 3× MedPsy) repeated "
-    f"N times (set **Multi N**) · mean Acc/KPI · API = DeepSeek judge only. "
+    "**Minimum aggregate:** Multi ×5 equal valid N (exploratory repeatability). "
+    "With Cloud OFF, Multi is the on-device bake-off (Gemma/Llama/Phi + 3× MedPsy). "
     "QVAC only = MedPsy rehearsal without cloud."
 )
 
@@ -1590,33 +1616,25 @@ st.caption(
 if single_clicked:
     st.session_state["_persist_case_stem"] = st.session_state.get("demo_case_stem") or ""
     st.session_state["_persist_gold_ref"] = st.session_state.get("demo_gold_ref") or ""
-    st.session_state["pending_run"] = {"n": 1, "est": bd["total_usd"], "mode": "full"}
+    st.session_state["pending_run"] = {
+        "n": 1,
+        "est": selected_bd["total_usd"],
+        "mode": selected_mode,
+    }
     st.rerun()
 if multi_clicked:
     st.session_state["_persist_case_stem"] = st.session_state.get("demo_case_stem") or ""
     st.session_state["_persist_gold_ref"] = st.session_state.get("demo_gold_ref") or ""
     st.session_state["pending_run"] = {
         "n": int(n_multi),
-        "est": bd_multi["total_usd_for_n"],
-        "mode": "full",
+        "est": selected_bd_multi["total_usd_for_n"],
+        "mode": selected_mode,
     }
     st.rerun()
 if qvac_only_clicked:
     # Clear stale failed snapshot (e.g. old 404) so the live panels reset.
     st.session_state.pop("live_outputs", None)
     st.session_state["confirmed_run"] = {"n": 1, "est": 0.0, "mode": "qvac_only"}
-    st.rerun()
-if local_only_clicked:
-    # Force 3× QVAC on the *next* run (cannot set widget key after toggle is drawn).
-    st.session_state["_force_triple_qvac"] = True
-    st.session_state.pop("live_outputs", None)
-    st.session_state["_persist_case_stem"] = st.session_state.get("demo_case_stem") or ""
-    st.session_state["_persist_gold_ref"] = st.session_state.get("demo_gold_ref") or ""
-    st.session_state["pending_run"] = {
-        "n": int(n_multi),
-        "est": float(bd_local_only_multi.get("total_usd_for_n") or 0),
-        "mode": "local_only",
-    }
     st.rerun()
 
 # Spend confirm AFTER case/gold widgets (keeps widget keys alive).
@@ -2332,6 +2350,45 @@ if _multi_live.get("completed") is not None:
 # --- Execute confirmed run ---
 if st.session_state.get("confirmed_run"):
     run_cfg = st.session_state.pop("confirmed_run")
+    run_mode = run_cfg.get("mode") or "full"
+    if len(gold_reference) < 40:
+        st.error(
+            "Add a sufficiently detailed reference answer before running "
+            "(diagnosis, tests, urgency, safety and plan)."
+        )
+        st.stop()
+    if not effective_gold:
+        extractor_model = os.environ.get(
+            "BENCHMARK_GOLD_EXTRACTOR_MODEL", "google/gemini-3.5-flash"
+        )
+        if not is_usable_openrouter_key(st.session_state.get("or_key_session")):
+            st.error(
+                "An OpenRouter key is required to organize the reference before scoring."
+            )
+            st.stop()
+        try:
+            with st.spinner("Freezing the reference before model collection…"):
+                sections, _extract_meta = extract_with_chat(
+                    gold_reference,
+                    model=extractor_model,
+                    chat=openrouter.chat,
+                    api_key=st.session_state.get("or_key_session"),
+                )
+                contract = build_confirmed_gold(
+                    raw_text=gold_reference,
+                    sections=sections,
+                    extraction_model=extractor_model,
+                )
+            effective_gold = gold_json(contract)
+            st.session_state["_confirmed_gold_json"] = effective_gold
+            st.session_state["_gold_source_fingerprint"] = raw_gold_fingerprint
+        except Exception as exc:
+            st.error(
+                f"Automatic reference setup failed: {exc}. No model was called; retry once."
+            )
+            st.stop()
+    _active_run_token = start_run(st.session_state["_run_scope"])
+    st.session_state["_active_run_id"] = _active_run_token.run_id
     st.session_state["benchmark_running"] = True
     # No leftover dialogs from a previous run (avoids double-dialog crash at the end)
     for _dlg_k in (
@@ -2345,7 +2402,6 @@ if st.session_state.get("confirmed_run"):
         st.session_state.pop(_dlg_k, None)
     st.session_state.pop("pending_run", None)  # never re-open confirm mid-run
     n_runs = int(run_cfg["n"])
-    run_mode = run_cfg.get("mode") or "full"
     t_run0 = time.time()
     _paint_run_timer(
         timer_slot,
@@ -2364,9 +2420,11 @@ if st.session_state.get("confirmed_run"):
 
     def _abort_run(msg: str, *, phase: str = "Stopped · fix the issue and retry") -> None:
         try:
-            abandon_all_pipelines()
+            cancel_run(st.session_state["_run_scope"])
+            abandon_all_pipelines(st.session_state["_run_scope"])
         except Exception:
             pass
+        _finish_scope_run()
         st.session_state["benchmark_running"] = False
         elapsed = int(round(time.time() - t_run0))
         _paint_run_timer(
@@ -2389,8 +2447,10 @@ if st.session_state.get("confirmed_run"):
         _local_bakeoff = run_mode == "local_only"
         if not case_stem.strip():
             _abort_run("Clinical case is empty.")
-        if is_custom_real and not gold_reference.strip():
-            _abort_run("Custom Case requires confirmed diagnosis in step 2.")
+        if not effective_gold.strip():
+            _abort_run(
+                "Automatic reference setup is unavailable; retry the run."
+            )
         if not qvac_run_ok:
             _abort_run(
                 "QVAC SDK sidecar offline — start it: `cd sidecar && npm start` "
@@ -2488,6 +2548,9 @@ if st.session_state.get("confirmed_run"):
             )
 
         for run_i in range(1, n_local + 1):
+            if is_cancelled(st.session_state["_run_scope"]):
+                st.warning("Run cancelled before the next iteration.")
+                break
             t_run_i0 = _time_live.time()
             if n_local > 1:
                 phase_slot.markdown(
@@ -2657,7 +2720,7 @@ if st.session_state.get("confirmed_run"):
                 pipe.poll()
                 if pipe.submitted:
                     phase_slot.markdown(
-                        f'<div class="phase-banner">'
+                        '<div class="phase-banner">'
                         + (
                             f"Only local · Run {run_i}/{n_local} · "
                             if n_local > 1 and _local_bakeoff
@@ -2678,9 +2741,17 @@ if st.session_state.get("confirmed_run"):
                     expected_total=len(local_slots),
                     max_workers=min(6, max(2, len(local_slots))),
                     on_progress=_on_lo_progress,
+                    api_key=st.session_state.get("or_key_session"),
+                    verifier_model=str(
+                        ((cfg.get("judge") or {}) if isinstance(cfg, dict) else {}).get(
+                            "verifier_model"
+                        )
+                        or ""
+                    ),
+                    run_scope=st.session_state["_run_scope"],
                 )
                 judge_status_ctx = st.status(
-                    f"DeepSeek R1 · pipelined with collect · "
+                    "DeepSeek R1 · pipelined with collect · "
                     + (
                         f"run {run_i}/{n_local}"
                         if n_local > 1
@@ -2703,7 +2774,14 @@ if st.session_state.get("confirmed_run"):
                     unsafe_allow_html=True,
                 )
                 if gguf:
-                    loaded = qvac_load_model(gguf)
+                    loaded = qvac_load_model(
+                        gguf,
+                        sampling=(
+                            {"temp": 0.2, "top_k": 20, "top_p": 0.95}
+                            if benchmark_track == "controlled"
+                            else {}
+                        ),
+                    )
                     if not loaded.get("ok"):
                         err_load = str(loaded.get("error") or "load failed")[:80]
                         status_boxes[qkey].markdown(
@@ -2993,7 +3071,7 @@ if st.session_state.get("confirmed_run"):
                     pipe.set_expected_total(pipe.submitted)
                     if pipe.submitted:
                         phase_slot.markdown(
-                            f'<div class="phase-banner">'
+                            '<div class="phase-banner">'
                             + (
                                 f"Only local · Run {run_i}/{n_local} · "
                                 if n_local > 1
@@ -3116,6 +3194,24 @@ if st.session_state.get("confirmed_run"):
                         "systemic judge failure. Remaining runs skipped."
                     )
                     st.warning(notes)
+                _local_model_contract = [
+                    {
+                        "key": c.candidate_key,
+                        "model": c.meta.requested_model or c.meta.model,
+                        "provider": c.meta.provider,
+                    }
+                    for c in collected
+                ]
+                _local_cohort = build_cohort_id(
+                    case_stem=case_stem,
+                    gold=load_confirmed_gold(effective_gold),
+                    prompt_version="gold-only-v1",
+                    model_config={
+                        "candidates": _local_model_contract,
+                        "judge": cfg.get("judge") if isinstance(cfg, dict) else {},
+                    },
+                    benchmark_track=benchmark_track,
+                )
                 artifact = RunArtifact(
                     run_id=f"{case_id}-{uuid.uuid4().hex[:10]}",
                     case_id=case_id,
@@ -3138,7 +3234,9 @@ if st.session_state.get("confirmed_run"):
                         "judge": cfg.get("judge") if isinstance(cfg, dict) else None,
                         "gold_reference": effective_gold.strip() if effective_gold else "",
                         "case_stem": case_stem.strip(),
-                        "owner_id": owner_id_for_current_key(),
+                        "owner_id": owner_id_for_current_key(
+                            st.session_state.get("or_key_session")
+                        ),
                         "estimated_breakdown": (
                             bd_local_only_multi
                             if n_local > 1 and _local_bakeoff
@@ -3152,10 +3250,35 @@ if st.session_state.get("confirmed_run"):
                     ranking=ranking,
                     total_cost_usd=round(judge_cost, 6),
                     notes=notes,
+                    cohort_id=_local_cohort,
+                    scoring_version=SCORING_VERSION,
+                    prompt_version="gold-only-v1",
+                    benchmark_track=benchmark_track,
+                    run_status=(
+                        "complete"
+                        if all(j.status == "valid" for j in judgments)
+                        else "partial"
+                    ),
+                    reproducibility={
+                        "benchmark_track": benchmark_track,
+                        "candidate_temperature": (
+                            0.2 if benchmark_track == "controlled" else None
+                        ),
+                        "judge_temperature": judge_temp,
+                        "blind_map": {
+                            c.candidate_key: c.blind_id for c in collected
+                        },
+                    },
                 )
 
                 WORKSPACE_DIR.mkdir(parents=True, exist_ok=True)
                 art_path = write_artifact(artifact, WORKSPACE_DIR)
+                _account = st.session_state.get("account_session")
+                if account_store_configured() and isinstance(_account, AccountSession):
+                    try:
+                        account_save_artifact(_account, artifact)
+                    except Exception as exc:
+                        st.warning(f"Encrypted cloud persistence failed: {exc}")
                 all_artifacts.append(artifact)
                 artifact_paths.append(str(art_path))
 
@@ -3276,6 +3399,7 @@ if st.session_state.get("confirmed_run"):
                 break
 
         # ---- Batch wrap-up ----
+        _finish_scope_run()
         st.session_state["benchmark_running"] = False
         st.session_state["live_outputs"] = last_live_snap or live_snap
         total_s = int(round(time.time() - t_run0))
@@ -3500,17 +3624,16 @@ if st.session_state.get("confirmed_run"):
             )
         st.stop()
 
-    if not is_usable_openrouter_key(os.environ.get("OPENROUTER_API_KEY")):
+    if not is_usable_openrouter_key(st.session_state.get("or_key_session")):
         _abort_run(
             "OpenRouter API key missing or invalid (truncated placeholder). "
             "Paste the full key from https://openrouter.ai/keys in the sidebar."
         )
     if not case_stem.strip():
         _abort_run("Clinical case is empty.")
-    if is_custom_real and not gold_reference.strip():
+    if not effective_gold.strip():
         _abort_run(
-            "Custom Case requires confirmed diagnosis in step 2 "
-            "(no teaching answer grid)."
+            "Automatic reference setup is unavailable; retry the run."
         )
 
     try:
@@ -3583,6 +3706,9 @@ if st.session_state.get("confirmed_run"):
 
     try:
         for run_i in range(1, n_runs + 1):
+            if is_cancelled(st.session_state["_run_scope"]):
+                st.warning("Run cancelled before the next iteration.")
+                break
             phase_slot.markdown(
                 f'<div class="phase-banner">Run {run_i}/{n_runs} · Collecting answers…</div>',
                 unsafe_allow_html=True,
@@ -3635,6 +3761,11 @@ if st.session_state.get("confirmed_run"):
                 expected_total=len(candidates_cfg),
                 max_workers=min(8, max(2, len(candidates_cfg))),
                 on_progress=None,  # wired below inside st.status
+                api_key=st.session_state.get("or_key_session"),
+                verifier_model=str(
+                    (prep["cfg"].get("judge") or {}).get("verifier_model") or ""
+                ),
+                run_scope=st.session_state["_run_scope"],
             )
             full_started: set[str] = set()
             full_progress_slot = None
@@ -3733,7 +3864,13 @@ if st.session_state.get("confirmed_run"):
             full_progress_slot.progress(0.0, text="Judge · waiting for first answer…")
             _paint_full_board()
 
-            for evt in iter_collect_live(case_obj, candidates_cfg, blind_map):
+            for evt in iter_collect_live(
+                case_obj,
+                candidates_cfg,
+                blind_map,
+                benchmark_track=benchmark_track,
+                api_key=st.session_state.get("or_key_session"),
+            ):
                 if evt.get("type") == "token":
                     key = evt["key"]
                     bufs[key] = bufs.get(key, "") + (evt.get("delta") or "")
@@ -3948,6 +4085,16 @@ if st.session_state.get("confirmed_run"):
                     "(empty JSON / transport / majority zeros). Remaining runs skipped to save credits."
                 )
                 st.warning(notes)
+            _full_cohort = build_cohort_id(
+                case_stem=case_stem,
+                gold=load_confirmed_gold(effective_gold),
+                prompt_version="gold-only-v1",
+                model_config={
+                    "candidates": candidates_cfg,
+                    "judge": prep["cfg"].get("judge") or {},
+                },
+                benchmark_track=benchmark_track,
+            )
             artifact = RunArtifact(
                 run_id=f"{case_id}-{uuid.uuid4().hex[:10]}",
                 case_id=case_id,
@@ -3961,7 +4108,9 @@ if st.session_state.get("confirmed_run"):
                     "blind_map": blind_map,
                     "gold_reference": effective_gold.strip() if effective_gold else "",
                     "case_stem": case_stem.strip(),
-                    "owner_id": owner_id_for_current_key(),
+                    "owner_id": owner_id_for_current_key(
+                        st.session_state.get("or_key_session")
+                    ),
                     "estimated_breakdown": bd if n_runs == 1 else bd_multi,
                 },
                 candidates=collected,
@@ -3969,9 +4118,32 @@ if st.session_state.get("confirmed_run"):
                 ranking=ranking,
                 total_cost_usd=round(total_cost, 6),
                 notes=notes,
+                cohort_id=_full_cohort,
+                scoring_version=SCORING_VERSION,
+                prompt_version="gold-only-v1",
+                benchmark_track=benchmark_track,
+                run_status=(
+                    "complete"
+                    if all(j.status == "valid" for j in judgments)
+                    else "partial"
+                ),
+                reproducibility={
+                    "benchmark_track": benchmark_track,
+                    "candidate_temperature": (
+                        0.2 if benchmark_track == "controlled" else None
+                    ),
+                    "judge_temperature": judge_temp,
+                    "blind_map": blind_map,
+                },
             )
             WORKSPACE_DIR.mkdir(parents=True, exist_ok=True)
             art_path = write_artifact(artifact, WORKSPACE_DIR)
+            _account = st.session_state.get("account_session")
+            if account_store_configured() and isinstance(_account, AccountSession):
+                try:
+                    account_save_artifact(_account, artifact)
+                except Exception as exc:
+                    st.warning(f"Encrypted cloud persistence failed: {exc}")
             all_artifacts.append(artifact)
             artifact_paths.append(str(art_path))
             last_ranking = ranking
@@ -4057,6 +4229,7 @@ if st.session_state.get("confirmed_run"):
                 last_judgments, key_field=_lj_key
             )
         st.session_state["last_judgments"] = last_judgments
+        _finish_scope_run()
         st.session_state["benchmark_running"] = False
         st.session_state["last_cost_rows"] = None  # filled below
 
@@ -4357,15 +4530,18 @@ if st.session_state.get("confirmed_run"):
         st.session_state.pop("kpi_dialog_armed", None)
         st.session_state.pop("confirmed_run", None)
         st.session_state.pop("pending_run", None)
+        _finish_scope_run()
         st.session_state["benchmark_running"] = False
         st.rerun()
 
 
     except Exception as exc:
         try:
-            abandon_all_pipelines()
+            cancel_run(st.session_state["_run_scope"])
+            abandon_all_pipelines(st.session_state["_run_scope"])
         except Exception:
             pass
+        _finish_scope_run()
         st.session_state["benchmark_running"] = False
         elapsed = int(round(time.time() - t_run0))
         _paint_run_timer(
@@ -4578,21 +4754,21 @@ if (
             row["Runs"] = _rank_n.get(ck, 1)
             matrix_rows.append(row)
         st.dataframe(pd.DataFrame(matrix_rows), use_container_width=True, hide_index=True)
-# --- Offline: Rebuild mean across N runs (formula 50/30/20, $0 API) ---
+# --- Offline: Rebuild mean across homogeneous cohorts ($0 API) ---
 st.markdown(
     '<div class="sec-label">Rebuild mean across N runs · $0 API</div>',
     unsafe_allow_html=True,
 )
 st.caption(
-    f"**{case_display_name(case_id)}** · take the N newest saved runs, **rescore every one** with "
-    "gold formula **50% alignment / 30% quality / 20% stem** (including older logs), "
-    "then open a **popup** with table + chart. **No API calls** — local CPU only."
+    f"**{case_display_name(case_id)}** · use only the newest immutable cohort. "
+    "Every model needs the same minimum five valid observations; legacy artifacts "
+    "stay experimental. **No API calls**."
 )
 _hist_for_case = artifacts_for_case(WORKSPACE_DIR, case_id)
 _avail_n = len(_hist_for_case)
 
-# Offer 3 / 5 / 10 / 20 / 30; clamp at rebuild time if fewer runs exist
-_n_options = [3, 5, 10, 20, 30]
+# Equal valid N; N=5 remains exploratory.
+_n_options = [5, 10, 20, 30]
 _rb1, _rb2 = st.columns([1, 2])
 with _rb1:
     # Default once — do not pass index= every rerun (fights session state / reopens dialogs)
@@ -4626,7 +4802,7 @@ with _rb2:
         use_container_width=True,
         disabled=not _can_rebuild,
         key="history_rebuild_btn",
-        help="Offline rescore 50/30/20 + mean. Zero API cost.",
+        help="Offline mean for one immutable cohort only. Zero API cost.",
     )
 
 if _avail_n < 2:
@@ -4686,9 +4862,9 @@ if (
 st.markdown('<div class="sec-label">Run history</div>', unsafe_allow_html=True)
 st.caption(
     f"Private to your OpenRouter key ({short_owner_label()}). "
-    "Same key on this app = same History for Custom Case + Demo 1/2. "
+    "Same authenticated account/session = same gold-only History. "
     "Other visitors with a different key cannot see your runs. "
-    "Use **Rebuild mean across N runs** above for offline mean KPIs (formula 50/30/20)."
+    "Use **Rebuild mean** only across the same immutable cohort and protocol."
 )
 _hist_all = list_run_artifacts(WORKSPACE_DIR)
 if not has_key:
@@ -4789,5 +4965,5 @@ else:
             st.caption(
                 f"{len(same_case)} saved runs for {case_display_name(hist.case_id)} — "
                 "use **Rebuild mean across N runs** above for the chart "
-                "(current formula, $0 API)."
+                "(same-cohort protocol, $0 API)."
             )

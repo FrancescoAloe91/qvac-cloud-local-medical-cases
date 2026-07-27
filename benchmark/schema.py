@@ -9,6 +9,8 @@ from pydantic import BaseModel, Field
 
 
 class QuestionRubric(BaseModel):
+    """Legacy Demo/rubric reader only. New runs never score from this object."""
+
     acceptable: List[str] = Field(default_factory=list)
     must_include: List[str] = Field(default_factory=list)
     must_not: List[str] = Field(default_factory=list)
@@ -23,6 +25,34 @@ class Question(BaseModel):
     rubric: QuestionRubric = Field(default_factory=QuestionRubric)
 
 
+class GoldClaim(BaseModel):
+    """One frozen, source-linked statement in the user-supplied reference."""
+
+    id: str
+    text: str
+    source_quote: str = ""
+    critical: bool = False
+
+
+class GoldSection(BaseModel):
+    """Confirmed reference for one of the five benchmark sections."""
+
+    summary: str
+    claims: List[GoldClaim] = Field(default_factory=list)
+
+
+class ConfirmedGold(BaseModel):
+    """Gold-only scoring contract for a real/custom case."""
+
+    raw_text: str
+    sections: Dict[
+        Literal["diagnosis", "tests", "urgency", "safety", "plan"], GoldSection
+    ]
+    confirmed_at: str
+    extraction_model: str = ""
+    extraction_prompt_version: str = "gold-extract-v1"
+
+
 class Case(BaseModel):
     id: str
     title: str
@@ -30,8 +60,8 @@ class Case(BaseModel):
     stem: str
     questions: List[Question]
     language: str = "en"
-    # teaching = preset vignette + built-in answer grid; custom_real = user pastes a real case
-    mode: Literal["teaching", "custom_real"] = "teaching"
+    # teaching remains accepted only so archived artifacts can still be opened.
+    mode: Literal["teaching", "custom_real"] = "custom_real"
     # Short human label of the intended teaching target (not sent to candidates)
     gold_summary: str = ""
 
@@ -39,6 +69,10 @@ class Case(BaseModel):
 class ModelCallMeta(BaseModel):
     model: str
     provider: str
+    requested_model: str = ""
+    routed_model: str = ""
+    routed_provider: str = ""
+    finish_reason: str = ""
     prompt_tokens: int = 0
     completion_tokens: int = 0
     cost_usd: Optional[float] = None
@@ -70,6 +104,15 @@ class QuestionScore(BaseModel):
     rationale: str = ""
     evidence: str = ""
     errors: List[str] = Field(default_factory=list)
+    matched_claim_ids: List[str] = Field(default_factory=list)
+    missed_claim_ids: List[str] = Field(default_factory=list)
+    unsupported_claims: List[str] = Field(default_factory=list)
+    contradictions: List[str] = Field(default_factory=list)
+    claim_coverage: Dict[str, float] = Field(default_factory=dict)
+    added_content: List[Dict[str, Any]] = Field(default_factory=list)
+    precision: Optional[float] = None
+    recall: Optional[float] = None
+    quality: Optional[float] = None
 
 
 class JudgeResult(BaseModel):
@@ -80,10 +123,22 @@ class JudgeResult(BaseModel):
     judge_model: str
     judge_meta: ModelCallMeta
     raw_judge_json: str = ""
+    status: Literal[
+        "valid",
+        "collect_failed",
+        "candidate_empty",
+        "candidate_partial",
+        "judge_transport_failed",
+        "judge_schema_invalid",
+        "judge_evidence_invalid",
+        "cancelled",
+        "timed_out",
+    ] = "valid"
+    failure_reason: str = ""
 
 
 class RunArtifact(BaseModel):
-    schema_version: str = "1.0"
+    schema_version: str = "2.0"
     run_id: str
     case_id: str
     started_at: str
@@ -95,6 +150,12 @@ class RunArtifact(BaseModel):
     ranking: List[Dict[str, Any]] = Field(default_factory=list)
     total_cost_usd: float = 0.0
     notes: str = ""
+    cohort_id: str = ""
+    scoring_version: str = "graded-clinical-v3"
+    prompt_version: str = "gold-only-v1"
+    benchmark_track: Literal["controlled", "native_defaults", "legacy"] = "controlled"
+    run_status: Literal["complete", "partial", "cancelled", "failed"] = "complete"
+    reproducibility: Dict[str, Any] = Field(default_factory=dict)
 
 
 class MultiRunSummary(BaseModel):

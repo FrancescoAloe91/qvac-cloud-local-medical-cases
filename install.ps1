@@ -27,8 +27,7 @@ if not exist ".venv" (
 )
 call ".venv\Scripts\activate.bat"
 python -m pip install -q --upgrade pip
-pip install -q -r requirements.txt
-pip install -q huggingface_hub
+pip install -q --require-hashes -r requirements.txt
 
 if not exist ".env" (
   copy /Y .env.example .env >nul

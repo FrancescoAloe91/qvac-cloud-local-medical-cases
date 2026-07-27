@@ -88,6 +88,10 @@ function buildModelConfig() {
     top_k: 20,
     top_p: 0.95,
   };
+  if (samplingOverride.temp != null) cfg.temp = Number(samplingOverride.temp);
+  if (samplingOverride.top_k != null) cfg.top_k = Number(samplingOverride.top_k);
+  if (samplingOverride.top_p != null) cfg.top_p = Number(samplingOverride.top_p);
+  if (samplingOverride.seed != null) cfg.seed = Number(samplingOverride.seed);
   const mainGpu = process.env.QVAC_MAIN_GPU;
   if (mainGpu === "dedicated" || mainGpu === "integrated") {
     cfg["main-gpu"] = mainGpu;
@@ -102,6 +106,7 @@ let modelId = null;
 let loadError = null;
 let activeConfig = null;
 let lastRamMb = null;
+let samplingOverride = {};
 
 /** RSS of this Node process + descendant workers (llama/Metal), in MB. */
 function sampleRamMb() {
@@ -263,7 +268,7 @@ async function ensureModel() {
 }
 
 /** Hot-swap GGUF for multi-QVAC compare (unload + load). */
-async function loadFromPath(requestedPath) {
+async function loadFromPath(requestedPath, requestedSampling = {}) {
   if (!requestedPath || !String(requestedPath).trim()) {
     throw new Error("Missing model_path");
   }
@@ -271,7 +276,18 @@ async function loadFromPath(requestedPath) {
   if (!fs.existsSync(next)) {
     throw new Error(`MedPsy GGUF not found at ${next}`);
   }
-  if (modelId && MODEL_PATH === next) {
+  const nextSampling = {
+    temp: requestedSampling?.temp,
+    top_k: requestedSampling?.top_k,
+    top_p: requestedSampling?.top_p,
+    seed: requestedSampling?.seed,
+  };
+  const cleanSampling = Object.fromEntries(
+    Object.entries(nextSampling).filter(([, value]) => value != null)
+  );
+  const samplingChanged =
+    JSON.stringify(cleanSampling) !== JSON.stringify(samplingOverride);
+  if (modelId && MODEL_PATH === next && !samplingChanged) {
     refreshRam();
     return {
       ok: true,
@@ -287,6 +303,7 @@ async function loadFromPath(requestedPath) {
   }
   await unloadCurrent();
   MODEL_PATH = next;
+  samplingOverride = cleanSampling;
   loadError = null;
   await ensureModel();
   return {
@@ -557,7 +574,10 @@ const server = http.createServer(async (req, res) => {
       return send(res, 400, { error: "Invalid JSON body" });
     }
     try {
-      const out = await loadFromPath(body.model_path || body.path || "");
+      const out = await loadFromPath(
+        body.model_path || body.path || "",
+        body.sampling || {}
+      );
       return send(res, 200, out);
     } catch (err) {
       loadError = err;

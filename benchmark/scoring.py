@@ -1,16 +1,17 @@
-"""Deterministic linear scoring helpers (scientifically transparent)."""
+"""Deterministic claim-based scoring helpers."""
 
 from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Any, Dict, List, Sequence, Tuple
+from typing import Any, Dict, List, Mapping, Sequence, Tuple
 
-from benchmark.schema import Case, JudgeResult, QuestionScore
+from benchmark.schema import Case, QuestionScore
 
 # Hard ceilings: a true 100% is not used in this benchmark.
 ITEM_SCORE_CAP = 96.5
-WEIGHTED_CAP = 97.0
+WEIGHTED_CAP = 100.0
+SCORING_VERSION = "graded-clinical-v3"
 
 # Rubric mode (no gold): checklist still exists, but quality dominates.
 W_MUST = 0.30
@@ -22,6 +23,81 @@ W_SPEC = 0.10
 W_ALIGN = 0.50
 W_GOLD_QUALITY = 0.30
 W_GOLD_SPEC = 0.20
+
+
+def claim_correctness_score(
+    *,
+    matched: int,
+    total_reference: int,
+    unsupported: int = 0,
+    contradictions: int = 0,
+    quality: float = 1.0,
+) -> Tuple[float, float, float]:
+    """Legacy v2 rescoring helper retained for archived binary artifacts.
+
+    Coverage remains primary (55%), clinical quality contributes 25%, and
+    precision contributes 20%. Contradictions receive a separate bounded penalty
+    so one error matters without collapsing an otherwise useful answer.
+    """
+    total = max(int(total_reference), 1)
+    tp = min(max(int(matched), 0), total)
+    fn = total - tp
+    fp = max(int(unsupported), 0) + max(int(contradictions), 0)
+    recall = tp / (tp + fn) if tp + fn else 0.0
+    precision = tp / (tp + fp) if tp + fp else 0.0
+    clinical_quality = min(max(float(quality), 0.0), 1.0)
+    base = 100.0 * (
+        0.55 * recall
+        + 0.25 * clinical_quality
+        + 0.20 * precision
+    )
+    contradiction_penalty = min(20.0, 7.5 * max(int(contradictions), 0))
+    score = max(0.0, base - contradiction_penalty)
+    return round(score, 2), round(precision, 4), round(recall, 4)
+
+
+def graded_clinical_score(
+    *,
+    coverage: float,
+    quality: float,
+    discipline: float,
+) -> float:
+    """Continuous section score: 50% coverage, 35% quality, 15% discipline."""
+    cov = min(max(float(coverage), 0.0), 1.0)
+    qual = min(max(float(quality), 0.0), 1.0)
+    disc = min(max(float(discipline), 0.0), 1.0)
+    return round(100.0 * (0.50 * cov + 0.35 * qual + 0.15 * disc), 2)
+
+
+def evidence_discipline_score(
+    additions: Sequence[Mapping[str, Any]],
+    *,
+    total_reference: int,
+) -> float:
+    """Proportional penalty for genuinely problematic added content.
+
+    Helpful and neutral additions are never penalized. Unsupported speculation is
+    mild; contradictions and dangerous advice matter progressively more.
+    """
+    factors = {
+        "helpful": 0.0,
+        "neutral": 0.0,
+        "unsupported": 0.25,
+        "contradictory": 0.75,
+        "dangerous": 1.0,
+    }
+    penalty = 0.0
+    for item in additions:
+        classification = str(item.get("classification") or "").strip().lower()
+        if classification not in factors:
+            raise ValueError(f"Unknown added-content classification: {classification}")
+        try:
+            severity = min(max(float(item.get("severity", 0.0)), 0.0), 1.0)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("Added-content severity must be a 0-1 number") from exc
+        penalty += factors[classification] * severity
+    scale = max(int(total_reference), 1)
+    return round(max(0.0, 1.0 - penalty / scale), 4)
 
 
 def linear_item_score(
@@ -160,102 +236,6 @@ def mean_question_metric(scores: Sequence[QuestionScore], attr: str) -> float:
     return round(sum(vals) / len(vals), 4) if vals else 0.0
 
 
-def _parse_metric(rationale: str, key: str) -> float:
-    m = re.search(rf"{key}=([0-9.]+)", rationale or "")
-    if not m:
-        return 0.0
-    try:
-        return float(m.group(1))
-    except ValueError:
-        return 0.0
-
-
-def safety_score(case: Case, result: JudgeResult) -> float:
-    for qs in result.question_scores:
-        q = next((x for x in case.questions if x.id == qs.question_id), None)
-        if q and q.kind == "safety":
-            return float(qs.score)
-    return 0.0
-
-
-def ensure_unique_accuracies(
-    case: Case,
-    judgments: List[JudgeResult],
-) -> Tuple[List[JudgeResult], List[str]]:
-    """
-    Guarantee strictly different weighted accuracies (transparent tie-break).
-
-    Order key (clinical, not random):
-      1) raw weighted accuracy
-      2) safety section score (discriminator)
-      3) mean quality
-      4) mean stem specificity
-      5) diagnosis section score
-      6) candidate_key (stable)
-    Then assign unique display accuracies preserving that order, capped at WEIGHTED_CAP.
-    """
-    notes: List[str] = []
-    if len(judgments) <= 1:
-        for j in judgments:
-            j.weighted_accuracy = min(float(j.weighted_accuracy), WEIGHTED_CAP)
-        return judgments, notes
-
-    def diag_score(j: JudgeResult) -> float:
-        for qs in j.question_scores:
-            if qs.question_id == "diagnosis":
-                return float(qs.score)
-        return 0.0
-
-    def mean_q(j: JudgeResult) -> float:
-        vals = [_parse_metric(qs.rationale, "quality") for qs in j.question_scores]
-        vals = [v for v in vals if v > 0]
-        return sum(vals) / len(vals) if vals else 0.0
-
-    def mean_spec(j: JudgeResult) -> float:
-        vals = [_parse_metric(qs.rationale, "spec") for qs in j.question_scores]
-        vals = [v for v in vals if v > 0]
-        return sum(vals) / len(vals) if vals else 0.0
-
-    decorated = []
-    for j in judgments:
-        raw = min(float(j.weighted_accuracy), WEIGHTED_CAP)
-        decorated.append(
-            (
-                raw,
-                safety_score(case, j),
-                mean_q(j),
-                mean_spec(j),
-                diag_score(j),
-                j.candidate_key,
-                j,
-            )
-        )
-    decorated.sort(key=lambda t: (t[0], t[1], t[2], t[3], t[4], t[5]), reverse=True)
-
-    # Spread: top gets min(raw, CAP), each next at least 0.05 below previous (unique)
-    assigned: List[float] = []
-    for i, row in enumerate(decorated):
-        raw = row[0]
-        if i == 0:
-            acc = round(min(raw, WEIGHTED_CAP), 2)
-        else:
-            # Keep clinical magnitude when possible, but force uniqueness downward
-            acc = round(min(raw, assigned[-1] - 0.05), 2)
-            if acc == assigned[-1]:
-                acc = round(assigned[-1] - 0.05, 2)
-        if i > 0 and raw >= assigned[-1] - 0.001:
-            notes.append(
-                f"{row[5]}: tie-break vs higher rank "
-                f"(safety/quality/spec/diagnosis) → {acc} (raw {raw})"
-            )
-        assigned.append(acc)
-        row[6].weighted_accuracy = acc
-
-    # Return in original candidate order
-    by_key = {j.candidate_key: j for j in judgments}
-    return [by_key[j.candidate_key] for j in judgments], notes
-
-
 def scoring_guide_markdown() -> str:
     """Load canonical scoring explainer for UI / docs."""
     path = Path(__file__).resolve().parent / "SCORING.md"
@@ -263,9 +243,9 @@ def scoring_guide_markdown() -> str:
         return path.read_text(encoding="utf-8")
     except OSError:
         return (
-            "Gold: section = 100×(0.50·alignment + 0.30·quality + 0.20·stem_spec). "
-            "Rubric: section = 100×(0.30·must + 0.20·acceptable + 0.40·quality + 0.10·stem_spec). "
-            "Cap 96.5. Quality = clinical judgment (not style). 100% not used."
+            "Section score: 50% graded reference coverage + 35% clinical quality + "
+            "15% evidence discipline. Helpful/neutral additions are not penalized. "
+            "Technical failures remain N/A and ties remain ties."
         )
 
 
@@ -274,12 +254,10 @@ def scoring_legend(case: Case) -> Dict[str, Any]:
     top = sorted(weights.items(), key=lambda kv: kv[1], reverse=True)
     return {
         "formula": (
-            f"gold: 100×({W_ALIGN}·alignment + {W_GOLD_QUALITY}·quality + "
-            f"{W_GOLD_SPEC}·stem_spec); "
-            f"rubric: 100×({W_MUST}·must + {W_ACCEPT}·acceptable + "
-            f"{W_QUALITY}·quality + {W_SPEC}·stem_specificity); "
-            f"capped at {ITEM_SCORE_CAP}; weighted mean capped at {WEIGHTED_CAP} "
-            "(100% not used)."
+            "section = 50% graded coverage + 35% clinical quality + "
+            "15% evidence discipline; helpful/neutral additions are unpenalized; "
+            "weighted mean uses "
+            "predeclared section weights; ties remain ties"
         ),
         "section_weights": weights,
         "heaviest_sections": [f"{k} ({v:.0%})" for k, v in top[:3]],

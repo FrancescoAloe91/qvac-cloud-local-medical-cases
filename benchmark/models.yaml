@@ -2,37 +2,37 @@
 # Band B peers are injected by benchmark/qvac_variants.py (not listed here) so paths stay DRY.
 # Override judge: BENCHMARK_JUDGE_MODEL=...
 
-profile: free_tier_match
+profile: openrouter_api_controlled
 
 candidates:
-  # --- Band A · free-web everyday class (API proxies · billed on OpenRouter) ---
+  # --- Band A · exact OpenRouter API models (not consumer/free-web equivalents) ---
   - key: chatgpt
-    label: ChatGPT Instant
-    display_label: ChatGPT · OpenAI · GPT-5.5 Instant (free-web class)
+    label: OpenAI GPT-5.5 API
+    display_label: OpenAI · GPT-5.5 · API
     vendor: OpenAI
     site: chatgpt.com
     color: "#10a37f"
     provider: openrouter
     model: openai/gpt-5.5
-    band: free_web
+    band: api
   - key: claude
-    label: Claude Sonnet 5
-    display_label: Claude · Anthropic · Sonnet 5 (free-web class)
+    label: Anthropic Claude Sonnet 5 API
+    display_label: Anthropic · Claude Sonnet 5 · API
     vendor: Anthropic
     site: claude.ai
     color: "#d97706"
     provider: openrouter
     model: anthropic/claude-sonnet-5
-    band: free_web
+    band: api
   - key: gemini
-    label: Gemini Flash
-    display_label: Gemini · Google · 3.5 Flash (free-web class)
+    label: Google Gemini 3.5 Flash API
+    display_label: Google · Gemini 3.5 Flash · API
     vendor: Google
     site: gemini.google.com
     color: "#8ab4f8"
     provider: openrouter
     model: google/gemini-3.5-flash
-    band: free_web
+    band: api
   # Band B · open Q4 GGUFs (local_gemma / local_llama / local_phi) — see qvac_variants.py
   # Default on-device MedPsy slot (4B Q4). Toggle "3× QVAC" adds 1.7B Q4 + 4B Q8.
   - key: qvac
@@ -45,11 +45,12 @@ candidates:
     model: medpsy-4b-q4
 
 judge:
-  # Independent vendor (not OpenAI/Anthropic/Google). Reasoning model ≈ free-tier class.
+  # Primary blind judge. A pinned Claude verifier is used only for anomalies.
   model: deepseek/deepseek-r1
   display_label: Judge · DeepSeek · R1 (blind, independent)
   temperature: 0
   anonymize: true
+  verifier_model: anthropic/claude-sonnet-5
 
 # Token assumptions for --dry-run (length-aware estimate also uses live case/gold chars)
 estimate:

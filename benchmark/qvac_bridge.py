@@ -72,14 +72,21 @@ def space_free_gguf_path(gguf: Path | str) -> Path:
         return src
 
 
-def load_model(gguf_path: str | Path, timeout: float = 360.0) -> Dict[str, Any]:
+def load_model(
+    gguf_path: str | Path,
+    timeout: float = 360.0,
+    *,
+    sampling: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
     """Hot-swap the sidecar GGUF via POST /load (for multi-QVAC compare)."""
     src = Path(gguf_path).expanduser()
     if not src.is_file():
         return {"ok": False, "error": f"GGUF not found: {src}"}
     safe = space_free_gguf_path(src)
     url = f"{qvac_sidecar_url()}/load"
-    body = json.dumps({"model_path": str(safe)}).encode("utf-8")
+    body = json.dumps(
+        {"model_path": str(safe), "sampling": sampling or {}}
+    ).encode("utf-8")
     req = urllib.request.Request(
         url,
         data=body,

@@ -1,79 +1,70 @@
-# Free deploy ($0)
+# Deployment
 
-## Option A — Streamlit Community Cloud (recommended)
+## Hosted Streamlit
 
-1. Open: **[Deploy on Streamlit Cloud](https://share.streamlit.io/deploy?repository=FrancescoAloe91/qvac-vs-cloud-llms-health-test&branch=main&mainModule=app.py)**
-2. Sign in with **GitHub** (free account)
-3. Confirm:
-   - Repository: `FrancescoAloe91/qvac-vs-cloud-llms-health-test`
-   - Branch: `main`
-   - Main file: `app.py`
-4. Click **Deploy** — no credit card required
-5. Live URL: **https://francescoaloe91-qvac-vs-cloud-llms-health-test-app-wihxyd.streamlit.app**
-
-**On the cloud demo:**
-
-- **Automated Benchmark** (`app.py`) with visitor **BYOK** OpenRouter (ChatGPT / Claude / Gemini + DeepSeek R1 judge).
-- During judging: **live board** — left = collect-order FIFO queue; right = provisional ranking histogram (see README).
-- **BYOK in the UI only:** each visitor pastes their own OpenRouter key and clicks **Save**. The app remembers it for **that visitor’s IP** (prefilled on refresh). Other IPs start with an **empty** field.
-- **Do not** add `OPENROUTER_API_KEY` under Streamlit **Settings → Secrets**. That would load *your* key into the server for **every** visitor (they would all bill your account).
-- **Private History / KPIs:** Custom Case + Demo runs live under `artifacts/owners/<hash of that visitor’s key>/`. Same key → same history and means; other keys cannot open those files.
-- **QVAC MedPsy** (on-device SDK sidecar) is **local-only** — skipped on Streamlit Cloud. For the complete GGUF pack locally, see the README (`./install.sh --full-models`).
-- Cloud disk may clear when the app sleeps; durable archives → run locally.
-
-Redeploy: push to `main` (Cloud watches the repo).
-
----
-
-## Option B — Render.com (free tier)
-
-1. [render.com](https://render.com) → Sign up free (GitHub)
-2. **New** → **Blueprint** → connect this repo
-3. Render reads `render.yaml` and starts the dashboard
-4. URL looks like `https://qvac-health-test.onrender.com`
-
-Same limits: no QVAC sidecar on the free host; use BYOK + per-key History.
-
----
-
-## Full local setup (live QVAC + private history on disk)
-
-History, KPIs, and saved runs are scoped to **your OpenRouter key** (folder fingerprint). The key is remembered for **your client IP** only.
-
-**macOS / Linux**
+1. Deploy `app.py` from `main`.
+2. Do not configure a shared `OPENROUTER_API_KEY`. Visitors use BYOK.
+3. Create a Supabase project and apply
+   `supabase/migrations/202607270001_secure_benchmark.sql`.
+4. Generate a Fernet key:
 
 ```bash
-git clone https://github.com/FrancescoAloe91/qvac-vs-cloud-llms-health-test.git
-cd qvac-vs-cloud-llms-health-test
+python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+```
 
-# Default (~2.5 GB): MedPsy-4B Q4 only
+5. Add these values to the hosting secret manager:
+
+```text
+SUPABASE_URL=https://YOUR_PROJECT.supabase.co
+SUPABASE_ANON_KEY=...
+APP_ENCRYPTION_KEY=...
+```
+
+The anon key is intended for clients; security comes from authenticated user
+sessions and Row Level Security. `APP_ENCRYPTION_KEY` is server-secret and must
+never be committed or exposed. Rotating it requires re-encrypting existing rows.
+
+Hosted behavior:
+
+- each visitor signs into a Supabase account;
+- OpenRouter keys and complete artifacts are encrypted before persistence;
+- no IP-address key vault and no process-global visitor key;
+- cloud candidates/judges run through the visitor’s explicit session key;
+- QVAC/GGUF models are unavailable unless the host also runs the local sidecar;
+- technical failures are N/A and remain visible in artifacts.
+
+If Supabase variables are absent, hosted keys are session-only and local disk
+history is not durable. The UI warns about this state.
+
+## Local
+
+```bash
 ./install.sh
+# or ./install.sh --full-models
 
-# Optional — complete on-device pack (~14 GB): 3 MedPsy + Gemma/Llama/Phi
-# ./install.sh --full-models
-# or: ./scripts/download_all_ggufs.sh
+# optional local convenience only
+cp .env.example .env
 
-# edit .env → OPENROUTER_API_KEY=sk-or-v1-… (full key)
+# terminal A
+cd sidecar && npm start
 
-cd sidecar && npm start           # Terminal A
-# Terminal B:
-source .venv/bin/activate && streamlit run app.py
+# terminal B
+source .venv/bin/activate
+streamlit run app.py
 ```
 
-Or `./launch_dashboard.sh` → `http://localhost:8501`
+Local artifacts are written atomically under the gitignored `artifacts/owners/`
+workspace. A session key is passed explicitly to OpenRouter calls; it is not
+copied into process-global environment state.
 
-**Windows**
+## Release checks
 
-```powershell
-git clone https://github.com/FrancescoAloe91/qvac-vs-cloud-llms-health-test.git
-cd qvac-vs-cloud-llms-health-test
-powershell -ExecutionPolicy Bypass -File install.ps1
-# edit .env with your OpenRouter key
-# optional full GGUFs: bash scripts/download_all_ggufs.sh  (Git Bash / WSL)
-cd sidecar; npm start
-# other terminal:
-.\.venv\Scripts\Activate.ps1; streamlit run app.py
+```bash
+python -m pip install --require-hashes -r requirements-dev.txt
+python -m compileall -q app.py benchmark lib tests
+pytest -q
+node --check sidecar/qvac_server.mjs
+cd sidecar && npm ci --ignore-scripts && npm audit --omit=dev --audit-level=high
 ```
 
-Artifacts path: `artifacts/owners/<sha256-fingerprint>/` — gitignored. Keep `.env` private; never commit keys or History.
-
+The same checks run in `.github/workflows/quality.yml`.

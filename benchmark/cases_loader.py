@@ -10,19 +10,16 @@ from benchmark.schema import Case
 
 
 def list_case_ids() -> List[str]:
-    # Custom Case (caseC) first, then Demo 1 / Demo 2 — ids unchanged for History
-    found = {p.stem for p in CASES_DIR.glob("case*.json")}
-    preferred = [c for c in ("caseC", "caseA", "caseB") if c in found]
-    rest = sorted(found - set(preferred))
-    return preferred + rest
+    """Active benchmark cases. Demo files, if present locally, stay archived."""
+    return ["caseC"] if (CASES_DIR / "caseC.json").exists() else []
 
 
 def case_display_name(case_id: str) -> str:
-    """Human label; internal ids stay caseA/B/C so artifacts keep matching."""
+    """Human label, including read-only labels for archived artifacts."""
     return {
-        "caseC": "Custom Case",
-        "caseA": "Demo Case 1",
-        "caseB": "Demo Case 2",
+        "caseC": "Real Case · user reference",
+        "caseA": "Legacy archived case A",
+        "caseB": "Legacy archived case B",
     }.get(case_id, case_id)
 
 

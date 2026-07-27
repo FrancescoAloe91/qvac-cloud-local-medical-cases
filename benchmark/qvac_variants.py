@@ -133,12 +133,12 @@ def merge_roster(
     """
     if include_local_peers is None:
         include_local_peers = include_qvac
-    # Band A only from YAML (openrouter free_web). Strip legacy free_light + any qvac.
+    # Band A only from YAML. Accept current API rows and archived free_web rows.
     cloud = [
         c
         for c in cloud_candidates
         if c.get("provider") == "openrouter"
-        and (c.get("band") or "free_web") == "free_web"
+        and (c.get("band") or "free_web") in {"api", "free_web"}
     ]
     peers = local_peer_candidates() if include_local_peers else []
     medpsy = variant_candidates(triple=triple_qvac) if include_qvac else []

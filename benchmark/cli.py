@@ -37,12 +37,16 @@ def cmd_list_cases(_: argparse.Namespace) -> int:
 def cmd_dry_run(args: argparse.Namespace) -> int:
     from benchmark.runner import dry_run_estimate
 
-    case_ids = [args.case] if args.case else ["caseA", "caseB"]
+    case_ids = [args.case or "caseC"]
+    gold = Path(args.gold_file).read_text(encoding="utf-8") if args.gold_file else ""
+    stem = Path(args.stem_file).read_text(encoding="utf-8") if args.stem_file else ""
     est = dry_run_estimate(
         case_ids,
         args.n,
         models_path=Path(args.models) if args.models else None,
         skip_qvac=args.skip_qvac,
+        gold_reference=gold,
+        case_stem_override=stem,
     )
     print(json.dumps(est, indent=2))
     return 0
@@ -62,6 +66,15 @@ def cmd_run(args: argparse.Namespace) -> int:
     from benchmark.workspace import scoped_artifacts_dir
 
     out = Path(args.out) if args.out else scoped_artifacts_dir()
+    if not args.gold_file or not args.stem_file:
+        print(
+            "ERROR: gold-only runs require --stem-file and --gold-file "
+            "(confirmed five-section JSON).",
+            file=sys.stderr,
+        )
+        return 2
+    gold = Path(args.gold_file).read_text(encoding="utf-8")
+    stem = Path(args.stem_file).read_text(encoding="utf-8")
     arts, summary = run_n(
         args.case,
         n=args.n,
@@ -69,6 +82,8 @@ def cmd_run(args: argparse.Namespace) -> int:
         skip_qvac=args.skip_qvac,
         out_dir=out,
         seed=args.seed,
+        gold_reference=gold,
+        case_stem_override=stem,
     )
     print(print_summary_table(summary))
     for a in arts:
@@ -89,19 +104,23 @@ def build_parser() -> argparse.ArgumentParser:
     p_list.set_defaults(func=cmd_list_cases)
 
     p_dry = sub.add_parser("dry-run", help="Estimate OpenRouter cost without calling APIs")
-    p_dry.add_argument("--case", default=None, help="Single case id (default: caseA–caseB teaching)")
+    p_dry.add_argument("--case", default="caseC", help="Case id (default: caseC)")
     p_dry.add_argument("--n", type=int, default=1, help="Number of runs")
     p_dry.add_argument("--models", default=None, help="Path to models.yaml")
     p_dry.add_argument("--skip-qvac", action="store_true")
+    p_dry.add_argument("--stem-file", default=None, help="Clinical case text file")
+    p_dry.add_argument("--gold-file", default=None, help="Confirmed five-section gold JSON")
     p_dry.set_defaults(func=cmd_dry_run)
 
     p_run = sub.add_parser("run", help="Run benchmark and write artifacts/")
-    p_run.add_argument("--case", required=True, help="Case id, e.g. caseA")
+    p_run.add_argument("--case", default="caseC", help="Case id (gold-only: caseC)")
     p_run.add_argument("--n", type=int, default=1, help="Repeated runs for distribution")
     p_run.add_argument("--models", default=None, help="Path to models.yaml")
     p_run.add_argument("--out", default=None, help="Artifacts directory")
     p_run.add_argument("--skip-qvac", action="store_true", help="Cloud-only candidates")
     p_run.add_argument("--seed", type=int, default=None)
+    p_run.add_argument("--stem-file", required=True, help="Clinical case text file")
+    p_run.add_argument("--gold-file", required=True, help="Confirmed five-section gold JSON")
     p_run.set_defaults(func=cmd_run)
 
     return p

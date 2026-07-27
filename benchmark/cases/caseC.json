@@ -10,62 +10,37 @@
     {
       "id": "diagnosis",
       "kind": "diagnosis",
-      "weight": 0.4,
+      "weight": 0.3,
       "text": "What is the most likely primary diagnosis? Rank the top differential.",
-      "rubric": {
-        "acceptable": [],
-        "must_include": [],
-        "must_not": [],
-        "notes": "Custom Case — no teaching grid. The judge uses YOUR gold diagnosis (step 2) as ground truth."
-      }
+      "rubric": {}
     },
     {
       "id": "tests",
       "kind": "tests",
-      "weight": 0.2,
+      "weight": 0.15,
       "text": "Which tests should be ordered next?",
-      "rubric": {
-        "acceptable": [],
-        "must_include": [],
-        "must_not": [],
-        "notes": "Scored against clinical coherence + your gold notes in step 2."
-      }
+      "rubric": {}
     },
     {
       "id": "urgency",
       "kind": "urgency",
-      "weight": 0.15,
+      "weight": 0.1,
       "text": "Urgency level (critical / high / moderate / low) and red flags.",
-      "rubric": {
-        "acceptable": [],
-        "must_include": [],
-        "must_not": [],
-        "notes": "Scored against your gold / case severity."
-      }
+      "rubric": {}
     },
     {
       "id": "safety",
       "kind": "safety",
-      "weight": 0.15,
+      "weight": 0.25,
       "text": "Critical contraindications or safety traps.",
-      "rubric": {
-        "acceptable": [],
-        "must_include": [],
-        "must_not": [],
-        "notes": "Put key traps in the gold box (step 2) so the judge can check them."
-      }
+      "rubric": {}
     },
     {
       "id": "plan",
       "kind": "plan",
-      "weight": 0.1,
+      "weight": 0.2,
       "text": "Outline the initial management plan.",
-      "rubric": {
-        "acceptable": [],
-        "must_include": [],
-        "must_not": [],
-        "notes": "Scored against your gold plan cues."
-      }
+      "rubric": {}
     }
   ]
 }

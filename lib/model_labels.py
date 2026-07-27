@@ -50,30 +50,41 @@ def rerank_rows(
     *,
     score_field: str = "accuracy",
 ) -> List[Dict[str, Any]]:
-    """Copy rows sorted by score desc and rewrite contiguous # ranks."""
+    """Sort valid rows, preserve exact ties, and leave technical N/A unranked."""
     ranked = sorted(
         (dict(r) for r in rows),
-        key=lambda r: float(r.get(score_field) or 0),
-        reverse=True,
+        key=lambda r: (
+            0 if str(r.get("status") or "ok") == "ok" and r.get(score_field) is not None else 1,
+            -float(r.get(score_field) or 0),
+        ),
     )
+    last_score = None
+    last_rank = 0
     for i, r in enumerate(ranked, 1):
-        r["rank"] = i
+        if str(r.get("status") or "ok") != "ok" or r.get(score_field) is None:
+            r["rank"] = None
+            continue
+        score = float(r[score_field])
+        if last_score is None or score != last_score:
+            last_score = score
+            last_rank = i
+        r["rank"] = last_rank
     return ranked
 
 
 # name = product / brand line · version = concrete model id / quant
 MODEL_LABELS: Dict[str, Dict[str, str]] = {
     "chatgpt": {
-        "name": "ChatGPT Instant",
-        "version": "OpenAI GPT-5.5",
+        "name": "OpenAI API",
+        "version": "GPT-5.5",
     },
     "claude": {
-        "name": "Claude",
-        "version": "Anthropic Sonnet 5",
+        "name": "Anthropic API",
+        "version": "Claude Sonnet 5",
     },
     "gemini": {
-        "name": "Gemini Flash",
-        "version": "Google 3.5 Flash",
+        "name": "Google API",
+        "version": "Gemini 3.5 Flash",
     },
     "local_gemma": {
         "name": "Local Gemma",

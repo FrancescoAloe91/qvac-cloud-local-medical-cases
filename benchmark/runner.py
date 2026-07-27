@@ -3,6 +3,10 @@
 from __future__ import annotations
 
 import random
+import hashlib
+import json
+import os
+import platform
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -11,6 +15,7 @@ from typing import Any, Callable, Dict, List, Optional, Sequence
 from benchmark import openrouter, qvac_bridge
 from benchmark.cases_loader import load_case
 from benchmark.config import load_models_config
+from benchmark.gold import SCORING_VERSION, cohort_id as build_cohort_id, load_confirmed_gold
 from benchmark.judge import (
     build_ranking,
     judge_candidates_parallel,
@@ -48,6 +53,26 @@ BLIND_LABELS = [
 ]
 
 EventCallback = Optional[Callable[[Dict[str, Any]], None]]
+
+
+def _file_sha256(path: Path) -> str:
+    try:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+    except OSError:
+        return ""
+
+
+def _git_sha() -> str:
+    """Resolve HEAD without invoking git in deployed workers."""
+    head = Path(__file__).resolve().parent.parent / ".git" / "HEAD"
+    try:
+        value = head.read_text(encoding="utf-8").strip()
+        if value.startswith("ref: "):
+            ref = head.parent / value[5:]
+            return ref.read_text(encoding="utf-8").strip()
+        return value
+    except OSError:
+        return os.environ.get("GIT_COMMIT", "")
 
 
 def _emit(on_event: EventCallback, event: Dict[str, Any]) -> None:
@@ -255,6 +280,8 @@ def _collect_candidate(
     cand_cfg: Dict[str, Any],
     blind_id: str,
     on_event: EventCallback = None,
+    benchmark_track: str = "controlled",
+    api_key: Optional[str] = None,
 ) -> CandidateAnswer:
     key = cand_cfg["key"]
     label = cand_cfg.get("label") or key
@@ -289,18 +316,29 @@ def _collect_candidate(
     ]
 
     if provider == "openrouter":
+        temperature = 0.2 if benchmark_track == "controlled" else float(
+            cand_cfg.get("native_temperature", 0.3)
+        )
         raw, meta = openrouter.chat_stream(
             model_id,
             messages,
-            temperature=0.3,
+            temperature=temperature,
             max_tokens=CANDIDATE_MAX_OUTPUT_TOKENS,
             on_token=on_token,
             display_label=display,
+            api_key=api_key,
         )
     elif provider == "qvac":
         gguf = cand_cfg.get("gguf_path")
         if gguf:
-            loaded = qvac_bridge.load_model(gguf)
+            loaded = qvac_bridge.load_model(
+                gguf,
+                sampling=(
+                    {"temp": 0.2, "top_k": 20, "top_p": 0.95}
+                    if benchmark_track == "controlled"
+                    else {}
+                ),
+            )
             if not loaded.get("ok"):
                 raw, meta = "", ModelCallMeta(
                     model=model_id,
@@ -384,6 +422,8 @@ def iter_collect_parallel(
     candidates_cfg: List[Dict[str, Any]],
     blind_map: Dict[str, str],
     on_event: EventCallback = None,
+    benchmark_track: str = "controlled",
+    api_key: Optional[str] = None,
 ):
     """Yield CandidateAnswer as workers finish.
 
@@ -395,7 +435,13 @@ def iter_collect_parallel(
     with ThreadPoolExecutor(max_workers=max(1, len(cloud) or 1)) as pool:
         futures = {
             pool.submit(
-                _collect_candidate, case, c, blind_map[c["key"]], on_event
+                _collect_candidate,
+                case,
+                c,
+                blind_map[c["key"]],
+                on_event,
+                benchmark_track,
+                api_key,
             ): c["key"]
             for c in cloud
         }
@@ -403,13 +449,17 @@ def iter_collect_parallel(
             yield fut.result()
 
     for c in qvac_list:
-        yield _collect_candidate(case, c, blind_map[c["key"]], on_event)
+        yield _collect_candidate(
+            case, c, blind_map[c["key"]], on_event, benchmark_track, api_key
+        )
 
 
 def iter_collect_live(
     case: Case,
     candidates_cfg: List[Dict[str, Any]],
     blind_map: Dict[str, str],
+    benchmark_track: str = "controlled",
+    api_key: Optional[str] = None,
 ):
     """Cloud parallel + sequential QVAC with live token events for UI.
 
@@ -436,7 +486,14 @@ def iter_collect_live(
         if cand_cfg.get("provider") == "qvac":
             gguf = cand_cfg.get("gguf_path")
             if gguf:
-                loaded = qvac_bridge.load_model(gguf)
+                loaded = qvac_bridge.load_model(
+                    gguf,
+                    sampling=(
+                        {"temp": 0.2, "top_k": 20, "top_p": 0.95}
+                        if benchmark_track == "controlled"
+                        else {}
+                    ),
+                )
                 if not loaded.get("ok"):
                     from benchmark.schema import CandidateAnswer, ModelCallMeta
 
@@ -515,7 +572,12 @@ def iter_collect_live(
 
         try:
             cand = _collect_candidate(
-                case, run_cfg, blind_map[cand_cfg["key"]], on_event
+                case,
+                run_cfg,
+                blind_map[cand_cfg["key"]],
+                on_event,
+                benchmark_track,
+                api_key,
             )
             q.put({"type": "done", "candidate": cand})
         except Exception as exc:
@@ -633,7 +695,10 @@ def run_once(
     gold_reference: str = "",
     case_stem_override: str = "",
     triple_qvac: bool = False,
+    benchmark_track: str = "controlled",
+    api_key: Optional[str] = None,
 ) -> RunArtifact:
+    gold_contract = load_confirmed_gold(gold_reference)
     prep = prepare_run(
         case_id,
         models_path=models_path,
@@ -651,6 +716,16 @@ def run_once(
     has_qvac_cfg = prep["has_qvac_cfg"]
     started = utc_now_iso()
     run_id = f"{case_id}-{uuid.uuid4().hex[:10]}"
+    cohort = build_cohort_id(
+        case_stem=case.stem,
+        gold=gold_contract,
+        prompt_version="gold-only-v1",
+        model_config={
+            "candidates": candidates_cfg,
+            "judge": cfg.get("judge") or {},
+        },
+        benchmark_track=benchmark_track,
+    )
 
     _emit(
         on_event,
@@ -675,7 +750,14 @@ def run_once(
     )
 
     collected_map: Dict[str, CandidateAnswer] = {}
-    for cand in iter_collect_parallel(case, candidates_cfg, blind_map, on_event):
+    for cand in iter_collect_parallel(
+        case,
+        candidates_cfg,
+        blind_map,
+        on_event,
+        benchmark_track=benchmark_track,
+        api_key=api_key,
+    ):
         collected_map[cand.candidate_key] = cand
 
     collected = [
@@ -704,6 +786,8 @@ def run_once(
         judge_model,
         temperature=judge_temp,
         gold_reference=gold_reference,
+        api_key=api_key,
+        verifier_model=str(judge_cfg.get("verifier_model") or ""),
     )
     for j in judgments:
         _emit(
@@ -757,12 +841,40 @@ def run_once(
             "judge": judge_cfg,
             "blind_map": blind_map,
             "gold_reference": gold_reference.strip() if gold_reference else "",
+            "case_stem": case.stem,
         },
         candidates=collected,
         judgments=judgments,
         ranking=ranking,
         total_cost_usd=round(total_cost, 6),
         notes=notes,
+        cohort_id=cohort,
+        scoring_version=SCORING_VERSION,
+        prompt_version="gold-only-v1",
+        benchmark_track=benchmark_track,
+        run_status=(
+            "complete"
+            if all(j.status == "valid" for j in judgments)
+            else "partial"
+        ),
+        reproducibility={
+            "git_sha": _git_sha(),
+            "python": platform.python_version(),
+            "platform": platform.platform(),
+            "models_config_sha256": hashlib.sha256(
+                json.dumps(cfg, sort_keys=True, default=str).encode("utf-8")
+            ).hexdigest(),
+            "prompts_sha256": _file_sha256(
+                Path(__file__).resolve().parent / "prompts.py"
+            ),
+            "scoring_sha256": _file_sha256(
+                Path(__file__).resolve().parent / "scoring.py"
+            ),
+            "blind_seed": seed,
+            "benchmark_track": benchmark_track,
+            "candidate_temperature": 0.2 if benchmark_track == "controlled" else None,
+            "judge_temperature": judge_temp,
+        },
     )
 
     _emit(
@@ -791,7 +903,10 @@ def run_n(
     gold_reference: str = "",
     case_stem_override: str = "",
     triple_qvac: bool = False,
+    benchmark_track: str = "controlled",
+    api_key: Optional[str] = None,
 ) -> tuple[List[RunArtifact], MultiRunSummary]:
+    load_confirmed_gold(gold_reference)
     if out_dir is None:
         from benchmark.workspace import scoped_artifacts_dir
 
@@ -813,6 +928,8 @@ def run_n(
             gold_reference=gold_reference,
             case_stem_override=case_stem_override,
             triple_qvac=triple_qvac,
+            benchmark_track=benchmark_track,
+            api_key=api_key,
         )
         write_artifact(art, out)
         artifacts.append(art)

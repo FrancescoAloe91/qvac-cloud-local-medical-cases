@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import re
 import statistics
+import os
+import tempfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -12,6 +14,7 @@ from benchmark.prompts import use_gold_ground_truth
 from benchmark.schema import MultiRunSummary, RunArtifact
 from benchmark.scoring import (
     WEIGHTED_CAP,
+    graded_clinical_score,
     linear_item_score,
     semantic_item_score,
     soft_alignment_from_checklist,
@@ -42,41 +45,87 @@ def reliability_from_cv(cv_pct: float) -> str:
 def write_artifact(artifact: RunArtifact, out_dir: Path) -> Path:
     out_dir.mkdir(parents=True, exist_ok=True)
     path = out_dir / f"{artifact.run_id}.json"
-    path.write_text(
-        artifact.model_dump_json(indent=2),
-        encoding="utf-8",
-    )
+    _atomic_write(path, artifact.model_dump_json(indent=2))
     return path
 
 
 def write_summary(summary: MultiRunSummary, out_dir: Path) -> Path:
     out_dir.mkdir(parents=True, exist_ok=True)
     path = out_dir / f"{summary.case_id}-summary-n{summary.n}.json"
-    path.write_text(summary.model_dump_json(indent=2), encoding="utf-8")
+    _atomic_write(path, summary.model_dump_json(indent=2))
     return path
+
+
+def _atomic_write(path: Path, text: str) -> None:
+    """Crash-safe replace: readers see either the old or complete new JSON."""
+    fd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(text)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp_name, path)
+    finally:
+        try:
+            Path(tmp_name).unlink(missing_ok=True)
+        except OSError:
+            pass
 
 
 def summarize_runs(artifacts: List[RunArtifact]) -> MultiRunSummary:
     if not artifacts:
         return MultiRunSummary(case_id="", n=0)
     case_id = artifacts[0].case_id
+    cohort_ids = {a.cohort_id for a in artifacts if a.cohort_id}
+    if len(cohort_ids) > 1:
+        raise ValueError("Cannot summarize mixed cohorts")
     scores: Dict[str, List[float]] = {}
+    requested: Dict[str, int] = {}
+    failures: Dict[str, Dict[str, int]] = {}
     for art in artifacts:
         for row in art.ranking:
             key = str(row.get("key") or "")
             if not is_current_roster_key(key):
                 continue  # drop legacy Band B / old cloud keys from means
-            scores.setdefault(key, []).append(float(row["accuracy"]))
+            requested[key] = requested.get(key, 0) + 1
+            status = str(row.get("status") or "ok")
+            accuracy = row.get("accuracy")
+            if status != "ok" or accuracy is None:
+                reason = str(row.get("status_note") or status or "unknown")
+                failures.setdefault(key, {})[reason] = (
+                    failures.setdefault(key, {}).get(reason, 0) + 1
+                )
+                continue
+            scores.setdefault(key, []).append(float(accuracy))
 
-    stats: Dict[str, Dict[str, float]] = {}
+    stats: Dict[str, Dict[str, Any]] = {}
     outliers: List[str] = []
-    for key, vals in scores.items():
+    for key in requested:
+        vals = scores.get(key, [])
+        if not vals:
+            stats[key] = {
+                "mean": None,
+                "median": None,
+                "std": None,
+                "cv_pct": None,
+                "reliability": "no_valid_observations",
+                "iqr": None,
+                "min": None,
+                "max": None,
+                "n": 0.0,
+                "n_runs": 0.0,
+                "n_requested": float(requested[key]),
+                "n_valid": 0.0,
+                "n_failed": float(requested[key]),
+                "failure_reasons": failures.get(key, {}),
+            }
+            continue
         mean = statistics.fmean(vals)
-        std = statistics.pstdev(vals) if len(vals) > 1 else 0.0
+        std = statistics.stdev(vals) if len(vals) > 1 else None
         med = statistics.median(vals)
         # Coefficient of variation (%) — simple reliability signal for the mean
-        cv_pct = round(100.0 * std / mean, 1) if mean > 1e-6 else 0.0
-        reliability = reliability_from_cv(cv_pct)
+        cv_pct = round(100.0 * std / mean, 1) if std is not None and mean > 1e-6 else None
+        reliability = "exploratory" if len(vals) >= 5 else "insufficient_n"
         if len(vals) >= 4:
             q1, _, q3 = statistics.quantiles(vals, n=4)
             iqr = q3 - q1
@@ -89,7 +138,7 @@ def summarize_runs(artifacts: List[RunArtifact]) -> MultiRunSummary:
         stats[key] = {
             "mean": round(mean, 2),
             "median": round(med, 2),
-            "std": round(std, 2),
+            "std": round(std, 2) if std is not None else None,
             "cv_pct": cv_pct,
             "reliability": reliability,
             "iqr": round(iqr, 2),
@@ -97,12 +146,14 @@ def summarize_runs(artifacts: List[RunArtifact]) -> MultiRunSummary:
             "max": round(max(vals), 2),
             "n": float(n_runs),
             "n_runs": float(n_runs),
+            "n_requested": float(requested.get(key, n_runs)),
+            "n_valid": float(n_runs),
+            "n_failed": float(max(0, requested.get(key, n_runs) - n_runs)),
+            "failure_reasons": failures.get(key, {}),
         }
         # Flag high variance (prefer N≥5 for stable CV reads)
-        if len(vals) >= 3 and std > 15:
+        if len(vals) >= 3 and std is not None and std > 15:
             outliers.append(f"{key}: high variance std={std:.1f} (CV {cv_pct}%)")
-        if reliability in ("low", "very_low") and len(vals) >= 2:
-            outliers.append(f"{key}: mean less reliable (CV {cv_pct}% · {reliability})")
         # Flag bimodal-ish: large gap mid sorted
         if len(vals) >= 4:
             s = sorted(vals)
@@ -110,6 +161,11 @@ def summarize_runs(artifacts: List[RunArtifact]) -> MultiRunSummary:
             if mid_gap > 25:
                 outliers.append(f"{key}: possible bimodal gap={mid_gap:.1f}")
 
+    all_keys = set(requested)
+    equal_valid_n = {len(scores.get(key, [])) for key in all_keys}
+    aggregate_ready = bool(all_keys) and len(equal_valid_n) == 1 and next(
+        iter(equal_valid_n), 0
+    ) >= 5
     ranking_mean = [
         {
             "key": k,
@@ -122,22 +178,39 @@ def summarize_runs(artifacts: List[RunArtifact]) -> MultiRunSummary:
             "min": v["min"],
             "max": v["max"],
             "n_runs": int(v.get("n_runs") or v.get("n") or 0),
+            "n_requested": int(v.get("n_requested") or 0),
+            "n_failed": int(v.get("n_failed") or 0),
+            "exploratory": True,
         }
         for k, v in stats.items()
-    ]
+    ] if aggregate_ready else []
     ranking_mean.sort(key=lambda r: r["accuracy_mean"], reverse=True)
+    last_mean: Optional[float] = None
+    last_rank = 0
     for i, row in enumerate(ranking_mean, 1):
-        row["rank"] = i
+        mean_value = float(row["accuracy_mean"])
+        if last_mean is None or mean_value != last_mean:
+            last_mean = mean_value
+            last_rank = i
+        row["rank"] = last_rank
 
     total_cost = sum(a.total_cost_usd for a in artifacts)
     return MultiRunSummary(
         case_id=case_id,
-        n=len(artifacts),
+        n=min(equal_valid_n) if aggregate_ready else 0,
         candidate_stats=stats,
         ranking_mean=ranking_mean,
         run_ids=[a.run_id for a in artifacts],
         total_cost_usd=round(total_cost, 6),
-        outliers=outliers,
+        outliers=outliers
+        + (
+            []
+            if aggregate_ready
+            else [
+                "Aggregate ranking withheld: every model needs the same minimum of "
+                "5 valid observations; technical failures are N/A."
+            ]
+        ),
     )
 
 
@@ -148,10 +221,14 @@ def print_summary_table(summary: MultiRunSummary) -> str:
         "-" * 70,
     ]
     for row in summary.ranking_mean:
+        std = row.get("std")
+        cv = row.get("cv_pct")
         lines.append(
             f"{row['rank']:<6}{row['key']:<12}"
-            f"{row['accuracy_mean']:>7.1f}{row['std']:>7.1f}"
-            f"{row.get('cv_pct', 0):>6.1f}{str(row.get('reliability', '—')):>11}"
+            f"{row['accuracy_mean']:>7.1f}"
+            f"{(f'{std:.1f}' if std is not None else '—'):>7}"
+            f"{(f'{cv:.1f}' if cv is not None else '—'):>6}"
+            f"{str(row.get('reliability', '—')):>11}"
             f"{row.get('median', 0):>7.1f}"
             f"{int(row.get('n_runs') or 0):>6}"
         )
@@ -164,24 +241,14 @@ def print_summary_table(summary: MultiRunSummary) -> str:
 
 def reliability_caption(summary: MultiRunSummary) -> str:
     """One-line plain-language guide for the multi-run mean."""
-    if summary.n < 2:
-        return "Single run — no variance yet."
-    cvs = [float(r.get("cv_pct") or 0) for r in summary.ranking_mean]
-    worst = max(cvs) if cvs else 0.0
-    band_key = reliability_from_cv(worst)
-    band = {
-        "super_high": "Super-high confidence",
-        "high": "High confidence",
-        "medium": "Moderate confidence",
-        "low": "Lower confidence — means jump between runs",
-        "very_low": "Very low confidence — unstable across runs",
-    }.get(band_key, band_key)
+    if not summary.ranking_mean:
+        return (
+            "Aggregate ranking withheld — every model needs the same minimum of "
+            "5 valid runs. Technical failures are N/A, never zero."
+        )
     return (
-        f"{band} across N={summary.n} · "
-        f"CV% Super High ≤{CV_SUPER_HIGH_MAX:.0f}% · High ≤{CV_HIGH_MAX:.0f}% · "
-        f"Med ≤{CV_MEDIUM_MAX:.0f}% · Low ≤{CV_LOW_MAX:.0f}% · else Very Low · "
-        f"error bars = ±1 std"
-        + (" · prefer Multi ×5+" if summary.n < 5 else "")
+        f"Exploratory repeatability across equal valid N={summary.n} · "
+        "sample SD + median/IQR · this does not measure clinical generalization."
     )
 
 
@@ -232,9 +299,8 @@ def rescore_artifact_current_formula(art: RunArtifact) -> Dict[str, Any]:
     """
     Recompute section scores + weighted accuracy with the *current* host formula.
 
-    Uses metrics embedded in stored rationales (no API). Gold runs → semantic
-    50/30/20; rubric runs → checklist+quality weights. Returns a lightweight
-    ranking dict suitable for summarize_runs / charts.
+    Uses structured claim decisions already stored in artifacts (no API).
+    Legacy artifacts fall back to metrics embedded in their rationales.
     """
     cfg = art.models_config or {}
     gold_ref = str(cfg.get("gold_reference") or "")
@@ -249,8 +315,35 @@ def rescore_artifact_current_formula(art: RunArtifact) -> Dict[str, Any]:
     per_model_sections: Dict[str, Dict[str, float]] = {}
 
     for j in art.judgments:
+        if j.status != "valid":
+            continue
         secs: Dict[str, float] = {}
         for qs in j.question_scores:
+            if qs.claim_coverage and qs.recall is not None:
+                secs[qs.question_id] = graded_clinical_score(
+                    coverage=qs.recall,
+                    quality=qs.quality if qs.quality is not None else 0.5,
+                    discipline=qs.precision if qs.precision is not None else 1.0,
+                )
+                continue
+            total_claims = len(qs.matched_claim_ids) + len(qs.missed_claim_ids)
+            if total_claims:
+                # Legacy binary artifacts cannot recover partial coverage. Use
+                # their matched ratio as a conservative proxy, treat historically
+                # over-broad "unsupported" labels as neutral, and retain explicit
+                # contradiction penalties.
+                coverage = len(qs.matched_claim_ids) / total_claims
+                discipline = max(
+                    0.0,
+                    1.0 - (0.75 * len(qs.contradictions)) / total_claims,
+                )
+                score = graded_clinical_score(
+                    coverage=coverage,
+                    quality=qs.quality if qs.quality is not None else 0.5,
+                    discipline=discipline,
+                )
+                secs[qs.question_id] = score
+                continue
             parsed = _parse_rationale_metrics(qs.rationale or "")
             if not parsed:
                 secs[qs.question_id] = float(qs.score)
@@ -345,13 +438,43 @@ def rebuild_multi_from_history(
     current formula, return summarize_runs-compatible summary + per-run rows.
     Zero API cost.
     """
-    n = max(2, min(int(n), 30))
-    pairs = artifacts_for_case(out_dir, case_id, limit=n)
-    if len(pairs) < 2:
+    n = max(5, min(int(n), 30))
+    all_pairs = artifacts_for_case(out_dir, case_id, limit=None)
+    if not all_pairs:
         return {
             "ok": False,
-            "reason": f"Need at least 2 saved runs for {case_id} (found {len(pairs)}).",
+            "reason": f"No saved runs for {case_id}.",
+            "available": 0,
+        }
+    latest_cohort = all_pairs[0][1].cohort_id
+    if not latest_cohort:
+        legacy_pairs = all_pairs[:n]
+        return {
+            "ok": False,
+            "reason": (
+                "Newest runs are legacy artifacts without a cohort manifest. "
+                "They remain available as experimental history but cannot enter an "
+                "official mean under the new protocol."
+            ),
+            "available": len(legacy_pairs),
+            "legacy_auto_rescore": True,
+            "per_run": [
+                rescore_artifact_current_formula(artifact)
+                for _, artifact in legacy_pairs
+            ],
+        }
+    pairs = [
+        pair for pair in all_pairs if pair[1].cohort_id == latest_cohort
+    ][:n]
+    if len(pairs) < 5:
+        return {
+            "ok": False,
+            "reason": (
+                f"Need at least 5 saved valid-cohort runs (found {len(pairs)}). "
+                "Different stems, references, protocols or model configs cannot be mixed."
+            ),
             "available": len(pairs),
+            "cohort_id": latest_cohort,
         }
 
     rescored_arts: List[RunArtifact] = []
@@ -384,6 +507,8 @@ def rebuild_multi_from_history(
         "n_used": len(rescored_arts),
         "summary": summary,
         "per_run": per_run,
-        "formula": "gold 50/30/20 semantic · or rubric quality-weighted (current code)",
+        "formula": "evidence-linked claim correctness · same immutable cohort only",
         "api_cost_usd": 0.0,
+        "cohort_id": latest_cohort,
+        "official": True,
     }
