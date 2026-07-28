@@ -21,7 +21,7 @@ _STRINGS = {
         "sidebar.cloud_tiers_save": "Save version labels",
         "sidebar.cloud_tiers_saved": "Cloud version labels saved",
         "sidebar.cloud_tiers_qvac_auto": "Auto-detected from your local setup (GGUF quant + Ollama model tag).",
-        "sidebar.privacy_note": "🔒 QVAC generation is on-device; extract/judge still use OpenRouter when scoring.",
+        "sidebar.privacy_note": "QVAC generation is on-device; extract/judge still use OpenRouter when scoring.",
         "sidebar.wallet": "Wallet",
         "sidebar.wallet_caption": "Simulated USDT rewards — sell anonymized records below.",
         "sidebar.test_case": "Test case",
@@ -153,7 +153,7 @@ _STRINGS = {
         "chart.privacy_scale_high": "100",
         "chart.privacy_scale_cloud": "cloud",
         "chart.privacy_scale_local": "on-device",
-        "chart.privacy_caption": "0% = answer pasted from a cloud site (case left the device) · 100% = QVAC MedPsy ran fully on-device.",
+        "chart.privacy_caption": "0% = answer pasted from a cloud site (case left the device) · 100% = QVAC MedPsy generation stayed on-device (extract/judge may still use OpenRouter).",
         "ranking.legend": (
             "**Consensus score %** = weighted blend of diagnosis match (40%), plan & next steps (30%), "
             "urgency agreement (20%), clinical summary (10%) — **rescaled so #1 in the group = 100%**. "
@@ -500,7 +500,7 @@ _STRINGS = {
         "sidebar.cloud_tiers_save": "Salva etichette versione",
         "sidebar.cloud_tiers_saved": "Etichette versione cloud salvate",
         "sidebar.cloud_tiers_qvac_auto": "Rilevato automaticamente dal setup locale (quant GGUF + tag Ollama).",
-        "sidebar.privacy_note": "🔒 Generazione QVAC on-device; extract/judge usano comunque OpenRouter in scoring.",
+        "sidebar.privacy_note": "Generazione QVAC on-device; extract/judge usano comunque OpenRouter in scoring.",
         "sidebar.wallet": "Wallet",
         "sidebar.wallet_caption": "Reward USDT simulate — vendi record anonimizzati in fondo alla pagina.",
         "sidebar.test_case": "Caso di test",
@@ -632,7 +632,7 @@ _STRINGS = {
         "chart.privacy_scale_high": "100",
         "chart.privacy_scale_cloud": "cloud",
         "chart.privacy_scale_local": "on-device",
-        "chart.privacy_caption": "0% = risposta incollata da sito cloud (il caso ha lasciato il device) · 100% = QVAC MedPsy elaborato interamente in locale.",
+        "chart.privacy_caption": "0% = risposta incollata da sito cloud (il caso ha lasciato il device) · 100% = generazione QVAC MedPsy restata on-device (extract/judge possono usare OpenRouter).",
         "ranking.legend": (
             "**Score consenso %** = media pesata di match diagnosi (40%), piano & next steps (30%), "
             "accordo urgenza (20%), sintesi clinica (10%) — **riscalato così #1 del gruppo = 100%**. "

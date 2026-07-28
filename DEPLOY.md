@@ -34,7 +34,8 @@ Hosted behavior:
 - technical failures are N/A and remain visible in artifacts.
 
 If Supabase variables are absent, hosted keys are session-only and local disk
-history is not durable. The UI warns about this state.
+history is not durable. The UI shows a quiet caption for this state (no durable
+account vault).
 
 ## Local
 

@@ -361,6 +361,7 @@ def reliability_caption(summary: MultiRunSummary) -> str:
     return (
         f"Exploratory ranking for {eligible} model(s) with at least 5 valid runs · "
         "each mean shows its own N; technical N/A never discard other models' data · "
+        "C/Q/D = coverage/quality/discipline (quality independent of coverage) · "
         "sample SD + median/IQR do not measure clinical generalization."
     )
 

@@ -75,7 +75,10 @@ Artifact fields may still be named `accuracy` for schema compatibility. That
 number is the Clinical Composite Score relative to one user reference. It is
 not clinical accuracy, correctness against an external truth set, or clinical
 validation. There are no fallback scores, artificial score caps, or forced
-tie-breaks. Exact ties keep the same rank.
+tie-breaks on the gold `graded-clinical-v4` path. Legacy helpers
+`linear_item_score` / `semantic_item_score` still reference `ITEM_SCORE_CAP`
+(96.5) for archived rubric/semantic modes only — they are not applied to
+active gold Clinical Composite scores. Exact ties keep the same rank.
 
 ## Judge pipeline and token budgets
 

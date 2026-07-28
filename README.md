@@ -203,7 +203,8 @@ validity.
 
 Optional SHA digests and provider-routed model metadata may vary across
 OpenRouter responses; treat them as reproducibility aids, not guarantees of
-identical provider backends.
+identical provider backends. Empty `EXPECTED_SHA` pins and
+`allow_fallbacks=True` mean a rerun can land on a different routed backend.
 
 The primary view keeps every valid per-model observation. A secondary paired
 complete-case sensitivity ranking uses only iterations where every model has a
@@ -216,7 +217,8 @@ visitor key into process-global environment state.
 
 - Local mode: key and data are scoped to the current session/local workspace
   under `artifacts/owners/<key-fingerprint>/`. Saved artifacts may contain case
-  text, reference quotes, and model answers — treat the folder as sensitive.
+  text, reference quotes, and model answers — treat the folder as sensitive PHI/
+  clinical plaintext; do not commit or share it. Anonymize cases before paste.
 - Hosted mode (Streamlit Cloud + Supabase Auth): configure Supabase Auth, apply
   `supabase/migrations/202607270001_secure_benchmark.sql`, and provide a Fernet
   `APP_ENCRYPTION_KEY`. Workspace directories use the Supabase user id. After

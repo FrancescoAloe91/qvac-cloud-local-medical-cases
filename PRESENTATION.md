@@ -40,7 +40,7 @@ Coverage is claim-level vs frozen quotes; quality is independent of coverage; un
 **Yes**
 
 - Prompt parity and a transparent, reference-relative comparison
-- Privacy path for on-device QVAC answers
+- Privacy path for **local QVAC collect** (extract/judge may still use OpenRouter)
 - Blind LLM-as-judge with evidence checks and bounded repair
 - Exploratory multi-run repeatability on one fixed case/reference cohort
 
@@ -64,6 +64,6 @@ Streamlit · Python · OpenRouter (BYOK) · DeepSeek R1 judge · Qwen whole-run 
 
 ## Closing line
 
-> *“Same case, same frozen quotes — cloud APIs vs on-device QVAC. You see the composite score and decide.”*
+> *“Same case, same frozen quotes — cloud APIs vs local MedPsy generation. You see the composite score and decide.”*
 
 **Repo:** https://github.com/FrancescoAloe91/qvac-vs-cloud-llms-health-test

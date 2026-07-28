@@ -34,3 +34,7 @@ models/.cache/**
 .streamlit_pid
 *.swp
 .DS_Store
+
+# Local CI log probes (never commit)
+.ci_probe/
+.ci_probe/**

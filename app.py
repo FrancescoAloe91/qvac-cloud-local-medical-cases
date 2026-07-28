@@ -516,7 +516,8 @@ Clinical Composite Score = 30% diagnosis + 25% safety + 20% plan + 15% tests + 1
   <tr><td>Failure status</td><td>N/A</td><td>Transport, timeout, malformed evidence or cancellation</td></tr>
 </table>
 <p>Synonyms and faithful paraphrases count. Every match/contradiction must cite candidate evidence.
-Judge is an uncalibrated LLM-as-judge unless human calibration fixtures have been checked.</p>
+Judge is an uncalibrated LLM-as-judge unless human calibration fixtures have been checked.
+UI shows <b>Clinical Composite</b>; artifact JSON may still use the field name <code>accuracy</code> for compatibility.</p>
 <p>Each model enters the aggregate ranking after 5 valid runs, independently of
 other models' N/A results. Every mean keeps its own N; missing scores are never imputed.
 N=5 remains exploratory (not bit-identical reruns) and measures repeatability on this reference, not general clinical validity.</p>
@@ -780,9 +781,8 @@ def key_welcome_dialog():
     elif isinstance(account, AccountSession):
         st.success(f"Signed in · {account.email}")
     elif is_streamlit_cloud():
-        st.warning(
-            "Encrypted account storage is not configured on this deployment; "
-            "the key remains only in this browser session."
+        st.caption(
+            "Hosted without Supabase · key and history stay session-only (not durable)."
         )
     st.caption("Keys are never copied into process-global environment variables.")
     if existing:
@@ -882,6 +882,15 @@ def _render_saved_run_panel(path_str: str, *, key_prefix: str = "saved") -> None
         f"{case_display_name(hist.case_id)} · run {hist.n_index} · {when} · "
         f"${hist.total_cost_usd:.4f} · `{Path(path_str).name}`"
     )
+    _eff = (hist.reproducibility or {}).get("effective_judge") or ""
+    _pri = (hist.reproducibility or {}).get("primary_judge") or ""
+    if _eff:
+        _judge_note = f"Effective judge · `{_eff}`"
+        if _pri and _pri != _eff:
+            _judge_note += f" (primary was `{_pri}`)"
+        if (hist.reproducibility or {}).get("verifier_activated"):
+            _judge_note += " · whole-run verifier active"
+        st.caption(_judge_note)
 
     _hist_rank = _current_ranking(hist.ranking or [])
     _hist_cands = filter_current_roster_rows(
@@ -1090,7 +1099,9 @@ def _reliability_table_html(ranking_mean: list) -> str:
         f"{reliability_badge('very_low')} CV &gt; 30% &nbsp;·&nbsp; "
         "lower CV = stabler mean · <b>Runs</b> = scored passes for that model/version "
         "(can differ if local was repeated more than cloud) · "
-        "prefer Multi ×10–30 for tight means</div>"
+        "prefer Multi ×10–30 for tight means · "
+        "<b>C/Q/D</b> = coverage / quality / discipline "
+        "(quality is independent of coverage; a high board % can still have low C)</div>"
     )
 
 
@@ -1193,7 +1204,8 @@ def scoring_guide_dialog():
     st.caption(
         "Blind DeepSeek R1 (uncalibrated LLM-as-judge unless fixtures checked) · "
         "host recomputes scores · exact ties keep the same rank · technical failures are N/A · "
-        "requires a confirmed five-section reference"
+        "requires a confirmed five-section reference · "
+        "artifact JSON may still label the field `accuracy` (Clinical Composite, reference-relative)"
     )
     left, right = st.columns(2, gap="large")
     with left:
@@ -1298,7 +1310,7 @@ if st.session_state.get("or_key_session") and is_usable_openrouter_key(
 
 st.markdown('<p class="demo-hero">QVAC vs Cloud · Automated Benchmark</p>', unsafe_allow_html=True)
 st.markdown(
-    '<p class="demo-sub">On-device MedPsy via QVAC SDK · BYOK OpenRouter · DeepSeek R1 blind judge · '
+    '<p class="demo-sub">Local MedPsy generation via QVAC SDK · BYOK OpenRouter · DeepSeek R1 blind judge · '
     "evidence-linked claim scoring · technical failures = N/A · live TTFT / TPS</p>",
     unsafe_allow_html=True,
 )
@@ -1368,6 +1380,8 @@ with st.sidebar:
     else:
         st.warning("No full key · Single/Multi off")
     st.caption("Session/account isolated · never shared through process environment")
+    if is_streamlit_cloud() and not account_store_configured():
+        st.caption("Hosted without Supabase · session-only key/history (not durable).")
     key_in = st.text_input(
         "OPENROUTER_API_KEY",
         value="",
@@ -4015,6 +4029,14 @@ if st.session_state.get("confirmed_run"):
                 unsafe_allow_html=True,
             )
             st.caption(reliability_caption(summary))
+            _lo_art = all_artifacts[-1] if all_artifacts else None
+            _lo_eff = (
+                ((_lo_art.reproducibility or {}).get("effective_judge") or "")
+                if _lo_art is not None
+                else ""
+            )
+            if _lo_eff:
+                st.caption(f"Effective judge (last run) · `{_lo_eff}`")
             st.markdown("##### Ranking table")
             st.markdown(
                 _reliability_table_html(summary.ranking_mean), unsafe_allow_html=True
@@ -5007,6 +5029,21 @@ if st.session_state.get("confirmed_run"):
                 unsafe_allow_html=True,
             )
             st.caption(reliability_caption(summary))
+            _last_art = all_artifacts[-1] if all_artifacts else None
+            _eff_multi = (
+                ((_last_art.reproducibility or {}).get("effective_judge") or "")
+                if _last_art is not None
+                else ""
+            )
+            if _eff_multi:
+                st.caption(
+                    f"Effective judge (last run) · `{_eff_multi}`"
+                    + (
+                        " · verifier may replace primary on systemic failure"
+                        if (_last_art.reproducibility or {}).get("verifier_activated")
+                        else ""
+                    )
+                )
             st.markdown("##### Ranking table")
             st.markdown(
                 _reliability_table_html(summary.ranking_mean), unsafe_allow_html=True
@@ -5153,9 +5190,32 @@ if st.session_state.get("confirmed_run"):
                 )
             tab_l, tab_r = st.columns(2)
             with tab_l:
+                _eff_from_j = sorted(
+                    {
+                        str(
+                            getattr(j, "judge_model", None)
+                            or (j.get("judge_model") if isinstance(j, dict) else "")
+                            or ""
+                        )
+                        for j in (last_judgments or [])
+                    }
+                    - {""}
+                )
+                _eff_label = (
+                    _eff_from_j[0]
+                    if len(_eff_from_j) == 1
+                    else ("mixed" if _eff_from_j else judge_model)
+                )
                 st.caption(
                     "Clinical Composite Score (reference-relative) + KPI · "
-                    "LLM-as-judge · not clinical ground truth · technical errors remain N/A"
+                    "uncalibrated LLM-as-judge · not clinical ground truth · "
+                    "technical errors remain N/A · "
+                    f"effective judge · `{_eff_label}`"
+                    + (
+                        " (verifier may replace primary on systemic failure)"
+                        if _eff_label
+                        else ""
+                    )
                 )
                 if last_ranking:
                     rows = []
