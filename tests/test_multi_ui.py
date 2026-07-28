@@ -1,6 +1,8 @@
 from lib.benchmark_multi_ui import (
     _ranking_table_html,
+    finished_multi_progress,
     live_judging_board_html,
+    progressive_multi_panel_html,
     snapshot_from_artifact,
 )
 from lib.charts import fig_judge_accuracy_bars
@@ -142,6 +144,23 @@ def test_secondary_ranking_table_shows_na_not_zero_percent():
     assert "N/A" in html
     assert "technical" in html
     assert "0.0%" not in html
+
+
+def test_finished_multi_progress_marks_batch_done_after_early_abort():
+    """Full Multi used to set batch_done only when len(artifacts)>1."""
+    snap = {"n_index": 1, "run_id": "r1", "ranking": [], "total_cost_usd": 0.1}
+    state = finished_multi_progress(
+        [snap], n_total=5, paths=["/tmp/r1.json"], aborted_early=True
+    )
+    assert state["batch_done"] is True
+    assert state["aborted_early"] is True
+    assert state["completed_runs"] == 1
+    assert state["requested_runs"] == 5
+    html = progressive_multi_panel_html(
+        state["completed"], n_total=state["n_total"], batch_done=state["batch_done"]
+    )
+    assert "Waiting for all runs" not in html
+    assert "still running below" not in html
 
 
 def test_snapshot_from_artifact_preserves_na_status():

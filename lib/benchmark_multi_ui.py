@@ -87,6 +87,30 @@ def mean_placeholder_html(*, n_done: int, n_total: int) -> str:
 """
 
 
+def finished_multi_progress(
+    completed: List[Dict[str, Any]],
+    *,
+    n_total: int,
+    paths: Optional[List[str]] = None,
+    aborted_early: bool = False,
+) -> Dict[str, Any]:
+    """Session payload when a multi-run batch ends (success, abort, or cancel).
+
+    Always sets ``batch_done=True`` so the progressive strip never stays forever
+    on "Waiting for all runs…" after an early abort with fewer than 2 artifacts.
+    """
+    done = list(completed or [])
+    return {
+        "completed": done,
+        "n_total": int(n_total),
+        "batch_done": True,
+        "aborted_early": bool(aborted_early),
+        "completed_runs": len(done),
+        "requested_runs": int(n_total),
+        "paths": list(paths or []),
+    }
+
+
 _BAR_COLORS = {
     "chatgpt": "#10a37f",
     "claude": "#d97706",

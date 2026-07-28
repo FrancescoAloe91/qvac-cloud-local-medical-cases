@@ -77,6 +77,7 @@ from benchmark.runner import (
 from benchmark.schema import CandidateAnswer, Case, ModelCallMeta, RunArtifact, utc_now_iso
 from lib.benchmark_multi_ui import (
     client_toast_run_done,
+    finished_multi_progress,
     live_judging_board_html,
     progressive_multi_panel_html,
     reliability_badge,
@@ -2641,6 +2642,7 @@ if st.session_state.get("confirmed_run"):
         ok_local: list[str] = []
         judge_s = 0
         live_snap: dict = {}
+        abort_multi = False
 
         if n_local > 1:
             st.session_state["multi_progress"] = {
@@ -3688,15 +3690,12 @@ if st.session_state.get("confirmed_run"):
 
         _done_label = "Only local" if _local_bakeoff else "QVAC-only"
         if n_local > 1:
-            st.session_state["multi_progress"] = {
-                "completed": list(completed_snaps),
-                "n_total": n_local,
-                "batch_done": True,
-                "aborted_early": bool(abort_multi),
-                "completed_runs": len(all_artifacts),
-                "requested_runs": n_local,
-                "paths": list(artifact_paths),
-            }
+            st.session_state["multi_progress"] = finished_multi_progress(
+                completed_snaps,
+                n_total=n_local,
+                paths=artifact_paths,
+                aborted_early=bool(abort_multi),
+            )
             _paint_multi_progress(
                 multi_progress_slot,
                 completed_snaps,
@@ -3714,12 +3713,12 @@ if st.session_state.get("confirmed_run"):
             write_summary(summary, WORKSPACE_DIR)
             st.session_state["last_multi_summary"] = summary.model_dump()
             st.session_state["last_multi_paths"] = list(artifact_paths)
-            st.session_state["multi_progress"] = {
-                "completed": list(completed_snaps),
-                "n_total": n_local,
-                "batch_done": True,
-                "paths": list(artifact_paths),
-            }
+            st.session_state["multi_progress"] = finished_multi_progress(
+                completed_snaps,
+                n_total=n_local,
+                paths=artifact_paths,
+                aborted_early=bool(abort_multi),
+            )
             _paint_multi_progress(
                 multi_progress_slot,
                 completed_snaps,
@@ -3963,6 +3962,7 @@ if st.session_state.get("confirmed_run"):
     collect_s_acc = 0.0
     judge_s_acc = 0.0
     per_run_timings: list[dict] = []
+    abort_multi = False
     live_snap: dict = {
         c["key"]: {
             "text": "(start QVAC SDK sidecar to include MedPsy)",
@@ -4651,18 +4651,35 @@ if st.session_state.get("confirmed_run"):
         st.session_state["show_last_run_costs"] = True
         st.session_state["last_multi_n"] = n_runs
 
+        # Always close the progressive strip when Multi ends — including early
+        # abort/cancel with a single artifact (len>1 was leaving batch_done=false).
+        if n_runs > 1:
+            st.session_state["multi_progress"] = finished_multi_progress(
+                completed_snaps,
+                n_total=n_runs,
+                paths=artifact_paths,
+                aborted_early=bool(abort_multi),
+            )
+            _paint_multi_progress(
+                multi_progress_slot,
+                completed_snaps,
+                n_total=n_runs,
+                batch_done=True,
+                height=160,
+            )
+
         # -------- Multi ×N: official = mean KPIs; per-run via tabs/popups --------
         if len(all_artifacts) > 1:
             summary = summarize_runs(all_artifacts)
             write_summary(summary, WORKSPACE_DIR)
             st.session_state["last_multi_summary"] = summary.model_dump()
             st.session_state["last_multi_paths"] = list(artifact_paths)
-            st.session_state["multi_progress"] = {
-                "completed": list(completed_snaps),
-                "n_total": n_runs,
-                "batch_done": True,
-                "paths": list(artifact_paths),
-            }
+            st.session_state["multi_progress"] = finished_multi_progress(
+                completed_snaps,
+                n_total=n_runs,
+                paths=artifact_paths,
+                aborted_early=bool(abort_multi),
+            )
             _paint_multi_progress(
                 multi_progress_slot,
                 completed_snaps,
@@ -4937,6 +4954,24 @@ if st.session_state.get("confirmed_run"):
             pass
         _finish_scope_run()
         st.session_state["benchmark_running"] = False
+        if n_runs > 1:
+            # Keep finished run tabs; clear the forever "Waiting for all runs…" strip.
+            st.session_state["multi_progress"] = finished_multi_progress(
+                completed_snaps,
+                n_total=n_runs,
+                paths=artifact_paths,
+                aborted_early=True,
+            )
+            try:
+                _paint_multi_progress(
+                    multi_progress_slot,
+                    completed_snaps,
+                    n_total=n_runs,
+                    batch_done=True,
+                    height=160,
+                )
+            except Exception:
+                pass
         elapsed = int(round(time.time() - t_run0))
         _paint_run_timer(
             timer_slot,
