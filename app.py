@@ -1091,6 +1091,7 @@ def _reliability_table_html(ranking_mean: list) -> str:
         f"{reliability_badge('low')} CV ≤ 30% &nbsp; "
         f"{reliability_badge('very_low')} CV &gt; 30% &nbsp;·&nbsp; "
         "cell color = CV band · lower CV = stabler mean · "
+        "<b>CV band ≠ clinical validation</b> · "
         "<b>Runs</b> = scored passes for that model/version "
         "(can differ if local was repeated more than cloud) · "
         "N=5 exploratory · ~10 better for CV eye-check · 20+ diminishing returns · "
@@ -1220,7 +1221,9 @@ def scoring_guide_dialog():
         st.markdown(
             "Every nonzero coverage decision and every added claim needs evidence "
             "present in the candidate answer (presentation-tolerant, text-strict). "
-            "Unverifiable harmful additions are **dropped** (audit marker), not fail-closed."
+            "Unverifiable harmful additions are **dropped** (audit marker), not fail-closed. "
+            "Parser salvage / section-repair never invents clinical content; "
+            "a missing section stays N/A."
         )
     with right:
         st.markdown("##### Final ranking %")
@@ -1320,12 +1323,14 @@ st.markdown(
 )
 st.caption(
     "**Workflow:** anonymized case → Prepare reference → review/edit → Confirm · "
-    "candidates run only after confirm · cloud cards show exact OpenRouter API models, "
-    "not consumer free-tier equivalents. Scores are reference-relative."
+    "candidates run only after confirm · cloud cards = OpenRouter API routes "
+    "(not ChatGPT/Claude/Gemini consumer web). Scores are author-supplied-gold "
+    "reference-relative — not clinical truth."
 )
 st.caption(
     "Research/demo exercise — not a medical device or clinical advice. "
-    "Collect can stay on-device; extract/judge still use OpenRouter when scoring."
+    "Collect can stay on-device; extract/judge still use OpenRouter when scoring. "
+    "Judge = uncalibrated LLM-as-judge; N=5 exploratory (not bit-identical)."
 )
 if is_streamlit_cloud() and not qvac_ok:
     st.caption(
@@ -1497,7 +1502,8 @@ with col_gold:
         on_change=_on_case_fields_edit,
     )
     st.caption(
-        "User-confirmed reference for scoring — not certified clinical ground truth."
+        "Author-supplied gold · user-confirmed reference for scoring — "
+        "not certified clinical ground truth."
     )
 
 st.session_state["_persist_case_stem"] = case_stem or ""
@@ -1721,8 +1727,9 @@ st.caption(
 )
 with st.expander("Advanced · generation settings", expanded=False):
     st.caption(
-        "Controlled is recommended for comparable runs. Provider defaults is a "
-        "different experiment and its results are kept separate."
+        "Controlled (temp 0.2) is recommended for comparable runs. "
+        "Provider defaults is a separate cohort — never pooled with controlled. "
+        "Declare the track in any public screenshot."
     )
     benchmark_track = st.radio(
         "Generation settings",
@@ -1789,11 +1796,12 @@ st.markdown(
 )
 st.caption(
     (
-        "**Cloud API** OpenAI / Anthropic / Google via OpenRouter ($) · "
+        "**Cloud** OpenRouter API · not ChatGPT/Claude/Gemini web · "
         if include_cloud
         else "**Cloud API excluded** · "
     )
-    + "**On-device** Gemma / Llama / Phi + three MedPsy GGUFs."
+    + "**On-device** Gemma / Llama / Phi + three MedPsy GGUFs · "
+    "pinned prefer-order; OpenRouter fallbacks remain on."
 )
 _chip_n = 3 if n_models >= 6 else min(3, max(1, n_models))
 chip_cols = st.columns(_chip_n)
@@ -1802,10 +1810,16 @@ for i, c in enumerate(roster):
     with chip_cols[i % _chip_n]:
         ready = c.get("gguf_ready", True)
         miss = "" if ready else " · GGUF missing"
+        # UI-only site label — do not change models.yaml site (cohort hash).
+        _site = (
+            "OpenRouter API"
+            if (c.get("provider") or "") == "openrouter"
+            else (c.get("site") or "")
+        )
         st.markdown(
             f'<div class="model-chip" style="background:{color}18;border-color:{color};color:{color}">'
             f'{c.get("label") or c.get("key")}{miss}'
-            f'<span>{c.get("site")} · {c.get("model")}</span></div>',
+            f'<span>{_site} · {c.get("model")}</span></div>',
             unsafe_allow_html=True,
         )
 missing = [
@@ -1913,6 +1927,7 @@ with _run_r1[0]:
         help="Quick one-shot. For published-style comparison prefer Multi ×5.",
     )
     st.markdown(_fmt_cost_single(selected_bd), unsafe_allow_html=True)
+    st.caption("Pre-run estimate ≠ billed OpenRouter ledger (repair/verifier/pricing drift).")
 with _run_r1[1]:
     multi_clicked = st.button(
         f"Multi run ×{int(n_multi)} · {selected_scope}",
@@ -5589,9 +5604,10 @@ st.markdown(
     unsafe_allow_html=True,
 )
 st.caption(
-    f"**{case_display_name(case_id)}** · use only the newest immutable cohort. "
-    "Each model is ranked after five valid observations; N/A never removes valid "
-    "data from others. Legacy artifacts stay experimental. **No API calls**."
+    f"**{case_display_name(case_id)}** · newest immutable cohort only. "
+    "Cohort hash = normalized case + confirmed gold (excl. timestamp) + models + track. "
+    "Same Confirm contract restores prior runs; a new Prepare that splits claims differently "
+    "starts a fresh cohort. Legacy artifacts stay experimental. **No API calls**."
 )
 _hist_for_case = artifacts_for_case(WORKSPACE_DIR, case_id)
 _avail_n = len(_hist_for_case)

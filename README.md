@@ -27,7 +27,14 @@ Repository: https://github.com/FrancescoAloe91/qvac-vs-cloud-llms-health-test
 4. The exact user `source_quote` is the canonical scored claim. Extractor
    summaries, rewrites, or weights cannot change claim meaning or score weight.
 5. Run either the `controlled` or `native_defaults` track. They are separate
-   cohorts and are never pooled.
+   cohorts and are never pooled. History “rebuild last N” uses the newest
+   immutable `cohort_id` (normalized case stem + confirmed gold excluding
+   `confirmed_at` + scoring/prompt versions + model roster + track). Pasting the
+   same raw case/reference alone is not enough: a new Prepare that changes claim
+   splits (or extraction cost metadata) starts a new cohort even when the text
+   looks identical. Re-Confirming the **same** frozen contract restores prior
+   runs for that cohort. Active protocol is gold-only; strings under `OLD/` and
+   legacy i18n paste-web keys are archived, not the live path.
 
 Demo cases and rubric scoring are not part of the active protocol.
 

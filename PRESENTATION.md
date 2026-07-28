@@ -18,7 +18,7 @@ A **gold-only clinical LLM benchmark**: the same anonymized case and user-suppli
 | TTFT / TPS | Measured from API stream | Measured from local sidecar |
 | Models | Pinned API routes (GPT / Claude / Gemini) | MedPsy + open peer GGUFs |
 
-This is a **research/demo tool**. Artifact “accuracy” is a **Clinical Composite Score relative to the user reference**, not external clinical truth.
+This is a **research/demo tool**. Artifact “accuracy” is a **Clinical Composite Score relative to the user reference**, not external clinical truth. The judge is an **uncalibrated LLM-as-judge** until human-reviewed fixtures exist. N=5 is exploratory — not a general claim that MedPsy beats consumer ChatGPT/Claude/Gemini web.
 
 ## How it works (60 seconds)
 
@@ -50,6 +50,9 @@ Coverage is claim-level vs frozen quotes; quality is independent of coverage; un
 - Does not validate that the user’s case or reference is clinically correct
 - N=5 is exploratory — not a general claim that a 4B beats paid frontier models
 - Cloud slots are **API routes**, not claims about consumer free web tiers
+- Hosted Streamlit demo is often **cloud roster only** (no QVAC sidecar); full on-device path needs a local install
+- Salvage/section-repair never invents clinical content; missing sections stay N/A
+- OpenRouter prefer-order is pinned; **fallbacks remain on** (not bit-reproducible backends)
 
 ## Demo
 

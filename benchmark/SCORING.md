@@ -201,6 +201,10 @@ Saved artifacts can be rescored without API calls:
   only presentation/schema failures may recover offline.
 - History “rebuild last N” builds exploratory or official means from the newest
   same-cohort runs (official means still need ≥5 valid cohort observations).
+  Cohort identity is the SHA-256 of normalized case stem + confirmed gold
+  (excluding `confirmed_at`) + `scoring_version` + prompt version + model
+  config + track — not “whatever text is currently pasted.” Re-Prepare that
+  changes claim splits creates a new cohort.
 - Prior rankings are stamped under `reproducibility.offline_rescore.stored_ranking`
   so old vs new comparisons remain possible.
 
