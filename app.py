@@ -2839,9 +2839,13 @@ if st.session_state.get("confirmed_run"):
                 elif phase == "retry":
                     if key:
                         prev = lo_board.get(key) or {}
-                        # Scored rows stay scored; only failed/in-flight rows may
-                        # reopen for a real attempt with a live elapsed clock.
+                        # Scored rows stay scored. Terminal N/A only reopens when
+                        # the pipeline marks a real new attempt (live clock).
                         if prev.get("status") == "scored":
+                            pass
+                        elif prev.get("status") == "failed" and not evt.get(
+                            "active_attempt"
+                        ):
                             pass
                         else:
                             if key not in lo_board:
@@ -4117,6 +4121,10 @@ if st.session_state.get("confirmed_run"):
                     prev = full_board.get(key) or {}
                     if prev.get("status") == "scored":
                         pass
+                    elif prev.get("status") == "failed" and not evt.get(
+                        "active_attempt"
+                    ):
+                        pass
                     else:
                         full_board[key] = {
                             **prev,
@@ -5172,12 +5180,16 @@ _avail_n = len(_hist_for_case)
 _n_options = [5, 10, 20, 30]
 _rb1, _rb2 = st.columns([1, 2])
 with _rb1:
-    # Default once — do not pass index= every rerun (fights session state / reopens dialogs)
+    # Default once — value MUST stay inside options or Streamlit raises TypeError
+    # ("bad argument type for built-in operation") after a mid-run reload.
     if "history_rebuild_n_pick" not in st.session_state:
-        st.session_state["history_rebuild_n_pick"] = 5 if _avail_n >= 5 else 3
-    # Keep selectbox value valid if options grew after an older session value
-    if st.session_state.get("history_rebuild_n_pick") not in _n_options:
-        st.session_state["history_rebuild_n_pick"] = 5 if _avail_n >= 5 else 3
+        st.session_state["history_rebuild_n_pick"] = 5
+    try:
+        _pick = int(st.session_state.get("history_rebuild_n_pick") or 5)
+    except (TypeError, ValueError):
+        _pick = 5
+    if _pick not in _n_options:
+        st.session_state["history_rebuild_n_pick"] = 5
     _rebuild_n = st.selectbox(
         "Average over N runs",
         options=_n_options,
@@ -5191,7 +5203,7 @@ with _rb1:
         ),
         key="history_rebuild_n_pick",
         on_change=_on_rebuild_n_pick_change,
-        help="Tiers: 3 · 5 · 10 · 20 · 30. If fewer runs are saved, rebuild uses all available. "
+        help="Tiers: 5 · 10 · 20 · 30. If fewer runs are saved, rebuild uses all available. "
         "Selecting N alone does not open a popup — use Rebuild mean.",
     )
 with _rb2:

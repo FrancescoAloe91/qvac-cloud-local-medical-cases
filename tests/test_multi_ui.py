@@ -56,6 +56,61 @@ def test_scored_row_shows_completion_and_judge_score_separately():
     assert "Clinical Composite Score" in rendered
 
 
+def test_failed_board_row_stays_terminal_without_accuracy():
+    """App paints failed N/A with accuracy=None — must not look like stuck 75%."""
+    from lib.benchmark_multi_ui import accuracy_histogram_html
+
+    rendered = live_judging_board_html(
+        {
+            "claude": {
+                "label": "Claude",
+                "status": "failed",
+                "accuracy": None,
+                "queue_i": 1,
+                "progress_pct": 100,
+                "progress_label": "complete",
+                "elapsed_s": 42.0,
+            },
+            "gemini": {
+                "label": "Gemini",
+                "status": "judging",
+                "accuracy": None,
+                "queue_i": 2,
+                "progress_pct": 75,
+                "progress_label": "corrective retry",
+                "elapsed_s": 12.0,
+            },
+        }
+    )
+    assert "N/A · technical" in rendered
+    assert "100% complete · 42s" in rendered
+    # Failed row must not keep the in-flight progress chrome.
+    assert rendered.count("rank-live-progress-track") == 1
+    assert "corrective retry" in rendered
+
+    hist = accuracy_histogram_html(
+        [
+            {
+                "key": "claude",
+                "status": "failed",
+                "accuracy": None,
+                "label": "Claude",
+            },
+            {
+                "key": "chatgpt",
+                "status": "scored",
+                "accuracy": 88.0,
+                "label": "ChatGPT",
+            },
+        ],
+        include_pending=True,
+    )
+    assert "N/A" in hist
+    assert "88.0%" in hist
+    assert 'hist-num">0.0%' not in hist
+    assert 'hist-num">N/A<' in hist
+
+
 def test_accuracy_chart_does_not_render_na_as_zero_bar():
     figure = fig_judge_accuracy_bars(
         [

@@ -768,15 +768,17 @@ def persist_rescored_artifacts(
     *,
     limit: Optional[int] = None,
 ) -> Dict[str, Any]:
-    """Offline rescore recent artifacts in place; keep prior ranking in reproducibility."""
+    """Offline rescore recent artifacts in place; keep prior ranking in reproducibility.
+
+    Includes legacy artifacts without cohort_id so History rebuild last 5/10 can
+    read stamped ``offline_rescore`` metadata (official means still require a cohort).
+    """
     pairs = artifacts_for_case(out_dir, case_id, limit=limit)
     written: List[str] = []
     comparisons: List[Dict[str, Any]] = []
     recovered_total = 0
     unrecovered_total = 0
     for path, art in pairs:
-        if not art.cohort_id:
-            continue
         scored = rescore_artifact_current_formula(art)
         clone = art.model_copy(deep=True)
         old_rank = [

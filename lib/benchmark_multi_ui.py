@@ -104,6 +104,12 @@ def _bar_color(key: str) -> str:
     return _BAR_COLORS.get(key, "#94a3b8")
 
 
+def _is_terminal_failure_row(row: Dict[str, Any]) -> bool:
+    """Technical N/A / failed board row — never treat as in-flight or 0%."""
+    st = str(row.get("status") or "").lower()
+    return st in {"failed", "n/a", "na"}
+
+
 def accuracy_histogram_html(
     rows: List[Dict[str, Any]],
     *,
@@ -116,15 +122,22 @@ def accuracy_histogram_html(
     pending: List[Dict[str, Any]] = []
     for r in rows or []:
         st = str(r.get("status") or "scored")
-        if r.get(score_field) is not None and st in ("scored", "failed", "ok", ""):
+        if _is_terminal_failure_row(r):
+            scored.append(r)
+        elif r.get(score_field) is not None and st in ("scored", "ok", ""):
             scored.append(r)
         elif include_pending:
             pending.append(r)
 
     scored = sorted(
         scored,
-        key=lambda r: float(r.get(score_field) or 0),
-        reverse=True,
+        key=lambda r: (
+            1 if _is_terminal_failure_row(r) else 0,
+            -float(r.get(score_field) or 0)
+            if r.get(score_field) is not None
+            and not _is_terminal_failure_row(r)
+            else 0.0,
+        ),
     )
     if not scored and not pending:
         return (
@@ -138,16 +151,17 @@ def accuracy_histogram_html(
         nm, ver = name_and_version(
             key, label=r.get("label"), model=r.get("model")
         )
-        acc = float(r.get(score_field) or 0)
-        failed = str(r.get("status")) == "failed"
-        width = max(0.0, min(100.0, acc))
+        failed = _is_terminal_failure_row(r)
+        acc = float(r.get(score_field) or 0) if not failed else 0.0
+        width = 0.0 if failed else max(0.0, min(100.0, acc))
         flash = " hist-bar-flash" if highlight_key and key == highlight_key else ""
         color = "#7f1d1d" if failed else _bar_color(key)
-        num = "—" if failed else f"{acc:.1f}%"
+        num = "N/A" if failed else f"{acc:.1f}%"
+        rank_cell = "—" if failed else str(i)
         bars.append(
             f'<div class="hist-row{flash}">'
             f'<div class="hist-label">'
-            f'<span class="hist-rank"><span class="rank-prov-tag">Prov.</span> {i}</span>'
+            f'<span class="hist-rank"><span class="rank-prov-tag">Prov.</span> {rank_cell}</span>'
             f'<span class="hist-name">{html.escape(nm)}</span>'
             f'<span class="hist-ver">{html.escape(ver)}</span></div>'
             f'<div class="hist-track">'
@@ -206,8 +220,10 @@ def live_judging_board_html(
     scored = [
         r
         for r in all_rows
-        if str(r.get("status") or "") in ("scored", "failed")
-        and r.get("accuracy") is not None
+        if (
+            str(r.get("status") or "") == "scored" and r.get("accuracy") is not None
+        )
+        or _is_terminal_failure_row(r)
     ]
     scored_keys = {str(r.get("key") or "") for r in scored}
     pending = [r for r in all_rows if str(r.get("key") or "") not in scored_keys]
@@ -223,15 +239,18 @@ def live_judging_board_html(
         progress_pct = max(0, min(100, int(r.get("progress_pct") or 0)))
         elapsed_s = max(0, int(float(r.get("elapsed_s") or 0)))
         flash = " rank-row-flash" if highlight_key and key == highlight_key else ""
-        if st in ("scored", "failed") and r.get("accuracy") is not None:
-            acc = float(r.get("accuracy") or 0)
-            failed = st == "failed"
+        # Terminal N/A must render even when accuracy is None (app sets failed + None).
+        if _is_terminal_failure_row(r) or (
+            st == "scored" and r.get("accuracy") is not None
+        ):
+            failed = _is_terminal_failure_row(r)
             if failed:
                 acc_col = (
                     "<span class='rank-live-acc-num fail'>—</span>"
                     "<span class='rank-live-note'>N/A · technical</span>"
                 )
             else:
+                acc = float(r.get("accuracy") or 0)
                 subscales = ""
                 if all(
                     r.get(component) is not None
