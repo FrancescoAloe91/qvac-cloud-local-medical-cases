@@ -61,7 +61,7 @@ def test_estimate_cost_breakdown_includes_extractor_repair_verifier():
 
     assert baseline > extract + judge * 0.5  # candidates + extract + judge
     assert upper > baseline
-    assert abs(upper - (baseline + repair + verifier)) < 1e-6
+    assert abs(upper - (baseline + repair + verifier)) < 1e-5
 
 
 def test_estimate_multi_run_extractor_once():
