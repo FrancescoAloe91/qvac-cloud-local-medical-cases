@@ -254,6 +254,12 @@ python -m benchmark run --case caseC --stem-file case.txt --gold-file gold.json 
 `gold.json` must be the confirmed five-section contract emitted by the UI or an
 equivalent schema-valid file.
 
+`dry-run` / UI cost estimates are length-aware OpenRouter projections: baseline
+covers cloud candidates, the gold extractor, and the primary judge at its 16k
+completion cap; the upper bound also includes possible section repair (up to
+5×4k per candidate) and an optional whole-run verifier. Actual billed spend
+comes from OpenRouter usage.
+
 ## Live judging UI
 
 - Left: FIFO collect order. Rows never reorder.

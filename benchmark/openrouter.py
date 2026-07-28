@@ -16,7 +16,7 @@ OPENROUTER_URL = os.environ.get(
     "OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1/chat/completions"
 )
 
-# Fallback $/1M when usage.cost is missing
+# Fallback $/1M when usage.cost is missing (OpenRouter list-ish; verify live rates)
 _FALLBACK_PRICES = {
     "openai/gpt-4o-mini": (0.15, 0.60),
     "openai/gpt-5.5": (5.00, 30.00),
@@ -29,6 +29,8 @@ _FALLBACK_PRICES = {
     "anthropic/claude-sonnet-4.6": (3.00, 15.00),
     "anthropic/claude-sonnet-5": (2.00, 10.00),
     "qwen/qwen3.6-flash": (0.1875, 1.125),
+    # Whole-run verifier (models.yaml judge.verifier_model)
+    "qwen/qwen3.5-397b-a17b": (0.39, 2.34),
     "openai/gpt-oss-20b:free": (0.0, 0.0),
     "nvidia/nemotron-3-super-120b-a12b:free": (0.0, 0.0),
     "deepseek/deepseek-chat": (0.25, 0.95),

@@ -1624,28 +1624,35 @@ def _fmt_cost_single(breakdown: dict) -> str:
     bits = []
     for m in breakdown.get("per_model") or []:
         bits.append(f"{m.get('key')} ${m.get('estimated_usd', 0):.3f}")
+    ex = breakdown.get("extractor") or {}
+    if ex:
+        bits.append(f"extract ${float(ex.get('estimated_usd', 0) or 0):.3f}")
     j = breakdown.get("judge") or {}
     bits.append(f"judge ${j.get('estimated_usd', 0):.3f}")
     total = float(breakdown.get("total_usd", 0) or 0)
-    hi = total * 2
+    hi = float(breakdown.get("total_usd_upper", 0) or 0) or total
+    repair = float((breakdown.get("section_repair") or {}).get("estimated_usd", 0) or 0)
+    verifier = float((breakdown.get("verifier") or {}).get("estimated_usd", 0) or 0)
     tok = breakdown.get("input_tokens_used_for_estimate", 0)
     chars = breakdown.get("chars_case_plus_gold", 0)
     return (
         '<div class="cost-compact run-cost-cell">'
         + " · ".join(bits)
         + f' · <b>${total:.3f}–${hi:.3f}</b>'
-        + f'<br/><span style="opacity:.75">{chars} chars · ~{tok} in-tok · upper≈2×</span>'
+        + f'<br/><span style="opacity:.75">{chars} chars · ~{tok} in-tok · '
+        + f"upper=+repair ${repair:.3f} +opt verifier ${verifier:.3f}</span>"
         + "</div>"
     )
 
 
 def _fmt_cost_multi(breakdown: dict, n: int) -> str:
-    per = float(breakdown.get("total_usd", 0) or 0)
     tot = float(breakdown.get("total_usd_for_n", 0) or 0)
+    hi = float(breakdown.get("total_usd_upper_for_n", 0) or 0) or tot
+    extract = float((breakdown.get("extractor") or {}).get("estimated_usd", 0) or 0)
     return (
         f'<div class="cost-compact cost-multi run-cost-cell">'
-        f"${per:.3f} × {n} → <b>${tot:.3f}–${tot * 2:.3f}</b>"
-        f'<br/><span style="opacity:.75">upper≈2×</span></div>'
+        f"<b>${tot:.3f}–${hi:.3f}</b> · ×{n} (+extract ${extract:.3f} once)"
+        f'<br/><span style="opacity:.75">baseline–upper (repair+opt verifier)</span></div>'
     )
 
 

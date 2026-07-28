@@ -1,65 +1,69 @@
-# QVAC vs Cloud LLMs — Health Test  
+# QVAC vs Cloud LLMs — Health Test
 ### Pitch one-pager (demo / investors / workshop)
 
 ---
 
 ## The problem
 
-Clinical data should not leave the device without DPA, consent, and an audit trail — yet clinicians still want LLM assistance. Free cloud models (ChatGPT / Claude / Gemini) are convenient but **expose the case**; paid tiers cost money and still do not solve privacy.
+Clinical data should not leave the device without DPA, consent, and an audit trail — yet clinicians still want LLM assistance. Cloud APIs are capable but **send the case off-device**; on-device GGUFs keep data local but need an honest, comparable score.
 
 ## The proposal
 
-A **transparent comparison** of three cloud LLMs (real answers, pasted manually) against **QVAC MedPsy 4B** running **on-device** on the same clinical prompt — with measured KPIs, not invented scores.
+A **gold-only clinical LLM benchmark**: the same anonymized case and user-supplied reference, judged relative to frozen source quotes — not invented scores, not free-tier copy-paste, not clinical validation.
 
-| | Cloud (free tier) | QVAC MedPsy 4B (local) |
+| | Cloud (OpenRouter BYOK) | QVAC / local GGUFs |
 |---|---|---|
-| Cost per case | $0 (free account) | $0 (CPU, no API) |
-| Clinical data | Leaves the device | Stays on-device |
-| TTFT / TPS | Not measurable (copy-paste) | Measured in real time |
-| Model | General-purpose (varies by account) | Medicine fine-tuned |
+| Cost per run | OpenRouter usage (candidates + extractor + judge) | $0 collect; judge still billed if used |
+| Clinical data | Leaves via API | Stays on-device (sidecar) |
+| TTFT / TPS | Measured from API stream | Measured from local sidecar |
+| Models | Pinned API routes (GPT / Claude / Gemini) | MedPsy + open peer GGUFs |
+
+This is a **research/demo tool**. Artifact “accuracy” is a **Clinical Composite Score relative to the user reference**, not external clinical truth.
 
 ## How it works (60 seconds)
 
-1. Pick one of **5 clinical cases** (4 presets + 1 anonymized real case)  
-2. Same prompt on ChatGPT, Claude, Gemini  
-3. **Run benchmark** → QVAC answers locally (stock Ollama Modelfile settings)  
-4. Dashboard: **consensus ranking** (cases 1–4) and **vs gold standard** (case 5)  
-5. **Save** per case; case 5 keeps a rolling window of up to **10 runs** and averages them  
-6. **Final averaged ranking** + optional anonymized USDT wallet reward simulation  
+1. Paste **one** anonymized case (`caseC`) + a free-form reference (diagnosis, tests, urgency, safety, plan)
+2. **Run** → pinned extractor freezes gold; exact user `source_quote` is the scored claim
+3. Same five questions to cloud (OpenRouter) and local (QVAC sidecar) under the same prompt
+4. Blind **DeepSeek R1** judge → Clinical Composite Score; optional whole-run verifier only if systemic judge failure
+5. Dashboard ranking for that cohort; **Multi ×5** for exploratory means (sample SD / median / IQR)
 
-### Scoring (same rule everywhere)
+### Scoring (current protocol)
 
-**40% diagnosis · 30% plan · 20% urgency · 10% summary**  
-Continuous 0–100 semantic scores. **Cons.%** is rescaled (#1 = 100%); **Ref.%** vs a confirmed diagnosis is absolute.
+**Per section:** 50% graded reference coverage · 35% clinical quality · 15% evidence discipline  
+**Section weights:** Diagnosis 30% · Safety 25% · Plan 20% · Tests 15% · Urgency 10%  
+
+Coverage is claim-level vs frozen quotes; quality is host-clamped ≤ verified coverage; unsupported / contradictory / dangerous additions hit discipline. Exact ties remain ties. Technical N/A is not a synthetic zero.
 
 ## What it proves (and what it does not)
 
 **Yes**
 
-- Prompt parity and an honest comparison (no pre-canned QVAC answers)  
-- Privacy by design for QVAC  
-- Real workflow: copy-paste cloud answers like a hospital without API integration  
-- Local semantic scoring (meaning, not wording alone)
+- Prompt parity and a transparent, reference-relative comparison
+- Privacy path for on-device QVAC answers
+- Blind LLM-as-judge with evidence checks and bounded repair
+- Exploratory multi-run repeatability on one fixed case/reference cohort
 
 **No**
 
-- Does not prove a 4B beats paid GPT‑4o / Opus  
-- Cloud answers are the **free tier** available on official sites  
-- Not a medical device and not clinical advice  
+- Not a medical device and not clinical advice
+- Does not validate that the user’s case or reference is clinically correct
+- N=5 is exploratory — not a general claim that a 4B beats paid frontier models
+- Cloud slots are **API routes**, not claims about consumer free web tiers
 
 ## Demo
 
 | Mode | Link / command |
 |---|---|
-| **Public (free)** | [Live demo](https://francescoaloe91-qvac-vs-cloud-llms-health-test-app-wihxyd.streamlit.app) |
-| **Full (live QVAC)** | `git clone` → `./install.sh` (macOS) or `install.ps1` (Windows) → launcher → `http://localhost:8501` |
+| **Public** | [Live demo](https://francescoaloe91-qvac-vs-cloud-llms-health-test-app-wihxyd.streamlit.app) |
+| **Full (live QVAC)** | `git clone` → `./install.sh` → sidecar + `streamlit run app.py` → `http://localhost:8501` |
 
 ## Stack
 
-Streamlit · Python · Ollama · MedPsy-4B-GGUF · embedding `all-minilm` · Plotly · zero paid API keys
+Streamlit · Python · OpenRouter (BYOK) · DeepSeek R1 judge · Qwen whole-run verifier (optional) · QVAC SDK sidecar · MedPsy / peer GGUFs · Plotly
 
 ## Closing line
 
-> *“Same case, same prompt — cloud that exposes the data vs QVAC that stays home. You see the numbers and decide.”*
+> *“Same case, same frozen quotes — cloud APIs vs on-device QVAC. You see the composite score and decide.”*
 
 **Repo:** https://github.com/FrancescoAloe91/qvac-vs-cloud-llms-health-test

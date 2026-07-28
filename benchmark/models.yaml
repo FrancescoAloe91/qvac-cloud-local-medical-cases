@@ -53,9 +53,12 @@ judge:
   anonymize: true
   verifier_model: qwen/qwen3.5-397b-a17b
 
-# Token assumptions for --dry-run (length-aware estimate also uses live case/gold chars)
+# Token assumptions for --dry-run (length-aware estimate also uses live case/gold chars).
+# Baseline estimate = candidates + gold extractor (4k out) + primary judge @16k out.
+# Upper bound also adds possible section repair (≤5×4k/candidate) + optional verifier.
 estimate:
   candidate_input_tokens: 1800  # legacy CLI hint only; UI estimate uses real text length
   candidate_output_tokens: 900
-  judge_input_tokens_per_question: 2800
-  judge_output_tokens_per_question: 1600  # primary may use up to 16k; UI uses upper mid estimate
+  extractor_output_tokens: 4000
+  judge_input_tokens_per_question: 2800  # legacy hint; live estimate builds from case/gold
+  judge_output_tokens_per_question: 1600  # legacy; live primary estimate uses 16384 cap
