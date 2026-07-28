@@ -86,3 +86,25 @@ def test_unequal_valid_n_keeps_all_eligible_models():
     assert summary.candidate_stats["claude"]["n_valid"] == 6
     assert summary.n == 5
 
+
+def test_empty_cohort_id_is_rejected():
+    with pytest.raises(ValueError, match="empty cohort_id"):
+        summarize_runs([_artifact(0, cohort=""), _artifact(1, cohort="")])
+
+
+def test_mixed_batch_ids_disable_paired_sensitivity():
+    artifacts = [_artifact(i) for i in range(5)]
+    artifacts[2] = artifacts[2].model_copy(update={"batch_id": "batch-b"})
+    summary = summarize_runs(artifacts)
+    assert summary.paired_n == 0
+    assert summary.paired_ranking == []
+    assert len(summary.ranking_mean) == 2
+
+
+def test_paired_sensitivity_requires_same_batch_id_equality():
+    artifacts = [_artifact(i) for i in range(5)]
+    for art in artifacts:
+        assert art.batch_id == "batch-a"
+    summary = summarize_runs(artifacts)
+    assert summary.paired_n == 5
+

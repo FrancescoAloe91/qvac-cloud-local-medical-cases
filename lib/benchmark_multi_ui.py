@@ -17,17 +17,27 @@ def model_name_version(key: str) -> tuple:
     return name_and_version(key or "")
 
 
+def _is_na_rank_row(row: Dict[str, Any]) -> bool:
+    status = str(row.get("status") or "ok").lower()
+    if status in {"n/a", "na", "failed"}:
+        return True
+    return row.get("accuracy") is None and status != "ok"
+
+
 def snapshot_from_artifact(art: Any) -> Dict[str, Any]:
     """Lightweight per-run snapshot for session state + tabs."""
     ranking = []
     for r in art.ranking or []:
+        status = str(r.get("status") or "ok")
+        failed = _is_na_rank_row(r)
         ranking.append(
             {
                 "key": r.get("key"),
-                "rank": r.get("rank"),
-                "accuracy": r.get("accuracy"),
+                "rank": None if failed else r.get("rank"),
+                "accuracy": None if failed else r.get("accuracy"),
                 "label": r.get("label") or r.get("key"),
-                "status": r.get("status", "ok"),
+                "status": "n/a" if failed else status,
+                "status_note": r.get("status_note") or "",
                 "ttft_s": r.get("ttft_s"),
                 "tps": r.get("tps"),
                 "cost_usd": r.get("cost_usd"),
@@ -37,11 +47,14 @@ def snapshot_from_artifact(art: Any) -> Dict[str, Any]:
     dims = []
     for j in art.judgments or []:
         by_q = {qs.question_id: qs.score for qs in (j.question_scores or [])}
+        status = str(getattr(j, "status", None) or "valid")
+        failed = status != "valid"
         dims.append(
             {
                 "key": j.candidate_key,
-                "weighted": j.weighted_accuracy,
-                "scores": by_q,
+                "weighted": None if failed else j.weighted_accuracy,
+                "status": "n/a" if failed else "ok",
+                "scores": {} if failed else by_q,
             }
         )
     return {
@@ -311,28 +324,42 @@ def live_judging_board_html(
 def _ranking_table_html(ranking: List[Dict[str, Any]]) -> str:
     rows = sorted(
         ranking or [],
-        key=lambda r: float(r.get("accuracy") or 0),
-        reverse=True,
+        key=lambda r: (
+            0 if not _is_na_rank_row(r) else 1,
+            -float(r.get("accuracy") if r.get("accuracy") is not None else -1),
+        ),
     )
     if not rows:
         return "<p style='color:#94a3b8'>No ranking.</p>"
     body = []
-    for i, r in enumerate(rows, 1):
+    for r in rows:
         nm, ver = name_and_version(
             str(r.get("key") or ""),
             label=r.get("label"),
             model=r.get("model"),
         )
-        acc = float(r.get("accuracy") or 0)
+        failed = _is_na_rank_row(r)
+        if failed:
+            rank_cell = "—"
+            score_cell = (
+                "<span style='color:#f87171;font-weight:700'>N/A</span>"
+                "<div style='color:#94a3b8;font-size:0.72rem;font-weight:500'>"
+                "technical</div>"
+            )
+        else:
+            rank_cell = f"#{r.get('rank') or '—'}"
+            acc = float(r.get("accuracy") or 0)
+            score_cell = f"{acc:.1f}%"
         body.append(
             "<tr>"
-            f"<td style='padding:0.3rem 0.45rem;border-bottom:1px solid #1e293b'>#{i}</td>"
+            f"<td style='padding:0.3rem 0.45rem;border-bottom:1px solid #1e293b'>"
+            f"{rank_cell}</td>"
             f"<td style='padding:0.3rem 0.45rem;border-bottom:1px solid #1e293b'>"
             f"{html.escape(nm)}</td>"
             f"<td style='padding:0.3rem 0.45rem;border-bottom:1px solid #1e293b;"
             f"color:#94a3b8;font-size:0.8rem'>{html.escape(ver)}</td>"
             f"<td style='padding:0.3rem 0.45rem;border-bottom:1px solid #1e293b;font-weight:800;"
-            f"color:#fbbf24;font-size:1.05rem;text-align:right'>{acc:.1f}%</td>"
+            f"color:#fbbf24;font-size:1.05rem;text-align:right'>{score_cell}</td>"
             "</tr>"
         )
     return (
@@ -352,8 +379,10 @@ def _run_summary_body_html(ranking: List[Dict[str, Any]]) -> str:
     """Table + histogram for finished-run modal."""
     rows = sorted(
         ranking or [],
-        key=lambda r: float(r.get("accuracy") or 0),
-        reverse=True,
+        key=lambda r: (
+            0 if not _is_na_rank_row(r) else 1,
+            -float(r.get("accuracy") if r.get("accuracy") is not None else -1),
+        ),
     )
     return (
         '<div class="rank-live-grid run-summary-grid">'
@@ -396,8 +425,9 @@ def progressive_multi_panel_html(
         mid = f"mrun_modal_{i}_{html.escape(str(snap.get('run_id') or i)[:10])}"
         ranking = snap.get("ranking") or []
         top = "—"
-        if ranking:
-            best = max(ranking, key=lambda r: float(r.get("accuracy") or 0))
+        valid = [r for r in ranking if not _is_na_rank_row(r)]
+        if valid:
+            best = max(valid, key=lambda r: float(r.get("accuracy") or 0))
             top = (
                 f"{short_model(str(best.get('key')))} "
                 f"{float(best.get('accuracy') or 0):.1f}%"
@@ -453,8 +483,9 @@ def progressive_multi_panel_html(
 def client_toast_run_done(run_i: int, n_total: int, ranking: List[Dict[str, Any]]) -> str:
     """In-panel completion card (iframe-safe). Pair with st.toast for app-level notice."""
     leader = "—"
-    if ranking:
-        best = max(ranking, key=lambda r: float(r.get("accuracy") or 0))
+    valid = [r for r in ranking or [] if not _is_na_rank_row(r)]
+    if valid:
+        best = max(valid, key=lambda r: float(r.get("accuracy") or 0))
         leader = (
             f"{short_model(str(best.get('key')))} · "
             f"{float(best.get('accuracy') or 0):.1f}%"

@@ -85,6 +85,8 @@ class ModelCallMeta(BaseModel):
     display_label: str = ""
     retry_count: int = 0
     error: Optional[str] = None
+    # Append-only paid OpenRouter attempts (primary / corrective / verifier).
+    paid_attempts: List[Dict[str, Any]] = Field(default_factory=list)
 
 
 class CandidateAnswer(BaseModel):
@@ -125,7 +127,8 @@ class JudgeResult(BaseModel):
     quality_score: Optional[float] = None
     discipline_score: Optional[float] = None
     retry_count: int = 0
-    judge_model: str
+    judge_model: str  # effective judge that produced this observation
+    primary_judge_model: str = ""  # requested primary; may differ after verifier
     judge_meta: ModelCallMeta
     raw_judge_json: str = ""
     status: Literal[

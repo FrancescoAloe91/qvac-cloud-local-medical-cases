@@ -18,11 +18,13 @@ claim needs verbatim candidate evidence. The host rejects invalid evidence
 rather than converting it to a low score.
 
 Evidence validation is presentation-tolerant but text-strict. It normalizes
-Markdown, whitespace, letter case, Unicode presentation, and punctuation.
-It also accepts a judge quote assembled from multiple non-contiguous sentences
-only when every substantial sentence is textually present in the candidate
-answer. No fuzzy or semantic quote matching is used, so changed or invented
-clinical words remain invalid.
+Markdown/HTML, whitespace, letter case, Unicode presentation, list markers, and
+styling punctuation, while preserving clinically meaningful numeric punctuation
+(decimals, ranges like `10–20`, `±`, slash ratios). Matching is token-sequence /
+word-boundary safe so short tokens like `renal` do not match inside `adrenal`.
+A judge quote assembled from multiple non-contiguous sentences is accepted only
+when every substantial sentence is textually present. No fuzzy or semantic quote
+matching is used, so changed or invented clinical words remain invalid.
 
 For each section:
 

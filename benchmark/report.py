@@ -76,9 +76,14 @@ def summarize_runs(artifacts: List[RunArtifact]) -> MultiRunSummary:
     if not artifacts:
         return MultiRunSummary(case_id="", n=0)
     case_id = artifacts[0].case_id
-    cohort_ids = {a.cohort_id for a in artifacts if a.cohort_id}
+    cohort_ids = {(a.cohort_id or "") for a in artifacts}
+    if "" in cohort_ids:
+        raise ValueError("Cannot summarize runs with empty cohort_id")
     if len(cohort_ids) > 1:
         raise ValueError("Cannot summarize mixed cohorts")
+    batch_ids = {(a.batch_id or "") for a in artifacts}
+    non_empty_batches = {b for b in batch_ids if b}
+    paired_batch_id = next(iter(non_empty_batches)) if len(non_empty_batches) == 1 else None
     scores: Dict[str, List[float]] = {}
     subscales: Dict[str, Dict[str, List[float]]] = {}
     requested: Dict[str, int] = {}
@@ -182,34 +187,43 @@ def summarize_runs(artifacts: List[RunArtifact]) -> MultiRunSummary:
 
     all_keys = set(requested)
     eligible_keys = {key for key in all_keys if len(scores.get(key, [])) >= 5}
-    ranking_mean = [
-        {
-            "key": k,
-            "accuracy_mean": v["mean"],
-            "median": v["median"],
-            "std": v["std"],
-            "cv_pct": v["cv_pct"],
-            "reliability": v["reliability"],
-            "iqr": v["iqr"],
-            "min": v["min"],
-            "max": v["max"],
-            "n_runs": int(v.get("n_runs") or v.get("n") or 0),
-            "n_requested": int(v.get("n_requested") or 0),
-            "n_failed": int(v.get("n_failed") or 0),
-            "failure_rate": v.get("failure_rate"),
-            "coverage_mean": v.get("coverage_mean"),
-            "quality_mean": v.get("quality_mean"),
-            "discipline_mean": v.get("discipline_mean"),
-            "exploratory": True,
-        }
-        for k, v in stats.items()
-        if k in eligible_keys
-    ]
-    ranking_mean.sort(key=lambda r: r["accuracy_mean"], reverse=True)
+    ranking_mean = []
+    for k, v in stats.items():
+        if k not in eligible_keys:
+            continue
+        mean_raw = (
+            statistics.fmean(scores[k]) if scores.get(k) else None
+        )
+        ranking_mean.append(
+            {
+                "key": k,
+                "accuracy_mean": v["mean"],
+                "accuracy_mean_raw": mean_raw,
+                "median": v["median"],
+                "std": v["std"],
+                "cv_pct": v["cv_pct"],
+                "reliability": v["reliability"],
+                "iqr": v["iqr"],
+                "min": v["min"],
+                "max": v["max"],
+                "n_runs": int(v.get("n_runs") or v.get("n") or 0),
+                "n_requested": int(v.get("n_requested") or 0),
+                "n_failed": int(v.get("n_failed") or 0),
+                "failure_rate": v.get("failure_rate"),
+                "coverage_mean": v.get("coverage_mean"),
+                "quality_mean": v.get("quality_mean"),
+                "discipline_mean": v.get("discipline_mean"),
+                "exploratory": True,
+            }
+        )
+    ranking_mean.sort(
+        key=lambda r: float(r["accuracy_mean_raw"] if r["accuracy_mean_raw"] is not None else -1),
+        reverse=True,
+    )
     last_mean: Optional[float] = None
     last_rank = 0
     for i, row in enumerate(ranking_mean, 1):
-        mean_value = float(row["accuracy_mean"])
+        mean_value = float(row["accuracy_mean_raw"])
         if last_mean is None or mean_value != last_mean:
             last_mean = mean_value
             last_rank = i
@@ -221,55 +235,65 @@ def summarize_runs(artifacts: List[RunArtifact]) -> MultiRunSummary:
         for key in all_keys
     }
     paired_n = 0
-    for art in artifacts:
-        if not art.batch_id:
-            continue
-        by_key = {
-            str(row.get("key") or ""): row
-            for row in art.ranking
-            if is_current_roster_key(str(row.get("key") or ""))
-        }
-        if not all_keys or any(
-            key not in by_key
-            or str(by_key[key].get("status") or "ok") != "ok"
-            or by_key[key].get("accuracy") is None
-            for key in all_keys
-        ):
-            continue
-        paired_n += 1
-        for key in all_keys:
-            paired_values[key].append(float(by_key[key]["accuracy"]))
-            for component in ("coverage", "quality", "discipline"):
-                value = by_key[key].get(component)
-                if value is not None:
-                    paired_components[key][component].append(float(value))
+    # Paired sensitivity requires the same non-empty batch_id on every artifact.
+    # Mixed batches are rejected for paired analysis (means still use all runs).
+    if paired_batch_id is not None and "" not in batch_ids:
+        for art in artifacts:
+            if art.batch_id != paired_batch_id:
+                continue
+            by_key = {
+                str(row.get("key") or ""): row
+                for row in art.ranking
+                if is_current_roster_key(str(row.get("key") or ""))
+            }
+            if not all_keys or any(
+                key not in by_key
+                or str(by_key[key].get("status") or "ok") != "ok"
+                or by_key[key].get("accuracy") is None
+                for key in all_keys
+            ):
+                continue
+            paired_n += 1
+            for key in all_keys:
+                paired_values[key].append(float(by_key[key]["accuracy"]))
+                for component in ("coverage", "quality", "discipline"):
+                    value = by_key[key].get(component)
+                    if value is not None:
+                        paired_components[key][component].append(float(value))
 
     paired_ranking: List[Dict[str, Any]] = []
     if paired_n >= 5:
-        paired_ranking = [
-            {
-                "key": key,
-                "accuracy_mean": round(statistics.fmean(values), 2),
-                "n_runs": paired_n,
-                **{
-                    f"{component}_mean": (
-                        round(statistics.fmean(component_values), 2)
-                        if len(component_values) == paired_n
-                        else None
-                    )
-                    for component, component_values in paired_components[key].items()
-                },
-                "paired": True,
-                "exploratory": True,
-            }
-            for key, values in paired_values.items()
-            if len(values) == paired_n
-        ]
-        paired_ranking.sort(key=lambda row: row["accuracy_mean"], reverse=True)
+        paired_ranking = []
+        for key, values in paired_values.items():
+            if len(values) != paired_n:
+                continue
+            mean_raw = statistics.fmean(values)
+            paired_ranking.append(
+                {
+                    "key": key,
+                    "accuracy_mean": round(mean_raw, 2),
+                    "accuracy_mean_raw": mean_raw,
+                    "n_runs": paired_n,
+                    **{
+                        f"{component}_mean": (
+                            round(statistics.fmean(component_values), 2)
+                            if len(component_values) == paired_n
+                            else None
+                        )
+                        for component, component_values in paired_components[key].items()
+                    },
+                    "paired": True,
+                    "exploratory": True,
+                }
+            )
+        paired_ranking.sort(
+            key=lambda row: float(row["accuracy_mean_raw"]),
+            reverse=True,
+        )
         last_mean = None
         last_rank = 0
         for index, row in enumerate(paired_ranking, 1):
-            mean_value = float(row["accuracy_mean"])
+            mean_value = float(row["accuracy_mean_raw"])
             if last_mean is None or mean_value != last_mean:
                 last_mean = mean_value
                 last_rank = index
@@ -384,12 +408,70 @@ def _parse_rationale_metrics(rationale: str) -> Optional[Dict[str, float]]:
     return None
 
 
+def _try_offline_recover_judgment(art: RunArtifact, judgment) -> Optional[Any]:
+    """Re-validate stored judge JSON with current local salvage (no API)."""
+    if judgment.status not in {
+        "judge_schema_invalid",
+        "judge_evidence_invalid",
+        "judge_transport_failed",
+    }:
+        return None
+    raw = (judgment.raw_judge_json or "").strip()
+    if not raw:
+        return None
+    gold_ref = str((art.models_config or {}).get("gold_reference") or "")
+    if not gold_ref:
+        return None
+    cand = next(
+        (c for c in (art.candidates or []) if c.candidate_key == judgment.candidate_key),
+        None,
+    )
+    if cand is None:
+        return None
+    try:
+        from benchmark.judge import (
+            _extract_json,
+            _score_sections_from_payload,
+            _weighted_accuracy,
+            _weighted_subscale,
+        )
+
+        case = load_case(art.case_id)
+        data = _extract_json(raw)
+        accepted, errors = _score_sections_from_payload(
+            case,
+            cand,
+            data if isinstance(data, dict) else {},
+            gold_reference=gold_ref,
+            target_ids={q.id for q in case.questions},
+        )
+        if errors or len(accepted) != len(case.questions):
+            return None
+        q_scores = [accepted[q.id] for q in case.questions]
+        recovered = judgment.model_copy(deep=True)
+        recovered.question_scores = q_scores
+        recovered.weighted_accuracy = _weighted_accuracy(case, q_scores)
+        recovered.coverage_score = _weighted_subscale(case, q_scores, "recall")
+        recovered.quality_score = _weighted_subscale(case, q_scores, "quality")
+        recovered.discipline_score = _weighted_subscale(case, q_scores, "precision")
+        recovered.status = "valid"
+        recovered.failure_reason = (
+            (recovered.failure_reason or "").strip()
+            + " | offline-recovered with current evidence/schema salvage"
+        ).strip(" |")
+        return recovered
+    except Exception:
+        return None
+
+
 def rescore_artifact_current_formula(art: RunArtifact) -> Dict[str, Any]:
     """
     Recompute section scores + weighted accuracy with the *current* host formula.
 
     Uses structured claim decisions already stored in artifacts (no API).
     Legacy artifacts fall back to metrics embedded in their rationales.
+    N/A judgments with stored judge JSON may be recovered offline when the
+    failure was presentation/schema salvageable under current rules.
     """
     cfg = art.models_config or {}
     gold_ref = str(cfg.get("gold_reference") or "")
@@ -398,16 +480,46 @@ def rescore_artifact_current_formula(art: RunArtifact) -> Dict[str, Any]:
         case = load_case(art.case_id)
         section_w = {q.id: q.weight for q in case.questions}
     except Exception:
+        case = None
         section_w = {}
 
     ranking_rows: List[Dict[str, Any]] = []
     per_model_sections: Dict[str, Dict[str, float]] = {}
+    recovered_keys: List[str] = []
+    unrecovered_na: List[Dict[str, str]] = []
+    effective_judgments = []
 
     for j in art.judgments:
+        working = j
         if j.status != "valid":
-            continue
+            recovered = _try_offline_recover_judgment(art, j)
+            if recovered is not None:
+                working = recovered
+                recovered_keys.append(j.candidate_key)
+            else:
+                unrecovered_na.append(
+                    {
+                        "key": j.candidate_key,
+                        "status": str(j.status or "n/a"),
+                        "reason": (j.failure_reason or "")[:160],
+                    }
+                )
+                ranking_rows.append(
+                    {
+                        "key": j.candidate_key,
+                        "accuracy": None,
+                        "accuracy_raw": None,
+                        "label": j.candidate_key,
+                        "status": "n/a",
+                        "status_note": str(j.status or "n/a"),
+                        "rank": None,
+                    }
+                )
+                effective_judgments.append(j)
+                continue
+        effective_judgments.append(working)
         secs: Dict[str, float] = {}
-        for qs in j.question_scores:
+        for qs in working.question_scores:
             if qs.claim_coverage and qs.recall is not None:
                 secs[qs.question_id] = graded_clinical_score(
                     coverage=qs.recall,
@@ -464,26 +576,47 @@ def rescore_artifact_current_formula(art: RunArtifact) -> Dict[str, Any]:
                     quality=q,
                     specificity=spec,
                 )
-        per_model_sections[j.candidate_key] = secs
+        per_model_sections[working.candidate_key] = secs
         if section_w:
             keys = [k for k in section_w if k in secs]
             tw = sum(section_w[k] for k in keys) or 1.0
             acc = sum(secs[k] * section_w[k] for k in keys) / tw
         else:
             acc = (
-                sum(secs.values()) / len(secs) if secs else float(j.weighted_accuracy)
+                sum(secs.values()) / len(secs)
+                if secs
+                else float(working.weighted_accuracy)
             )
         ranking_rows.append(
             {
-                "key": j.candidate_key,
+                "key": working.candidate_key,
                 "accuracy": round(min(acc, WEIGHTED_CAP), 2),
-                "label": j.candidate_key,
+                "accuracy_raw": float(min(acc, WEIGHTED_CAP)),
+                "label": working.candidate_key,
+                "status": "ok",
+                "coverage": working.coverage_score,
+                "quality": working.quality_score,
+                "discipline": working.discipline_score,
             }
         )
 
-    ranking_rows.sort(key=lambda r: -float(r["accuracy"]))
+    ranking_rows.sort(
+        key=lambda r: (
+            0 if r.get("status") == "ok" else 1,
+            -float(r["accuracy_raw"] if r.get("accuracy_raw") is not None else -1),
+        )
+    )
+    last_score: Optional[float] = None
+    last_rank = 0
     for i, row in enumerate(ranking_rows, 1):
-        row["rank"] = i
+        if row.get("status") != "ok":
+            row["rank"] = None
+            continue
+        score = float(row["accuracy_raw"])
+        if last_score is None or score != last_score:
+            last_rank = i
+            last_score = score
+        row["rank"] = last_rank
 
     return {
         "run_id": art.run_id,
@@ -493,6 +626,9 @@ def rescore_artifact_current_formula(art: RunArtifact) -> Dict[str, Any]:
         "ranking": ranking_rows,
         "sections": per_model_sections,
         "stored_ranking": list(art.ranking or []),
+        "recovered_keys": recovered_keys,
+        "unrecovered_na": unrecovered_na,
+        "effective_judgments": effective_judgments,
     }
 
 
@@ -570,14 +706,35 @@ def rebuild_multi_from_history(
     per_run: List[Dict[str, Any]] = []
     for path, art in pairs:
         scored = rescore_artifact_current_formula(art)
-        # Minimal RunArtifact clone with new ranking accuracies
         clone = art.model_copy(deep=True)
         clone.ranking = scored["ranking"]
-        # Keep judgments but update weighted_accuracy for consistency
-        by_key = {r["key"]: r["accuracy"] for r in scored["ranking"]}
-        for j in clone.judgments:
-            if j.candidate_key in by_key:
-                j.weighted_accuracy = float(by_key[j.candidate_key])
+        if scored.get("effective_judgments"):
+            clone.judgments = list(scored["effective_judgments"])
+        else:
+            by_key = {
+                r["key"]: r["accuracy"]
+                for r in scored["ranking"]
+                if r.get("accuracy") is not None
+            }
+            for j in clone.judgments:
+                if j.candidate_key in by_key:
+                    j.weighted_accuracy = float(by_key[j.candidate_key])
+        note = (clone.notes or "").strip()
+        recovery_note = ""
+        if scored.get("recovered_keys"):
+            recovery_note = (
+                "offline-recovered: " + ", ".join(scored["recovered_keys"])
+            )
+        if recovery_note and recovery_note not in note:
+            clone.notes = (note + " | " + recovery_note).strip(" |")
+        reproducibility = dict(clone.reproducibility or {})
+        reproducibility["offline_rescore"] = {
+            "formula": "graded-clinical-v3",
+            "recovered_keys": list(scored.get("recovered_keys") or []),
+            "unrecovered_na": list(scored.get("unrecovered_na") or []),
+            "stored_ranking": list(scored.get("stored_ranking") or []),
+        }
+        clone.reproducibility = reproducibility
         rescored_arts.append(clone)
         per_run.append(
             {
@@ -586,6 +743,8 @@ def rebuild_multi_from_history(
                 "finished_at": art.finished_at,
                 "ranking": scored["ranking"],
                 "gold_mode": scored["gold_mode"],
+                "recovered_keys": scored.get("recovered_keys") or [],
+                "unrecovered_na": scored.get("unrecovered_na") or [],
             }
         )
 
@@ -600,4 +759,74 @@ def rebuild_multi_from_history(
         "api_cost_usd": 0.0,
         "cohort_id": latest_cohort,
         "official": True,
+    }
+
+
+def persist_rescored_artifacts(
+    out_dir: Path,
+    case_id: str,
+    *,
+    limit: Optional[int] = None,
+) -> Dict[str, Any]:
+    """Offline rescore recent artifacts in place; keep prior ranking in reproducibility."""
+    pairs = artifacts_for_case(out_dir, case_id, limit=limit)
+    written: List[str] = []
+    comparisons: List[Dict[str, Any]] = []
+    recovered_total = 0
+    unrecovered_total = 0
+    for path, art in pairs:
+        if not art.cohort_id:
+            continue
+        scored = rescore_artifact_current_formula(art)
+        clone = art.model_copy(deep=True)
+        old_rank = [
+            {
+                "key": r.get("key"),
+                "accuracy": r.get("accuracy"),
+                "status": r.get("status", "ok"),
+                "rank": r.get("rank"),
+            }
+            for r in (art.ranking or [])
+        ]
+        clone.ranking = scored["ranking"]
+        if scored.get("effective_judgments"):
+            clone.judgments = list(scored["effective_judgments"])
+        reproducibility = dict(clone.reproducibility or {})
+        reproducibility["offline_rescore"] = {
+            "formula": "graded-clinical-v3",
+            "recovered_keys": list(scored.get("recovered_keys") or []),
+            "unrecovered_na": list(scored.get("unrecovered_na") or []),
+            "stored_ranking": old_rank,
+        }
+        clone.reproducibility = reproducibility
+        if scored.get("recovered_keys"):
+            note = (clone.notes or "").strip()
+            tag = "offline-recovered: " + ", ".join(scored["recovered_keys"])
+            if tag not in note:
+                clone.notes = (note + " | " + tag).strip(" |")
+        write_artifact(clone, path.parent if path.parent != out_dir else out_dir)
+        # write_artifact uses run_id filename; ensure we overwrite the same path
+        if path.name != f"{clone.run_id}.json":
+            _atomic_write(path, clone.model_dump_json(indent=2))
+        written.append(str(path))
+        recovered_total += len(scored.get("recovered_keys") or [])
+        unrecovered_total += len(scored.get("unrecovered_na") or [])
+        comparisons.append(
+            {
+                "path": str(path),
+                "run_id": art.run_id,
+                "cohort_id": art.cohort_id,
+                "old": old_rank,
+                "new": scored["ranking"],
+                "recovered_keys": scored.get("recovered_keys") or [],
+                "unrecovered_na": scored.get("unrecovered_na") or [],
+            }
+        )
+    return {
+        "ok": True,
+        "written": written,
+        "comparisons": comparisons,
+        "recovered_total": recovered_total,
+        "unrecovered_total": unrecovered_total,
+        "api_cost_usd": 0.0,
     }

@@ -9,6 +9,7 @@ from benchmark.gold import (
     cohort_id,
     confirmed_gold,
     extract_json_object,
+    gold_json,
     load_confirmed_gold,
     parse_extraction,
 )
@@ -185,4 +186,35 @@ def test_cohort_changes_with_protocol_or_reference():
     controlled = cohort_id(**common, benchmark_track="controlled")
     native = cohort_id(**common, benchmark_track="native_defaults")
     assert controlled != native
+
+
+def test_confirmed_and_loaded_gold_require_verbatim_source_quotes():
+    sections = parse_extraction(RAW, _payload())
+    gold = confirmed_gold(
+        raw_text=RAW, sections=sections, extraction_model="test"
+    )
+    assert load_confirmed_gold(gold_json(gold)).raw_text == RAW.strip()
+
+    bad = parse_extraction(RAW, _payload())
+    bad["diagnosis"].claims[0].source_quote = "Invented migraine wording"
+    with pytest.raises(ValueError, match="verbatim"):
+        confirmed_gold(raw_text=RAW, sections=bad, extraction_model="test")
+
+    loaded_bad = confirmed_gold(
+        raw_text=RAW,
+        sections=parse_extraction(RAW, _payload()),
+        extraction_model="test",
+    )
+    loaded_bad.sections["diagnosis"].claims[0].source_quote = "Not in the raw text"
+    with pytest.raises(ValueError, match="verbatim|source quote"):
+        load_confirmed_gold(loaded_bad)
+
+
+def test_overlapping_substantial_source_quotes_are_rejected():
+    payload = _payload()
+    payload["sections"]["tests"]["claims"][0]["source_quote"] = (
+        "Diagnosis is migraine. Order brain MRI."
+    )
+    with pytest.raises(ValueError, match="Overlapping|verbatim|Duplicate"):
+        parse_extraction(RAW, payload)
 

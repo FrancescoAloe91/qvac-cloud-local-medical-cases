@@ -18,6 +18,7 @@ from benchmark.schema import (
     Case,
     CandidateAnswer,
     JudgeResult,
+    ModelCallMeta,
     QuestionScore,
     utc_now_iso,
 )
@@ -78,7 +79,16 @@ def _normalize_judge_data(data: Any) -> Dict[str, Any]:
     return {}
 
 
-def _as_unit_float(value: Any, *, field: str) -> float:
+def _as_unit_float(
+    value: Any,
+    *,
+    field: str,
+    default: Optional[float] = None,
+) -> float:
+    if value is None or (isinstance(value, str) and not value.strip()):
+        if default is not None:
+            return default
+        raise ValueError(f"{field} must be numeric")
     text = str(value).strip()
     is_percent = text.endswith("%")
     if is_percent:
@@ -86,12 +96,106 @@ def _as_unit_float(value: Any, *, field: str) -> float:
     try:
         number = float(text)
     except (TypeError, ValueError) as exc:
+        if default is not None:
+            return default
         raise ValueError(f"{field} must be numeric") from exc
     if is_percent or 1.0 < number <= 100.0:
         number /= 100.0
-    if not 0.0 <= number <= 1.0:
-        raise ValueError(f"{field} must be between 0 and 1")
+    # Clamp tiny float noise; reject clearly out-of-range values.
+    if number < 0.0:
+        number = 0.0
+    if number > 1.0:
+        if number <= 1.0001:
+            number = 1.0
+        else:
+            raise ValueError(f"{field} must be between 0 and 1")
     return number
+
+
+def _legacy_item_to_assessments(item: Dict[str, Any]) -> Optional[List[Dict[str, Any]]]:
+    """Reshape binary matched/missed + evidence into graded claim_assessments."""
+    matched = item.get("matched_claim_ids")
+    missed = item.get("missed_claim_ids")
+    if not isinstance(matched, list) or not isinstance(missed, list):
+        return None
+    evidence_by_id: Dict[str, List[str]] = {}
+    evidence_raw = item.get("evidence")
+    if isinstance(evidence_raw, list):
+        for row in evidence_raw:
+            if not isinstance(row, dict):
+                continue
+            claim_id = str(
+                row.get("reference_claim_id")
+                or row.get("claim_id")
+                or row.get("id")
+                or ""
+            )
+            quote = str(
+                row.get("candidate_quote") or row.get("quote") or ""
+            ).strip()
+            if claim_id and quote:
+                evidence_by_id.setdefault(claim_id, []).append(quote)
+    assessments: List[Dict[str, Any]] = []
+    for claim_id in matched:
+        cid = str(claim_id)
+        assessments.append(
+            {
+                "reference_claim_id": cid,
+                "coverage": 1.0,
+                "candidate_quotes": list(evidence_by_id.get(cid) or []),
+            }
+        )
+    for claim_id in missed:
+        cid = str(claim_id)
+        assessments.append(
+            {
+                "reference_claim_id": cid,
+                "coverage": 0.0,
+                "candidate_quotes": list(evidence_by_id.get(cid) or []),
+            }
+        )
+    return assessments
+
+
+def _legacy_item_to_additions(item: Dict[str, Any]) -> List[Dict[str, Any]]:
+    additions: List[Dict[str, Any]] = []
+    for field, classification, severity in (
+        ("unsupported_claims", "unsupported", 1.0),
+        ("contradictions", "contradictory", 1.0),
+    ):
+        rows = item.get(field)
+        if not isinstance(rows, list):
+            continue
+        for row in rows:
+            if isinstance(row, str):
+                quote = row.strip()
+                if quote:
+                    additions.append(
+                        {
+                            "candidate_quote": quote,
+                            "classification": classification,
+                            "severity": severity,
+                        }
+                    )
+                continue
+            if not isinstance(row, dict):
+                continue
+            quote = str(
+                row.get("candidate_quote") or row.get("quote") or ""
+            ).strip()
+            if not quote:
+                continue
+            additions.append(
+                {
+                    "candidate_quote": quote,
+                    "classification": str(
+                        row.get("classification") or classification
+                    ).strip().lower(),
+                    "severity": row.get("severity", severity),
+                    "rationale": str(row.get("reason") or row.get("rationale") or ""),
+                }
+            )
+    return additions
 
 
 def _normalize_judge_item(item: Dict[str, Any]) -> Dict[str, Any]:
@@ -106,8 +210,30 @@ def _normalize_judge_item(item: Dict[str, Any]) -> Dict[str, Any]:
     )
     assessments = item.get(
         "claim_assessments",
-        item.get("assessments", item.get("claims")),
+        item.get("assessments", item.get("claim_grades")),
     )
+    # "claims" is ambiguous (gold claims vs assessments); only use when graded-shaped.
+    if assessments is None and isinstance(item.get("claims"), (list, dict)):
+        claims_val = item["claims"]
+        sample = None
+        if isinstance(claims_val, list):
+            sample = next((row for row in claims_val if isinstance(row, dict)), None)
+        elif isinstance(claims_val, dict):
+            sample = next(
+                (row for row in claims_val.values() if isinstance(row, dict)),
+                None,
+            )
+        if sample and (
+            "coverage" in sample
+            or "candidate_quotes" in sample
+            or "candidate_quote" in sample
+            or "reference_claim_id" in sample
+            or "score" in sample
+            or "grade" in sample
+        ):
+            assessments = claims_val
+    if assessments is None:
+        assessments = _legacy_item_to_assessments(item)
     if isinstance(assessments, dict):
         assessments = [
             {"reference_claim_id": claim_id, **value}
@@ -128,18 +254,33 @@ def _normalize_judge_item(item: Dict[str, Any]) -> Dict[str, Any]:
                 or row.get("id")
                 or ""
             )
-            if "coverage" not in repaired:
-                repaired["coverage"] = row.get("score")
+            if repaired.get("coverage") is None:
+                repaired["coverage"] = row.get("score", row.get("grade", 0.0))
+            if repaired.get("coverage") is None:
+                repaired["coverage"] = 0.0
             quotes = row.get(
                 "candidate_quotes",
                 row.get("quotes", row.get("candidate_quote", row.get("evidence"))),
             )
+            if quotes is None:
+                quotes = []
             if isinstance(quotes, str):
                 quotes = [quotes]
-            repaired["candidate_quotes"] = quotes
+            if not isinstance(quotes, list):
+                quotes = []
+            repaired["candidate_quotes"] = [
+                str(value).strip() for value in quotes if str(value).strip()
+            ]
             repaired_assessments.append(repaired)
         normalized["claim_assessments"] = repaired_assessments
     additions = item.get("additional_claims", item.get("added_content"))
+    if additions is None and (
+        isinstance(item.get("unsupported_claims"), list)
+        or isinstance(item.get("contradictions"), list)
+    ):
+        additions = _legacy_item_to_additions(item)
+    if additions is None:
+        additions = []
     if isinstance(additions, dict):
         additions = [additions]
     if isinstance(additions, list):
@@ -154,45 +295,61 @@ def _normalize_judge_item(item: Dict[str, Any]) -> Dict[str, Any]:
                 or row.get("quote")
                 or row.get("evidence")
                 or ""
-            )
+            ).strip()
+            repaired["classification"] = str(
+                row.get("classification")
+                or row.get("label")
+                or row.get("type")
+                or row.get("class")
+                or ""
+            ).strip().lower()
+            if repaired.get("severity") is None:
+                repaired["severity"] = 1.0
             repaired_additions.append(repaired)
         normalized["additional_claims"] = repaired_additions
-    if "quality" not in normalized and "clinical_quality" in item:
-        normalized["quality"] = item.get("clinical_quality")
+    if "quality" not in normalized or normalized.get("quality") is None:
+        for key in ("clinical_quality", "quality_score", "clinical_score"):
+            if item.get(key) is not None:
+                normalized["quality"] = item.get(key)
+                break
     if isinstance(normalized.get("errors"), str):
         normalized["errors"] = [normalized["errors"]]
+    elif normalized.get("errors") is None:
+        normalized["errors"] = []
     return normalized
 
 
 def _extract_json(text: str) -> Dict[str, Any]:
-    text = (text or "").strip()
+    text = (text or "").strip().lstrip("\ufeff")
     if not text:
         return {}
+    candidates: List[str] = [text]
+    fenced = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", text, re.IGNORECASE)
+    if fenced:
+        candidates.insert(0, fenced.group(1).strip())
     parsed: Any = None
-    try:
-        parsed = json.loads(text)
-    except json.JSONDecodeError:
-        parsed = None
-    if parsed is None:
-        match = re.search(r"\{[\s\S]*\}", text)
-        if match:
+    decoder = json.JSONDecoder()
+    for candidate in candidates:
+        try:
+            parsed = json.loads(candidate)
+            break
+        except json.JSONDecodeError:
+            parsed = None
+        for match in re.finditer(r"[\{\[]", candidate):
             try:
-                parsed = json.loads(match.group(0))
+                parsed, _ = decoder.raw_decode(candidate[match.start() :])
+                break
             except json.JSONDecodeError:
-                parsed = None
+                continue
+        if parsed is not None:
+            break
     if parsed is None:
-        match = re.search(r"\[[\s\S]*\]", text)
-        if match:
-            try:
-                parsed = json.loads(match.group(0))
-            except json.JSONDecodeError:
-                return {}
-        else:
-            return {}
+        return {}
     return _normalize_judge_data(parsed)
 
 
-def _weighted_accuracy(case: Case, scores: List[QuestionScore]) -> float:
+def _weighted_accuracy_raw(case: Case, scores: List[QuestionScore]) -> float:
+    """Unrounded Clinical Composite Score for tie detection."""
     by_id = {s.question_id: s.score for s in scores}
     total_w = 0.0
     acc = 0.0
@@ -203,7 +360,12 @@ def _weighted_accuracy(case: Case, scores: List[QuestionScore]) -> float:
         total_w += q.weight
     if total_w <= 0:
         return 0.0
-    return round(min(acc / total_w, WEIGHTED_CAP), 2)
+    return min(acc / total_w, WEIGHTED_CAP)
+
+
+def _weighted_accuracy(case: Case, scores: List[QuestionScore]) -> float:
+    """Clinical Composite Score; ranking ties use this unrounded value."""
+    return _weighted_accuracy_raw(case, scores)
 
 
 def _weighted_subscale(case: Case, scores: List[QuestionScore], field: str) -> float:
@@ -228,28 +390,132 @@ def _as_pos_int(value: Any, default: int = 1) -> int:
     return max(1, min(n, 24))
 
 
+# Clinically meaningful numeric punctuation kept through evidence normalization.
+# Presentation punctuation (commas, colons, dashes used as styling, etc.) is dropped.
+_EVIDENCE_TOKEN_RE = re.compile(
+    r"(?:"
+    r"\d+(?:[.,]\d+)+"  # decimals / thousand-grouped numerics: 1.0, 1,5, 1.000,5
+    r"|\d+\s*[–—−\-]\s*\d+(?:[.,]\d+)*"  # ranges: 10-20, 10–20, 0.5-1.0
+    r"|[±]\s*\d+(?:[.,]\d+)*"  # ±0.5
+    r"|\d+\s*/\s*\d+(?:[.,]\d+)*"  # ratios / doses: 1/2, 10/20
+    r"|\w+"
+    r")",
+    flags=re.UNICODE,
+)
+
+
 def _evidence_normalized(text: str) -> str:
-    """Normalize presentation without changing or approximating any word."""
+    """Normalize presentation without erasing clinically meaningful numerics.
+
+    Markdown/HTML, case, Unicode width, list markers, and styling punctuation
+    stay flexible. Decimals, numeric ranges, ±, and slash ratios are preserved
+    so ``10–20 mg`` does not match ``10 20 mg`` and ``1.0 mg`` does not match
+    ``1 0 mg``.
+    """
     canonical = unicodedata.normalize("NFKC", text or "")
-    without_markdown = re.sub(r"[*_`#]+", "", canonical)
-    # Compare the same ordered word sequence while ignoring punctuation styling.
-    # This remains deliberately stricter than fuzzy or semantic matching.
-    tokens = re.findall(r"\w+", without_markdown.casefold(), flags=re.UNICODE)
+    canonical = (
+        canonical.replace("\u201c", '"')
+        .replace("\u201d", '"')
+        .replace("\u2018", "'")
+        .replace("\u2019", "'")
+        .replace("\u00a0", " ")
+        .replace("\u2026", " ")
+    )
+    without_html = re.sub(r"<[^>]+>", " ", canonical)
+    without_markdown = re.sub(r"[*_`#~>]+", "", without_html)
+    # Cloud answers often use Markdown bullets / numbered lists that judges omit.
+    without_markdown = re.sub(
+        r"(?m)^\s*(?:[-*•]|\d+[.)])\s+",
+        "",
+        without_markdown,
+    )
+    tokens = []
+    for raw in _EVIDENCE_TOKEN_RE.findall(without_markdown.casefold()):
+        token = re.sub(r"\s+", "", raw)
+        if token:
+            tokens.append(token)
     return " ".join(tokens)
 
 
+def _evidence_token_sequence(text: str) -> List[str]:
+    normalized = _evidence_normalized(text)
+    return normalized.split() if normalized else []
+
+
+def _token_sequence_present(needle: List[str], haystack: List[str]) -> bool:
+    """True when needle tokens appear as a contiguous sequence in haystack."""
+    if not needle:
+        return False
+    n = len(needle)
+    if n > len(haystack):
+        return False
+    for i in range(len(haystack) - n + 1):
+        if haystack[i : i + n] == needle:
+            return True
+    return False
+
+
 def _evidence_quote_present(quote: str, answer_norm: str) -> bool:
-    normalized = _evidence_normalized(quote)
-    if normalized and normalized in answer_norm:
+    """Require a contiguous token sequence (word-boundary safe).
+
+    Short tokens like ``renal`` must not match inside ``adrenal``.
+    """
+    answer_tokens = answer_norm.split() if answer_norm else []
+    needle = _evidence_token_sequence(quote)
+    if needle and _token_sequence_present(needle, answer_tokens):
         return True
     # Judges occasionally combine two exact, non-contiguous bullet sentences
     # into one quote. Accept only when every substantial sentence is verbatim.
     chunks = [
-        _evidence_normalized(chunk)
+        _evidence_token_sequence(chunk)
         for chunk in re.split(r"(?<=[.!?])\s+", quote or "")
         if len(_evidence_normalized(chunk)) >= 12
     ]
-    return len(chunks) >= 2 and all(chunk in answer_norm for chunk in chunks)
+    if len(chunks) >= 2 and all(
+        _token_sequence_present(chunk, answer_tokens) for chunk in chunks
+    ):
+        return True
+    # Presentation-only salvage: judge slightly trimmed/rewrapped a long quote
+    # from a Markdown-heavy cloud answer. Require a substantial contiguous span
+    # (≥8 tokens and ≥50% of the quote) — never a short token like "renal".
+    if needle and len(needle) >= 8:
+        min_width = max(8, (len(needle) + 1) // 2)
+        for width in range(len(needle) - 1, min_width - 1, -1):
+            for start in range(0, len(needle) - width + 1):
+                if _token_sequence_present(
+                    needle[start : start + width], answer_tokens
+                ):
+                    return True
+    return False
+
+
+_CLASSIFICATION_ALIASES = {
+    "helpful": "helpful",
+    "help": "helpful",
+    "useful": "helpful",
+    "neutral": "neutral",
+    "ok": "neutral",
+    "unsupported": "unsupported",
+    "unsupport": "unsupported",
+    "not_supported": "unsupported",
+    "not-supported": "unsupported",
+    "speculation": "unsupported",
+    "contradictory": "contradictory",
+    "contradiction": "contradictory",
+    "conflicts": "contradictory",
+    "dangerous": "dangerous",
+    "harmful": "dangerous",
+    "unsafe": "dangerous",
+}
+
+
+def _normalize_classification(value: Any) -> str:
+    text = str(value or "").strip().lower().replace(" ", "_")
+    return _CLASSIFICATION_ALIASES.get(text, text)
+
+
+def _filter_present_quotes(quotes: List[str], answer_norm: str) -> List[str]:
+    return [quote for quote in quotes if _evidence_quote_present(quote, answer_norm)]
 
 
 def _score_from_judge_item(
@@ -278,22 +544,29 @@ def _score_from_judge_item(
             if claim_id not in reference_ids or claim_id in coverage_by_id:
                 raise ValueError("Unknown or duplicate graded reference claim id")
             coverage = _as_unit_float(
-                row.get("coverage"), field="Claim coverage"
+                row.get("coverage"),
+                field="Claim coverage",
+                default=0.0,
             )
             quotes_raw = row.get("candidate_quotes")
+            if quotes_raw is None:
+                quotes_raw = []
             if not isinstance(quotes_raw, list):
                 raise ValueError("candidate_quotes must be a list")
             quotes = [str(value).strip() for value in quotes_raw if str(value).strip()]
-            if coverage > 0 and not quotes:
-                raise ValueError("Nonzero claim coverage requires candidate evidence")
-            if any(not _evidence_quote_present(quote, answer_norm) for quote in quotes):
+            present_quotes = _filter_present_quotes(quotes, answer_norm)
+            # Coverage>0 needs at least one verbatim/presentable quote. Drop
+            # presentation-only mismatches; never invent replacement evidence.
+            if coverage > 0 and not present_quotes:
                 raise ValueError("Judge evidence quote is not present in candidate answer")
+            if coverage <= 0:
+                present_quotes = []
             coverage_by_id[claim_id] = coverage
             evidence_rows.append(
                 {
                     "reference_claim_id": claim_id,
                     "coverage": coverage,
-                    "candidate_quotes": quotes,
+                    "candidate_quotes": present_quotes,
                     "rationale": str(row.get("rationale") or ""),
                 }
             )
@@ -301,6 +574,8 @@ def _score_from_judge_item(
             raise ValueError(f"Judge did not grade every reference claim for {qid}")
 
         additions_raw = item.get("additional_claims")
+        if additions_raw is None:
+            additions_raw = []
         if not isinstance(additions_raw, list):
             raise ValueError("additional_claims must be a list")
         additions: List[Dict[str, Any]] = []
@@ -313,17 +588,19 @@ def _score_from_judge_item(
         }
         for row in additions_raw:
             if not isinstance(row, dict):
-                raise ValueError("Invalid additional_claims object")
+                continue
             quote = str(row.get("candidate_quote") or "").strip()
-            classification = str(row.get("classification") or "").strip().lower()
+            classification = _normalize_classification(row.get("classification"))
+            # Unverifiable additions are dropped locally (no paid retry) — we do
+            # not invent a substitute quote and we do not score invisible text.
             if not quote or not _evidence_quote_present(quote, answer_norm):
-                raise ValueError(
-                    "Added-content quote is not present in candidate answer"
-                )
+                continue
             if classification not in allowed_classes:
-                raise ValueError("Invalid added-content classification")
+                continue
             severity = _as_unit_float(
-                row.get("severity"), field="Added-content severity"
+                row.get("severity"),
+                field="Added-content severity",
+                default=1.0,
             )
             additions.append(
                 {
@@ -421,16 +698,25 @@ def _score_from_judge_item(
 
     def _claim_objects(field: str) -> tuple[List[str], List[str]]:
         value = item.get(field)
+        if value is None:
+            value = []
         if not isinstance(value, list):
             raise ValueError(f"{field} must be a list")
         labels: List[str] = []
         quotes: List[str] = []
         for row in value:
+            if isinstance(row, str):
+                quote = row.strip()
+                if quote and _evidence_quote_present(quote, answer_norm):
+                    quotes.append(quote)
+                    labels.append(quote)
+                continue
             if not isinstance(row, dict):
-                raise ValueError(f"Invalid {field} object")
-            quote = str(row.get("candidate_quote") or "").strip()
+                continue
+            quote = str(row.get("candidate_quote") or row.get("quote") or "").strip()
+            # Drop unverifiable rows locally instead of forcing a paid retry.
             if not quote or not _evidence_quote_present(quote, answer_norm):
-                raise ValueError(f"{field} quote is not present in candidate answer")
+                continue
             quotes.append(quote)
             labels.append(str(row.get("reason") or quote))
         return labels, quotes
@@ -469,6 +755,47 @@ def _score_from_judge_item(
     )
 
 
+def _empty_judge_meta(judge_model: str, *, provider: str = "openrouter") -> ModelCallMeta:
+    """Judge-side meta with zero cost — never reuse candidate meta (fake duplication)."""
+    return ModelCallMeta(
+        model=judge_model or "judge",
+        provider=provider,
+        cost_usd=0.0,
+        paid_attempts=[],
+    )
+
+
+def _append_paid_attempt(
+    meta: ModelCallMeta,
+    *,
+    role: str,
+    prior: Optional[ModelCallMeta] = None,
+) -> ModelCallMeta:
+    """Accumulate paid attempt cost/tokens into append-only metadata."""
+    attempt = {
+        "role": role,
+        "model": meta.model,
+        "cost_usd": float(meta.cost_usd or 0.0),
+        "prompt_tokens": int(meta.prompt_tokens or 0),
+        "completion_tokens": int(meta.completion_tokens or 0),
+        "error": meta.error or "",
+    }
+    attempts = list((prior.paid_attempts if prior else None) or [])
+    attempts.append(attempt)
+    prior_cost = float(prior.cost_usd or 0.0) if prior else 0.0
+    prior_prompt = int(prior.prompt_tokens or 0) if prior else 0
+    prior_completion = int(prior.completion_tokens or 0) if prior else 0
+    return meta.model_copy(
+        update={
+            "cost_usd": round(prior_cost + float(meta.cost_usd or 0.0), 8),
+            "prompt_tokens": prior_prompt + int(meta.prompt_tokens or 0),
+            "completion_tokens": prior_completion + int(meta.completion_tokens or 0),
+            "paid_attempts": attempts,
+            "retry_count": max(0, len(attempts) - 1),
+        }
+    )
+
+
 def _zero_judgment(
     case: Case,
     candidate: CandidateAnswer,
@@ -476,6 +803,8 @@ def _zero_judgment(
     rationale: str,
     meta,
     raw: str = "",
+    *,
+    primary_judge_model: str = "",
 ) -> JudgeResult:
     """Create an invalid/N/A observation.
 
@@ -492,7 +821,7 @@ def _zero_judgment(
     elif "empty answer" in lower:
         status = "candidate_empty"
         marker = "empty_answer"
-    elif "timeout" in lower:
+    elif "timeout" in lower or "deadline" in lower or "wall-clock" in lower:
         status = "timed_out"
         marker = "judge_timeout"
     elif "evidence" in lower:
@@ -507,6 +836,13 @@ def _zero_judgment(
     else:
         status = "judge_transport_failed"
         marker = "judge_transport_failed"
+    # Never attach candidate meta as judge_meta — that duplicates candidate cost.
+    if meta is None or not isinstance(meta, ModelCallMeta):
+        judge_meta = _empty_judge_meta(judge_model)
+    elif candidate.meta is not None and meta is candidate.meta:
+        judge_meta = _empty_judge_meta(judge_model)
+    else:
+        judge_meta = meta
     zeros = [
         QuestionScore(
             question_id=q.id,
@@ -522,7 +858,8 @@ def _zero_judgment(
         question_scores=zeros,
         weighted_accuracy=0.0,
         judge_model=judge_model,
-        judge_meta=meta,
+        primary_judge_model=primary_judge_model or judge_model,
+        judge_meta=judge_meta,
         raw_judge_json=raw,
         status=status,
         failure_reason=rationale,
@@ -595,23 +932,40 @@ def systemic_judge_failure(judgments: List[JudgeResult]) -> bool:
 
 
 def _is_rejudgable_failure(j: JudgeResult) -> bool:
-    """Transport / empty-judge failures worth one serial retry (not empty candidate)."""
+    """Transport failures worth one pipeline-level retry (not empty candidate).
+
+    Schema/evidence invalidation already spends the in-judge corrective attempt
+    inside ``judge_candidate``. Re-queueing those here flipped finished N/A rows
+    back to 75% "corrective retry" with a frozen clock — skip them.
+    """
     if not is_failed_judgment(j):
         return False
+    if int(getattr(j, "retry_count", 0) or 0) >= 1:
+        return False
     flags = set(judgment_flags(j))
-    if flags & {"empty_answer", "candidate_error"}:
+    if flags & {
+        "empty_answer",
+        "candidate_error",
+        "candidate_partial",
+        "judge_evidence_invalid",
+        "judge_schema_invalid",
+        "judge_retry_failed",
+    }:
         return False
     if j.status in {
-        "judge_transport_failed",
         "judge_schema_invalid",
         "judge_evidence_invalid",
-        "timed_out",
+        "candidate_partial",
+        "candidate_empty",
+        "collect_failed",
+        "cancelled",
     }:
+        return False
+    if j.status in {"judge_transport_failed", "timed_out"}:
         return True
     err = ((j.judge_meta.error if j.judge_meta else None) or "").lower()
     return bool(
-        flags
-        & {"judge_error", "judge_retry_failed", "judge_exception"}
+        flags & {"judge_error", "judge_exception"}
         or "empty body" in err
         or "incomplete" in err
         or "timeout" in err
@@ -620,6 +974,56 @@ def _is_rejudgable_failure(j: JudgeResult) -> bool:
         or "503" in err
         or "504" in err
     )
+
+
+def _score_sections_from_payload(
+    case: Case,
+    candidate: CandidateAnswer,
+    payload: Dict[str, Any],
+    *,
+    gold_reference: str,
+    target_ids: set[str],
+) -> tuple[Dict[str, QuestionScore], Dict[str, str]]:
+    """Local normalize + score; never spends tokens."""
+    qs = payload.get("question_scores") or []
+    accepted: Dict[str, QuestionScore] = {}
+    section_errors: Dict[str, str] = {}
+    if not isinstance(qs, list) or not qs:
+        return accepted, {qid: "empty or unusable JSON" for qid in sorted(target_ids)}
+    grouped: Dict[str, List[Dict[str, Any]]] = {}
+    for raw_item in qs:
+        if not isinstance(raw_item, dict):
+            continue
+        item = _normalize_judge_item(raw_item)
+        qid = str(item.get("question_id") or "")
+        if qid in target_ids:
+            grouped.setdefault(qid, []).append(item)
+    for qid in target_ids:
+        items = grouped.get(qid) or []
+        if len(items) != 1:
+            section_errors[qid] = (
+                "missing section" if not items else "duplicate section"
+            )
+            continue
+        item = items[0]
+        has_graded = isinstance(item.get("claim_assessments"), list)
+        has_legacy = isinstance(item.get("matched_claim_ids"), list)
+        if not has_graded and not has_legacy:
+            section_errors[qid] = "graded claim_assessments schema is required"
+            continue
+        answer = (
+            (candidate.answers or {}).get(qid) or candidate.raw_response or ""
+        )
+        try:
+            accepted[qid] = _score_from_judge_item(
+                case,
+                item,
+                answer_text=answer,
+                gold_reference=gold_reference,
+            )
+        except (TypeError, ValueError, AttributeError) as exc:
+            section_errors[qid] = str(exc)
+    return accepted, section_errors
 
 
 def judge_candidate(
@@ -644,136 +1048,145 @@ def judge_candidate(
         },
     ]
     raw, meta = "", None
+    accumulated_meta: Optional[ModelCallMeta] = None
     last_validation_error = ""
     required = {q.id for q in case.questions}
     accepted: Dict[str, QuestionScore] = {}
-    retry_ids = set(required)
-    for attempt in range(2):
-        if progress_callback:
-            progress_callback(
-                "judge request" if attempt == 0 else "corrective retry",
-                25 if attempt == 0 else 75,
-            )
-        raw, meta = openrouter.chat(
+
+    if progress_callback:
+        progress_callback("judge request", 25)
+    raw, meta = openrouter.chat(
+        judge_model,
+        messages,
+        temperature=temperature,
+        max_tokens=8192,
+        response_format={"type": "json_object"},
+        max_attempts=3,
+        timeout=240.0,
+        api_key=api_key,
+    )
+    accumulated_meta = _append_paid_attempt(meta, role="primary", prior=None)
+    meta = accumulated_meta
+    if progress_callback:
+        progress_callback("validating response", 70)
+    if meta.error:
+        return _zero_judgment(
+            case,
+            candidate,
             judge_model,
-            messages,
+            f"Judge failed: {meta.error}",
+            meta,
+            raw=raw,
+            primary_judge_model=judge_model,
+        )
+
+    data = _extract_json(raw)
+    scored, section_errors = _score_sections_from_payload(
+        case,
+        candidate,
+        data if isinstance(data, dict) else {},
+        gold_reference=gold_reference,
+        target_ids=required,
+    )
+    accepted.update(scored)
+    retry_ids = required - set(accepted)
+
+    # One paid corrective call only when local salvage could not accept sections.
+    # Targeted to failed sections; shorter budget than the primary judge call.
+    if retry_ids:
+        details = "; ".join(
+            f"{qid}: {section_errors.get(qid, 'invalid')}"
+            for qid in sorted(retry_ids)
+        )
+        last_validation_error = details
+        repair_messages = messages + [
+            {
+                "role": "user",
+                "content": (
+                    "Local validation rejected ONLY these sections after "
+                    f"deterministic repair: {sorted(retry_ids)}. Errors: {details}. "
+                    "Return a compact JSON object with question_scores containing "
+                    "exactly those rejected sections (claim_assessments + "
+                    "additional_claims + quality). Use verbatim candidate quotes "
+                    "from the candidate answer (Markdown/whitespace differences OK). "
+                    "Never rewrite accepted sections and never invent evidence."
+                ),
+            }
+        ]
+        # UI shows 75% only when the paid repair HTTP call is about to start.
+        if progress_callback:
+            progress_callback("corrective retry", 75)
+        raw_repair, meta_repair = openrouter.chat(
+            judge_model,
+            repair_messages,
             temperature=temperature,
-            max_tokens=8192,
+            max_tokens=min(4096, 900 * max(1, len(retry_ids))),
             response_format={"type": "json_object"},
-            max_attempts=3 if attempt == 0 else 2,
-            timeout=240.0,
+            max_attempts=2,
+            timeout=120.0,
             api_key=api_key,
         )
+        accumulated_meta = _append_paid_attempt(
+            meta_repair, role="corrective_retry", prior=accumulated_meta
+        )
+        meta = accumulated_meta
+        if raw_repair:
+            raw = raw_repair
         if progress_callback:
-            progress_callback("validating response", 70 if attempt == 0 else 88)
-        if meta.error:
-            if attempt == 0 and openrouter.is_retryable_error(meta.error):
-                continue
-            return _zero_judgment(
+            progress_callback("validating response", 88)
+        if not meta_repair.error:
+            repair_data = _extract_json(raw_repair)
+            repaired, repair_errors = _score_sections_from_payload(
                 case,
                 candidate,
-                judge_model,
-                f"Judge failed: {meta.error}",
-                meta,
-                raw=raw,
+                repair_data if isinstance(repair_data, dict) else {},
+                gold_reference=gold_reference,
+                target_ids=retry_ids,
             )
-        data = _extract_json(raw)
-        if not isinstance(data, dict):
-            data = {}
-        qs = data.get("question_scores") or []
-        try:
-            if not isinstance(qs, list) or not qs:
-                raise ValueError("empty or unusable JSON")
-            target_ids = retry_ids if attempt else required
-            grouped: Dict[str, List[Dict[str, Any]]] = {}
-            for raw_item in qs:
-                if not isinstance(raw_item, dict):
-                    continue
-                item = _normalize_judge_item(raw_item)
-                qid = str(item.get("question_id") or "")
-                if qid in target_ids:
-                    grouped.setdefault(qid, []).append(item)
-            section_errors: Dict[str, str] = {}
-            for qid in target_ids:
-                items = grouped.get(qid) or []
-                if len(items) != 1:
-                    section_errors[qid] = (
-                        "missing section" if not items else "duplicate section"
-                    )
-                    continue
-                item = items[0]
-                if not isinstance(item, dict):
-                    section_errors[qid] = "section is not an object"
-                    continue
-                if not isinstance(item.get("claim_assessments"), list):
-                    section_errors[qid] = "graded claim_assessments schema is required"
-                    continue
-                answer = (
-                    (candidate.answers or {}).get(qid)
-                    or candidate.raw_response
-                    or ""
-                )
-                try:
-                    accepted[qid] = _score_from_judge_item(
-                        case,
-                        item,
-                        answer_text=answer,
-                        gold_reference=gold_reference,
-                    )
-                except (TypeError, ValueError, AttributeError) as exc:
-                    accepted.pop(qid, None)
-                    section_errors[qid] = str(exc)
+            accepted.update(repaired)
+            section_errors.update(repair_errors)
             retry_ids = required - set(accepted)
             if retry_ids:
-                details = "; ".join(
+                last_validation_error = "; ".join(
                     f"{qid}: {section_errors.get(qid, 'invalid')}"
                     for qid in sorted(retry_ids)
                 )
-                raise ValueError(details)
-            q_scores = [accepted[q.id] for q in case.questions]
-            assert meta is not None
-            return JudgeResult(
-                blind_id=candidate.blind_id,
-                candidate_key=candidate.candidate_key,
-                question_scores=q_scores,
-                weighted_accuracy=_weighted_accuracy(case, q_scores),
-                coverage_score=_weighted_subscale(case, q_scores, "recall"),
-                quality_score=_weighted_subscale(case, q_scores, "quality"),
-                discipline_score=_weighted_subscale(case, q_scores, "precision"),
-                judge_model=judge_model,
-                judge_meta=meta,
-                raw_judge_json=raw,
-                status="valid",
-                retry_count=attempt,
+        else:
+            last_validation_error = (
+                f"{details}; corrective retry failed: {meta_repair.error}"
             )
-        except (TypeError, ValueError, AttributeError) as exc:
-            last_validation_error = str(exc)
-            if attempt == 0:
-                messages = messages + [
-                    {
-                        "role": "user",
-                        "content": (
-                            "Deterministic validation accepted all other sections but "
-                            f"rejected only {sorted(retry_ids)}: "
-                            f"{last_validation_error}. Return a JSON object whose "
-                            "question_scores contains exactly those rejected sections. "
-                            "Never rewrite accepted sections and never invent evidence."
-                        ),
-                    }
-                ]
-                continue
 
+    if retry_ids:
+        assert meta is not None
+        failed = _zero_judgment(
+            case,
+            candidate,
+            judge_model,
+            f"Judge schema/evidence invalid after retry: {last_validation_error}",
+            meta,
+            raw=raw or "",
+            primary_judge_model=judge_model,
+        )
+        failed.retry_count = 1
+        return failed
+
+    q_scores = [accepted[q.id] for q in case.questions]
     assert meta is not None
-    failed = _zero_judgment(
-        case,
-        candidate,
-        judge_model,
-        f"Judge schema/evidence invalid after retry: {last_validation_error}",
-        meta,
-        raw=raw or "",
+    return JudgeResult(
+        blind_id=candidate.blind_id,
+        candidate_key=candidate.candidate_key,
+        question_scores=q_scores,
+        weighted_accuracy=_weighted_accuracy(case, q_scores),
+        coverage_score=_weighted_subscale(case, q_scores, "recall"),
+        quality_score=_weighted_subscale(case, q_scores, "quality"),
+        discipline_score=_weighted_subscale(case, q_scores, "precision"),
+        judge_model=judge_model,
+        primary_judge_model=judge_model,
+        judge_meta=meta,
+        raw_judge_json=raw,
+        status="valid",
+        retry_count=1 if accumulated_meta and len(accumulated_meta.paid_attempts) > 1 else 0,
     )
-    failed.retry_count = 1
-    return failed
 
 
 class PipelinedJudge:
@@ -811,7 +1224,8 @@ class PipelinedJudge:
         self.run_scope = run_scope or f"pipe-{id(self)}"
         self.benchmark_track = benchmark_track
         self.max_wall_s = max(30.0, float(max_wall_s))
-        self._pipeline_started = time.monotonic()
+        # Wall-clock starts at the first submit(), not at pipeline construction.
+        self._pipeline_started: Optional[float] = None
         self.started_at = utc_now_iso()
         n_hint = max(self.expected_total, 1)
         self._workers = max(1, min(n_hint, max_workers or n_hint))
@@ -829,6 +1243,22 @@ class PipelinedJudge:
         self._shutdown = False
         _register_active_pipe(self)
 
+    def _elapsed_wall_s(self) -> float:
+        if self._pipeline_started is None:
+            return 0.0
+        return max(0.0, time.monotonic() - self._pipeline_started)
+
+    def _budget_remaining_s(self) -> float:
+        if self._pipeline_started is None:
+            return self.max_wall_s
+        return self.max_wall_s - self._elapsed_wall_s()
+
+    def _deadline_reached(self) -> bool:
+        return (
+            self._pipeline_started is not None
+            and self._elapsed_wall_s() >= self.max_wall_s
+        )
+
     def _finish_pending_as(self, *, status: str, reason: str, marker: str) -> None:
         for fut, cand in list(self._pending.items()):
             fut.cancel()
@@ -837,7 +1267,8 @@ class PipelinedJudge:
                 cand,
                 self.judge_model,
                 reason,
-                cand.meta,
+                None,
+                primary_judge_model=self.judge_model,
             )
             result.status = status
             result.failure_reason = reason
@@ -906,7 +1337,8 @@ class PipelinedJudge:
                 cand,
                 self.judge_model,
                 f"Candidate error: {cand.meta.error}",
-                cand.meta,
+                None,
+                primary_judge_model=self.judge_model,
             )
         if not _candidate_has_answer(cand):
             z = _zero_judgment(
@@ -914,7 +1346,8 @@ class PipelinedJudge:
                 cand,
                 self.judge_model,
                 "Empty answer — not judged (skipped DeepSeek to save credits)",
-                cand.meta,
+                None,
+                primary_judge_model=self.judge_model,
             )
             for qs in z.question_scores:
                 qs.errors = ["empty_answer"]
@@ -925,7 +1358,8 @@ class PipelinedJudge:
                 cand,
                 self.judge_model,
                 f"Partial candidate output — finish_reason={cand.meta.finish_reason}",
-                cand.meta,
+                None,
+                primary_judge_model=self.judge_model,
             )
         # A hit length cap is not itself a failure: judge the answer whenever every
         # required section carries content, and fail only on real absence.
@@ -937,7 +1371,8 @@ class PipelinedJudge:
                 self.judge_model,
                 "Partial candidate output — missing required sections: "
                 + ", ".join(missing),
-                cand.meta,
+                None,
+                primary_judge_model=self.judge_model,
             )
         return judge_candidate(
             self.case,
@@ -988,7 +1423,64 @@ class PipelinedJudge:
             and technical_failures >= threshold
         )
 
+    def _wait_with_heartbeats(
+        self,
+        futures: Dict[Future, CandidateAnswer],
+        *,
+        timeout: float,
+        stage: str,
+        percent: int,
+    ) -> tuple[set[Future], set[Future]]:
+        """Wait while keeping elapsed_s moving for active rows (no frozen UI clock)."""
+        deadline = time.monotonic() + max(0.0, timeout)
+        pending: set[Future] = set(futures)
+        done: set[Future] = set()
+        while pending and time.monotonic() < deadline:
+            if is_cancelled(self.run_scope) or self._deadline_reached():
+                break
+            slice_timeout = min(1.0, max(0.05, deadline - time.monotonic()))
+            finished, pending = wait(
+                tuple(pending),
+                timeout=slice_timeout,
+                return_when=FIRST_COMPLETED,
+            )
+            done.update(finished)
+            self._drain_worker_progress()
+            now = time.monotonic()
+            for fut, cand in futures.items():
+                if fut not in pending:
+                    continue
+                key = cand.candidate_key
+                self._emit(
+                    {
+                        "phase": "progress",
+                        "key": key,
+                        "label": cand.display_label or cand.label or key,
+                        "stage": stage,
+                        "percent": percent,
+                        "elapsed_s": max(
+                            0.0, now - self._started_at.get(key, now)
+                        ),
+                        "done": self._finished,
+                        "total": self.total,
+                        "active_attempt": True,
+                    }
+                )
+        return done, pending
+
     def _verify_whole_run(self) -> None:
+        remaining = self._budget_remaining_s()
+        if remaining <= 0:
+            # Do not launch a whole-run verifier with an exhausted wall-clock budget.
+            return
+        recoverable_statuses = {
+            "judge_transport_failed",
+            "judge_schema_invalid",
+            "judge_evidence_invalid",
+            "timed_out",
+        }
+        # Only re-judge residual technical failures — never regress already-valid
+        # cloud/local scores into verifier theater.
         eligible = [
             cand
             for cand in self._candidates
@@ -996,25 +1488,31 @@ class PipelinedJudge:
             and _candidate_has_answer(cand)
             and not _candidate_missing_sections(self.case, cand)
             and (cand.meta.finish_reason or "").lower() != "content_filter"
+            and self._by_key.get(cand.candidate_key) is not None
+            and self._by_key[cand.candidate_key].status in recoverable_statuses
         ]
         if not eligible:
             return
-        remaining = max(
-            1.0, self.max_wall_s - (time.monotonic() - self._pipeline_started)
-        )
         workers = min(self._workers, len(eligible))
         executor = ThreadPoolExecutor(max_workers=max(1, workers))
         futures: Dict[Future, CandidateAnswer] = {}
         for cand in eligible:
+            self._started_at[cand.candidate_key] = time.monotonic()
+            self._progress_state[cand.candidate_key] = {
+                "stage": "independent verifier",
+                "percent": 92,
+            }
             self._emit(
                 {
-                    "phase": "progress",
+                    "phase": "retry",
                     "key": cand.candidate_key,
                     "label": cand.display_label or cand.label or cand.candidate_key,
                     "stage": "independent verifier",
                     "percent": 92,
                     "done": self._finished,
                     "total": self.total,
+                    "elapsed_s": 0.0,
+                    "active_attempt": True,
                 }
             )
             futures[
@@ -1030,7 +1528,12 @@ class PipelinedJudge:
                     False,
                 )
             ] = cand
-        done, pending = wait(tuple(futures), timeout=remaining)
+        done, pending = self._wait_with_heartbeats(
+            futures,
+            timeout=max(0.1, remaining),
+            stage="independent verifier",
+            percent=92,
+        )
         for fut in done:
             cand = futures[fut]
             try:
@@ -1041,7 +1544,19 @@ class PipelinedJudge:
                     cand,
                     self.verifier_model,
                     f"Verifier exception: {type(exc).__name__}: {exc}",
-                    cand.meta,
+                    None,
+                    primary_judge_model=self.judge_model,
+                )
+            result.primary_judge_model = self.judge_model
+            result.judge_model = self.verifier_model
+            if result.judge_meta and isinstance(result.judge_meta, ModelCallMeta):
+                # Tag verifier attempts for append-only cost accounting.
+                attempts = list(result.judge_meta.paid_attempts or [])
+                for attempt in attempts:
+                    if attempt.get("role") == "primary":
+                        attempt["role"] = "verifier"
+                result.judge_meta = result.judge_meta.model_copy(
+                    update={"paid_attempts": attempts}
                 )
             result.failure_reason = (
                 f"Whole-run verifier activated after primary judge failure; "
@@ -1049,6 +1564,27 @@ class PipelinedJudge:
                 + (result.failure_reason or "")
             ).strip()
             self._by_key[cand.candidate_key] = result
+            self._emit(
+                {
+                    "phase": "retry_done",
+                    "key": cand.candidate_key,
+                    "label": cand.display_label or cand.label or cand.candidate_key,
+                    "done": self._finished,
+                    "total": self.total,
+                    "accuracy": result.weighted_accuracy,
+                    "coverage": result.coverage_score,
+                    "quality": result.quality_score,
+                    "discipline": result.discipline_score,
+                    "failed": is_failed_judgment(result),
+                    "stage": "complete",
+                    "percent": 100,
+                    "elapsed_s": max(
+                        0.0,
+                        time.monotonic()
+                        - self._started_at.get(cand.candidate_key, time.monotonic()),
+                    ),
+                }
+            )
         for fut in pending:
             cand = futures[fut]
             fut.cancel()
@@ -1057,11 +1593,30 @@ class PipelinedJudge:
                 cand,
                 self.verifier_model,
                 "Whole-run verifier exceeded the judge wall-clock budget",
-                cand.meta,
+                None,
+                primary_judge_model=self.judge_model,
             )
             timed_out.status = "timed_out"
             timed_out.failure_reason = "Whole-run verifier timed out"
             self._by_key[cand.candidate_key] = timed_out
+            self._emit(
+                {
+                    "phase": "retry_done",
+                    "key": cand.candidate_key,
+                    "label": cand.display_label or cand.label or cand.candidate_key,
+                    "done": self._finished,
+                    "total": self.total,
+                    "accuracy": 0.0,
+                    "failed": True,
+                    "stage": "complete",
+                    "percent": 100,
+                    "elapsed_s": max(
+                        0.0,
+                        time.monotonic()
+                        - self._started_at.get(cand.candidate_key, time.monotonic()),
+                    ),
+                }
+            )
         executor.shutdown(wait=False, cancel_futures=True)
 
     def _ensure_terminal_rows(self) -> None:
@@ -1074,7 +1629,8 @@ class PipelinedJudge:
                 cand,
                 self.judge_model,
                 "Judge pipeline ended without a terminal result",
-                cand.meta,
+                None,
+                primary_judge_model=self.judge_model,
             )
             result.status = "judge_transport_failed"
             result.failure_reason = "Missing terminal judge result"
@@ -1130,6 +1686,9 @@ class PipelinedJudge:
             return False
         if any(c.candidate_key == cand.candidate_key for c in self._candidates):
             return False
+        if self._pipeline_started is None:
+            self._pipeline_started = time.monotonic()
+            self.started_at = utc_now_iso()
         self._candidates.append(cand)
         self._started_at[cand.candidate_key] = time.monotonic()
         self._progress_state[cand.candidate_key] = {
@@ -1164,7 +1723,8 @@ class PipelinedJudge:
                 cand,
                 self.judge_model,
                 f"Judge exception: {type(exc).__name__}: {exc}",
-                cand.meta,
+                None,
+                primary_judge_model=self.judge_model,
             )
             for qs in result.question_scores:
                 qs.errors = ["judge_exception"]
@@ -1196,6 +1756,17 @@ class PipelinedJudge:
     def poll(self) -> int:
         """Non-blocking: harvest finished futures. Call from the UI/script thread."""
         self._drain_worker_progress()
+        if self._deadline_reached() and self._pending:
+            self._finish_pending_as(
+                status="timed_out",
+                reason=(
+                    f"Judge pipeline exceeded {self.max_wall_s:.0f}s wall-clock budget"
+                ),
+                marker="judge_timeout",
+            )
+            self.close(cancel_pending=True)
+            self._drain_worker_progress()
+            return 0
         n = 0
         for fut in list(self._pending):
             if fut.done():
@@ -1215,7 +1786,7 @@ class PipelinedJudge:
                 )
                 self.close(cancel_pending=True)
                 break
-            if time.monotonic() - self._pipeline_started >= self.max_wall_s:
+            if self._deadline_reached():
                 self._finish_pending_as(
                     status="timed_out",
                     reason=f"Judge pipeline exceeded {self.max_wall_s:.0f}s wall-clock budget",
@@ -1247,9 +1818,7 @@ class PipelinedJudge:
                 break
             if retry_attempts >= self.max_retries:
                 break
-            remaining = self.max_wall_s - (
-                time.monotonic() - self._pipeline_started
-            )
+            remaining = self._budget_remaining_s()
             if remaining <= 0:
                 break
             if not _is_rejudgable_failure(j):
@@ -1257,6 +1826,13 @@ class PipelinedJudge:
             cand = cand_by.get(j.candidate_key)
             if not cand or not _candidate_has_answer(cand):
                 continue
+            # Real new attempt: reset the live clock so the row never freezes at
+            # a stale elapsed_s from the previous terminal N/A paint.
+            self._started_at[cand.candidate_key] = time.monotonic()
+            self._progress_state[cand.candidate_key] = {
+                "stage": "corrective retry",
+                "percent": 75,
+            }
             self._emit(
                 {
                     "phase": "retry",
@@ -1266,15 +1842,13 @@ class PipelinedJudge:
                     "total": self.total,
                     "stage": "corrective retry",
                     "percent": 75,
-                    "elapsed_s": max(
-                        0.0,
-                        time.monotonic()
-                        - self._started_at.get(cand.candidate_key, time.monotonic()),
-                    ),
+                    "elapsed_s": 0.0,
+                    "active_attempt": True,
                 }
             )
-            time.sleep(1.5)
+            time.sleep(0.35)
             retry_attempts += 1
+            prior_meta = j.judge_meta if isinstance(j.judge_meta, ModelCallMeta) else None
             retry_future = self._pool.submit(
                 judge_candidate,
                 self.case,
@@ -1295,25 +1869,50 @@ class PipelinedJudge:
                     }
                 ),
             )
-            remaining = max(
-                0.0,
-                self.max_wall_s - (time.monotonic() - self._pipeline_started),
+            remaining = max(0.0, self._budget_remaining_s())
+            retry_done, retry_pending = self._wait_with_heartbeats(
+                {retry_future: cand},
+                timeout=remaining,
+                stage="corrective retry",
+                percent=75,
             )
-            retry_done, _ = wait((retry_future,), timeout=max(0.0, remaining))
             if retry_future in retry_done:
                 retry = retry_future.result()
+                if prior_meta and retry.judge_meta:
+                    # Keep primary-attempt cost when the pipeline-level retry replaces
+                    # an earlier failed observation.
+                    merged_attempts = list(prior_meta.paid_attempts or []) + list(
+                        retry.judge_meta.paid_attempts or []
+                    )
+                    retry.judge_meta = retry.judge_meta.model_copy(
+                        update={
+                            "cost_usd": round(
+                                float(prior_meta.cost_usd or 0.0)
+                                + float(retry.judge_meta.cost_usd or 0.0),
+                                8,
+                            ),
+                            "prompt_tokens": int(prior_meta.prompt_tokens or 0)
+                            + int(retry.judge_meta.prompt_tokens or 0),
+                            "completion_tokens": int(prior_meta.completion_tokens or 0)
+                            + int(retry.judge_meta.completion_tokens or 0),
+                            "paid_attempts": merged_attempts,
+                        }
+                    )
             else:
-                retry_future.cancel()
+                for fut in retry_pending:
+                    fut.cancel()
                 retry = _zero_judgment(
                     self.case,
                     cand,
                     self.judge_model,
                     "Corrective retry exceeded the judge wall-clock budget",
-                    cand.meta,
+                    prior_meta,
+                    primary_judge_model=self.judge_model,
                 )
                 retry.status = "timed_out"
                 retry.failure_reason = "Corrective retry timed out"
             retry.retry_count += 1
+            retry.primary_judge_model = self.judge_model
             self._drain_worker_progress()
             self._by_key[j.candidate_key] = retry
             self._emit(
@@ -1337,7 +1936,11 @@ class PipelinedJudge:
                     ),
                 }
             )
-        if self._needs_whole_run_verifier() and not is_cancelled(self.run_scope):
+        if (
+            self._needs_whole_run_verifier()
+            and not is_cancelled(self.run_scope)
+            and self._budget_remaining_s() > 0
+        ):
             self._verify_whole_run()
         self._ensure_terminal_rows()
         ordered = [
@@ -1468,22 +2071,27 @@ def build_ranking(judgments: List[JudgeResult]) -> List[Dict[str, Any]]:
     for j in judgments:
         failed = is_failed_judgment(j)
         flags = judgment_flags(j)
+        # Ties use the stored unrounded composite when available; display is rounded.
+        raw_accuracy = None if failed else float(j.weighted_accuracy)
         rows.append(
             {
                 "key": j.candidate_key,
                 "blind_id": j.blind_id,
-                "accuracy": None if failed else j.weighted_accuracy,
+                "accuracy": None if failed else round(raw_accuracy, 2),
+                "accuracy_raw": raw_accuracy,
                 "coverage": None if failed else j.coverage_score,
                 "quality": None if failed else j.quality_score,
                 "discipline": None if failed else j.discipline_score,
                 "status": "n/a" if failed else "ok",
                 "status_note": ", ".join(flags[:4]) if flags else "",
+                "primary_judge": j.primary_judge_model or j.judge_model,
+                "effective_judge": j.judge_model,
             }
         )
     rows.sort(
         key=lambda r: (
             0 if r["status"] == "ok" else 1,
-            -float(r["accuracy"] or 0),
+            -float(r["accuracy_raw"] if r["accuracy_raw"] is not None else -1),
         )
     )
     last_score: Optional[float] = None
@@ -1492,7 +2100,7 @@ def build_ranking(judgments: List[JudgeResult]) -> List[Dict[str, Any]]:
         if row["status"] != "ok":
             row["rank"] = None
             continue
-        score = float(row["accuracy"])
+        score = float(row["accuracy_raw"])
         if last_score is None or score != last_score:
             last_rank = i
             last_score = score
@@ -1528,6 +2136,6 @@ def explain_run_scores(case: Case, judgments: List[JudgeResult]) -> Dict[str, An
         "per_model": per_model,
         "note": (
             "Correctness balances graded coverage, clinical quality, and discipline. "
-            "Technical failures are N/A; exact ties keep the same rank."
+            "Technical failures are N/A; exact ties on unrounded scores keep the same rank."
         ),
     }

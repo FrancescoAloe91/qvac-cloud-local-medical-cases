@@ -19,6 +19,44 @@ def _normalized(text: str) -> str:
     return re.sub(r"\s+", " ", (text or "").strip()).casefold()
 
 
+def _quotes_overlap_substantially(a: str, b: str) -> bool:
+    """True when one non-trivial quote contains the other as a contiguous span."""
+    if not a or not b or a == b:
+        return False
+    # Ignore tiny fragments — overlap checks target substantial clinical quotes.
+    if min(len(a), len(b)) < 12:
+        return False
+    return a in b or b in a
+
+
+def _validate_source_quotes(
+    raw_text: str,
+    sections: Mapping[str, GoldSection],
+) -> None:
+    """Reject empty, non-verbatim, duplicate, or overlapping substantial quotes."""
+    raw_norm = _normalized(raw_text)
+    seen: list[str] = []
+    for section in sections.values():
+        for claim in section.claims:
+            quote = _normalized(claim.source_quote)
+            if not quote:
+                raise ValueError(f"Claim {claim.id} has an empty source quote")
+            if quote not in raw_norm:
+                raise ValueError(
+                    f"Claim {claim.id} has no verbatim source quote; extractor output rejected"
+                )
+            if quote in seen:
+                raise ValueError(
+                    f"Duplicate source quote across scoring claims: {claim.source_quote}"
+                )
+            for prior in seen:
+                if _quotes_overlap_substantially(quote, prior):
+                    raise ValueError(
+                        f"Overlapping source quote across scoring claims: {claim.source_quote}"
+                    )
+            seen.append(quote)
+
+
 def extract_json_object(raw: str) -> Mapping[str, Any]:
     """Parse JSON even when a provider wraps it in Markdown or commentary."""
     text = (raw or "").strip().lstrip("\ufeff")
@@ -100,7 +138,6 @@ def parse_extraction(raw_text: str, payload: Mapping[str, Any]) -> Dict[str, Gol
         raise ValueError("Extractor response has no sections object")
 
     sections: Dict[str, GoldSection] = {}
-    seen_source_quotes: set[str] = set()
     for section_id in SECTION_IDS:
         item = raw_sections.get(section_id)
         if not isinstance(item, Mapping):
@@ -126,11 +163,6 @@ def parse_extraction(raw_text: str, payload: Mapping[str, Any]) -> Dict[str, Gol
                 )
             if not claim.text.strip():
                 raise ValueError(f"Claim {claim.id} is empty")
-            if quote in seen_source_quotes:
-                raise ValueError(
-                    f"Duplicate source quote across scoring claims: {claim.source_quote}"
-                )
-            seen_source_quotes.add(quote)
             # The extractor may segment but cannot rewrite scored meaning or assign weight.
             claim.text = claim.source_quote.strip()
             claim.critical = False
@@ -139,6 +171,7 @@ def parse_extraction(raw_text: str, payload: Mapping[str, Any]) -> Dict[str, Gol
             summary=str(item.get("summary") or "").strip(),
             claims=claims,
         )
+    _validate_source_quotes(raw_text, sections)
     return sections
 
 
@@ -150,7 +183,6 @@ def confirmed_gold(
 ) -> ConfirmedGold:
     """Create the frozen contract; all five sections must be assessable."""
     parsed: Dict[str, GoldSection] = {}
-    seen_source_quotes: set[str] = set()
     for section_id in SECTION_IDS:
         item = sections.get(section_id)
         if item is None:
@@ -159,17 +191,10 @@ def confirmed_gold(
         if not section.summary.strip() or not section.claims:
             raise ValueError(f"Complete and confirm section: {section_id}")
         for claim in section.claims:
-            quote = _normalized(claim.source_quote)
-            if not quote:
-                raise ValueError(f"Claim {claim.id} has an empty source quote")
-            if quote in seen_source_quotes:
-                raise ValueError(
-                    f"Duplicate source quote across scoring claims: {claim.source_quote}"
-                )
-            seen_source_quotes.add(quote)
             claim.text = claim.source_quote.strip()
             claim.critical = False
         parsed[section_id] = section
+    _validate_source_quotes(raw_text, parsed)
     return ConfirmedGold(
         raw_text=raw_text.strip(),
         sections=parsed,
@@ -198,15 +223,16 @@ def load_confirmed_gold(value: str | Mapping[str, Any] | ConfirmedGold) -> Confi
         raise ValueError(
             "Gold must be the confirmed five-section JSON contract, not unreviewed prose"
         ) from exc
-    seen_source_quotes: set[str] = set()
     for section in gold.sections.values():
         for claim in section.claims:
-            quote = _normalized(claim.source_quote)
-            if not quote or quote in seen_source_quotes:
-                raise ValueError("Gold contains an empty or duplicate source quote")
-            seen_source_quotes.add(quote)
             claim.text = claim.source_quote.strip()
             claim.critical = False
+    try:
+        _validate_source_quotes(gold.raw_text, gold.sections)
+    except ValueError as exc:
+        raise ValueError(
+            f"Gold contains an empty, non-verbatim, duplicate, or overlapping source quote: {exc}"
+        ) from exc
     return gold
 
 

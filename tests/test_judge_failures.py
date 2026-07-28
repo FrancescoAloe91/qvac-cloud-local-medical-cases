@@ -10,8 +10,10 @@ from benchmark.judge import (
     PipelinedJudge,
     _evidence_normalized,
     _evidence_quote_present,
+    _extract_json,
     _normalize_judge_data,
     _score_from_judge_item,
+    _score_sections_from_payload,
     build_ranking,
     judge_candidate,
     systemic_judge_failure,
@@ -279,7 +281,10 @@ def test_corrective_retry_requests_only_invalid_sections(monkeypatch):
     assert result.retry_count == 1
     assert len(result.question_scores) == 5
     assert "['diagnosis']" in sent_messages[1][-1]["content"]
-    assert "accepted sections" in sent_messages[1][-1]["content"]
+    assert "rejected ONLY these sections" in sent_messages[1][-1]["content"]
+    # Repair call must be cheaper/shorter than a full re-judge.
+    assert sent_messages  # primary + targeted repair only
+    assert len(sent_messages) == 2
 
 
 def _judgment(key: str, score: float, status: str = "valid") -> JudgeResult:
@@ -344,7 +349,7 @@ def test_partial_candidate_is_na_without_spending_on_judge():
     assert result.weighted_accuracy == 0.0  # internal compatibility only
 
 
-def test_verifier_rejudges_complete_candidate_set(monkeypatch):
+def test_verifier_rejudges_only_residual_failures(monkeypatch):
     case = load_case("caseC")
     answers = {q.id: f"{q.id} answer" for q in case.questions}
     candidates = [
@@ -386,10 +391,10 @@ def test_verifier_rejudges_complete_candidate_set(monkeypatch):
     pipe._verify_whole_run()
     pipe.close(cancel_pending=True)
 
-    assert set(seen) == {"a", "b"}
-    assert {result.judge_model for result in pipe._by_key.values()} == {
-        "independent-verifier"
-    }
+    # Already-valid scores must not be pulled back into verifier theater.
+    assert seen == ["b"]
+    assert pipe._by_key["a"].judge_model == "judge"
+    assert pipe._by_key["b"].judge_model == "independent-verifier"
 
 
 def test_verifier_requires_systemic_residual_failures():
@@ -508,15 +513,18 @@ def test_corrective_retry_emits_stage_progress(monkeypatch):
         run_scope="test-retry-progress",
     )
     pipe._candidates = [candidate]
-    pipe._started_at[candidate.candidate_key] = 0.0
+    pipe._pipeline_started = __import__("time").monotonic()
+    pipe._started_at[candidate.candidate_key] = __import__("time").monotonic()
+    # Pipeline-level retry is reserved for transport/timeout — not schema/evidence.
     pipe._by_key = {
         candidate.candidate_key: _judgment(
-            candidate.candidate_key, 0.0, "judge_schema_invalid"
+            candidate.candidate_key, 0.0, "judge_transport_failed"
         )
     }
 
     def fake_judge(*args, progress_callback=None, **kwargs):
-        progress_callback("validating response", 88)
+        if progress_callback:
+            progress_callback("validating response", 88)
         return _judgment(candidate.candidate_key, 77.0)
 
     monkeypatch.setattr("benchmark.judge.judge_candidate", fake_judge)
@@ -527,6 +535,10 @@ def test_corrective_retry_emits_stage_progress(monkeypatch):
     assert "retry" in phases
     assert "progress" in phases
     assert "retry_done" in phases
+    retry_evt = next(evt for evt in events if evt.get("phase") == "retry")
+    assert retry_evt.get("active_attempt") is True
+    assert float(retry_evt.get("elapsed_s") or 0) >= 0.0
+    assert any(evt.get("phase") == "retry_done" for evt in events)
 
 
 @pytest.mark.parametrize("na_count", [1, 2])
@@ -569,4 +581,251 @@ def test_candidate_specific_na_terminalizes_iteration_and_allows_next(na_count):
 
     second = completed_iteration(f"iteration-two-{na_count}")
     assert len(second) == 4
+
+
+def test_schema_invalid_does_not_reenter_pipeline_corrective_retry(monkeypatch):
+    """Finished N/A must not flip back to 75% via finalize serial retry."""
+    case = load_case("caseC")
+    candidate = CandidateAnswer(
+        candidate_key="claude",
+        label="Claude",
+        blind_id="Candidate 1",
+        answers={q.id: "answer" for q in case.questions},
+        raw_response="complete",
+        meta=ModelCallMeta(model="anthropic/claude-sonnet-5", provider="openrouter"),
+    )
+    events = []
+    pipe = PipelinedJudge(
+        case,
+        "primary",
+        expected_total=1,
+        on_progress=events.append,
+        run_scope="test-no-regress-retry",
+        max_retries=3,
+    )
+    failed = _judgment("claude", 0.0, "judge_schema_invalid")
+    failed.retry_count = 1
+    pipe._candidates = [candidate]
+    pipe._by_key = {"claude": failed}
+    calls = {"n": 0}
+
+    def boom(*args, **kwargs):
+        calls["n"] += 1
+        raise AssertionError("pipeline must not re-call judge for schema/evidence N/A")
+
+    monkeypatch.setattr("benchmark.judge.judge_candidate", boom)
+    monkeypatch.setattr("benchmark.judge.time.sleep", lambda _: None)
+    results = pipe.finalize()
+    assert calls["n"] == 0
+    assert results[0].status == "judge_schema_invalid"
+    assert not any(evt.get("phase") == "retry" for evt in events)
+
+
+def test_finalize_completes_mixed_valid_and_na(monkeypatch):
+    case = load_case("caseC")
+    candidates = [
+        CandidateAnswer(
+            candidate_key=key,
+            label=key,
+            blind_id=f"Candidate {i}",
+            answers={q.id: "answer" for q in case.questions},
+            raw_response="complete",
+            meta=ModelCallMeta(model=f"m-{key}", provider="openrouter"),
+        )
+        for i, key in enumerate(("chatgpt", "claude", "gemini"), 1)
+    ]
+    pipe = PipelinedJudge(
+        case,
+        "primary",
+        expected_total=3,
+        run_scope="test-mixed-terminal",
+        verifier_model="",
+    )
+    pipe._candidates = candidates
+    pipe._by_key = {
+        "chatgpt": _judgment("chatgpt", 90.0),
+        "claude": _judgment("claude", 0.0, "judge_schema_invalid"),
+        "gemini": _judgment("gemini", 85.0),
+    }
+    monkeypatch.setattr(
+        "benchmark.judge.judge_candidate",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("no retry")),
+    )
+    results = pipe.finalize()
+    assert len(results) == 3
+    by = {r.candidate_key: r for r in results}
+    assert by["chatgpt"].status == "valid"
+    assert by["claude"].status == "judge_schema_invalid"
+    assert by["gemini"].status == "valid"
+
+
+def test_numeric_punctuation_is_preserved_in_evidence_matching():
+    answer = _evidence_normalized("Start calcium gluconate 10–20 mL and insulin 1.0 U.")
+    assert _evidence_quote_present("calcium gluconate 10–20 mL", answer)
+    assert _evidence_quote_present("insulin 1.0 U", answer)
+    assert not _evidence_quote_present("calcium gluconate 10 20 mL", answer)
+    assert not _evidence_quote_present("insulin 1 0 U", answer)
+
+
+def test_short_token_does_not_match_inside_longer_word():
+    answer = _evidence_normalized("Consider adrenal insufficiency in this context.")
+    assert not _evidence_quote_present("renal", answer)
+    assert _evidence_quote_present("adrenal insufficiency", answer)
+
+
+def test_markdown_wrapped_string_numbers_pass_without_paid_retry(monkeypatch):
+    case = load_case("caseC")
+    answers = {
+        q.id: (
+            f"**{q.id.title()}** — give 10–20 mg now. "
+            f"Primary plan for {q.id}."
+        )
+        for q in case.questions
+    }
+    candidate = CandidateAnswer(
+        candidate_key="claude",
+        label="Claude",
+        blind_id="Candidate 1",
+        answers=answers,
+        raw_response="\n".join(answers.values()),
+        meta=ModelCallMeta(model="anthropic/claude-sonnet-5", provider="openrouter"),
+    )
+    payload = {
+        "question_scores": [
+            {
+                "question_id": q.id,
+                "claim_assessments": [
+                    {
+                        "reference_claim_id": f"{q.id}-1",
+                        "coverage": "100%",
+                        "candidate_quotes": [
+                            f"**{q.id.title()}** — give 10–20 mg now."
+                        ],
+                    }
+                ],
+                "additional_claims": [],
+                "clinical_quality": "80",
+            }
+            for q in case.questions
+        ]
+    }
+    calls = {"n": 0}
+
+    def fake_chat(model, messages, **kwargs):
+        calls["n"] += 1
+        return (
+            "```json\n" + __import__("json").dumps(payload) + "\n```",
+            ModelCallMeta(model=model, provider="openrouter", cost_usd=0.01),
+        )
+
+    monkeypatch.setattr("benchmark.judge.openrouter.chat", fake_chat)
+    stages: list[tuple[str, int]] = []
+    result = judge_candidate(
+        case,
+        candidate,
+        "judge",
+        gold_reference=_contract(),
+        progress_callback=lambda stage, pct: stages.append((stage, pct)),
+    )
+    assert result.status == "valid"
+    assert result.retry_count == 0
+    assert calls["n"] == 1
+    assert ("corrective retry", 75) not in stages
+    assert any(stage == "validating response" for stage, _ in stages)
+
+
+def test_cloud_artifact_judge_payload_salvages_without_retry():
+    """Gemini N/A in caseC-a91baa0a2c was evidence-presentation; local salvage scores it."""
+    import json
+    from pathlib import Path
+
+    path = Path(
+        "artifacts/owners/893e6a29cf690fbef4d6aee2/caseC-a91baa0a2c.json"
+    )
+    if not path.exists():
+        pytest.skip("artifact not present")
+    art = json.loads(path.read_text())
+    gold = art["models_config"]["gold_reference"]
+    case = load_case(art["case_id"])
+    for key in ("gemini", "chatgpt", "claude"):
+        j = next(jj for jj in art["judgments"] if jj["candidate_key"] == key)
+        c = next(cc for cc in art["candidates"] if cc["candidate_key"] == key)
+        cand = CandidateAnswer(
+            candidate_key=key,
+            label=key,
+            blind_id=c.get("blind_id") or key,
+            answers=c.get("answers") or {},
+            raw_response=c.get("raw_response") or "",
+            meta=ModelCallMeta(model="x", provider="test"),
+        )
+        data = _extract_json(j.get("raw_judge_json") or "")
+        accepted, errors = _score_sections_from_payload(
+            case,
+            cand,
+            data,
+            gold_reference=gold,
+            target_ids={q.id for q in case.questions},
+        )
+        assert not errors, (key, errors)
+        assert set(accepted) == {q.id for q in case.questions}
+
+
+def test_pipeline_deadline_starts_at_first_submit_not_construction():
+    case = load_case("caseC")
+    pipe = PipelinedJudge(
+        case,
+        "primary",
+        expected_total=1,
+        max_wall_s=30.0,
+        run_scope="test-deadline-start",
+    )
+    assert pipe._pipeline_started is None
+    assert pipe._budget_remaining_s() == 30.0
+    candidate = CandidateAnswer(
+        candidate_key="c",
+        label="C",
+        blind_id="Candidate 1",
+        answers={q.id: "answer" for q in case.questions},
+        raw_response="complete",
+        meta=ModelCallMeta(
+            model="x", provider="test", error="Failed to load medpsy.gguf"
+        ),
+    )
+    pipe.submit(candidate)
+    assert pipe._pipeline_started is not None
+    pipe.poll()
+    pipe.close(cancel_pending=True)
+    assert pipe._by_key["c"].status == "collect_failed"
+    assert pipe._by_key["c"].judge_meta.cost_usd == 0.0
+    assert pipe._by_key["c"].judge_meta.model != candidate.meta.model or (
+        pipe._by_key["c"].judge_meta is not candidate.meta
+    )
+
+
+def test_na_judgment_does_not_reuse_candidate_meta_cost():
+    case = load_case("caseC")
+    candidate = CandidateAnswer(
+        candidate_key="chatgpt",
+        label="ChatGPT",
+        blind_id="Candidate 1",
+        answers={"diagnosis": "migraine"},
+        raw_response="A1: migraine",
+        meta=ModelCallMeta(
+            model="openai/gpt",
+            provider="openrouter",
+            cost_usd=0.42,
+        ),
+    )
+    pipe = PipelinedJudge(
+        case,
+        "judge",
+        gold_reference=_contract(),
+        expected_total=1,
+        run_scope="test-no-cost-dup",
+    )
+    result = pipe._one_safe(candidate)
+    pipe.close(cancel_pending=True)
+    assert result.status == "candidate_partial"
+    assert float(result.judge_meta.cost_usd or 0.0) == 0.0
+    assert result.judge_meta.paid_attempts == []
 

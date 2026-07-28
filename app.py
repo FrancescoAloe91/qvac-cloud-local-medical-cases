@@ -844,8 +844,8 @@ def _render_saved_run_panel(path_str: str, *, key_prefix: str = "saved") -> None
     when = (hist.finished_at or hist.started_at or "")[:19].replace("T", " ")
     if hist.schema_version != "2.0" or not hist.cohort_id:
         st.warning(
-            "Legacy experimental artifact · old rubric/semantic formula and labels. "
-            "Visible for audit only; excluded from gold-only cohort rankings."
+            "Legacy experimental artifact · excluded from gold-only cohort rankings. "
+            "Visible for audit only."
         )
     st.caption(
         f"{case_display_name(hist.case_id)} · run {hist.n_index} · {when} · "
@@ -900,12 +900,13 @@ def _render_saved_run_panel(path_str: str, *, key_prefix: str = "saved") -> None
                 model=(cand.meta.model if cand and cand.meta else None)
                 or r.get("model"),
             )
+            na = str(r.get("status") or "ok") != "ok" or r.get("accuracy") is None
             rows.append(
                 {
-                    "#": r.get("rank"),
+                    "#": None if na else r.get("rank"),
                     "Name": nm,
                     "Version": ver,
-                    "Composite %": r.get("accuracy"),
+                    "Composite %": "N/A · technical" if na else r.get("accuracy"),
                     "TTFT": r.get("ttft_s"),
                     "TPS": r.get("tps"),
                     "RAM(RSS)": _fmt_ram_mb(r.get("ram_mb")) or "—",
@@ -926,10 +927,15 @@ def _render_saved_run_panel(path_str: str, *, key_prefix: str = "saved") -> None
         for j in _hist_judgments:
             nm, ver = _nv(j.candidate_key)
             row = {"Name": nm, "Version": ver}
-            by_q = {qs.question_id: qs.score for qs in j.question_scores}
+            failed = str(getattr(j, "status", "valid") or "valid") != "valid"
+            by_q = {
+                qs.question_id: qs.score for qs in j.question_scores
+            } if not failed else {}
             for qid in q_ids:
-                row[qid] = by_q.get(qid)
-            row["Clinical Composite %"] = j.weighted_accuracy
+                row[qid] = "N/A" if failed else by_q.get(qid)
+            row["Clinical Composite %"] = (
+                "N/A · technical" if failed else j.weighted_accuracy
+            )
             row["Runs"] = 1
             matrix.append(row)
         st.markdown("**Scores by clinical dimension**")
@@ -1154,38 +1160,35 @@ def history_mean_rebuild_dialog():
 def scoring_guide_dialog():
     """Wide, shallow popup: formula + parameters side-by-side (not a deep expander)."""
     st.caption(
-        "Blind DeepSeek R1 · host recomputes scores · literal 100% is not used · "
-        "exact ties remain ties · technical failures are N/A · "
-        "GOLD pasted → score vs gold; empty → teaching rubric"
+        "Blind DeepSeek R1 · host recomputes scores · "
+        "exact ties on unrounded scores keep the same rank · technical failures are N/A · "
+        "requires a confirmed five-section reference"
     )
     left, right = st.columns(2, gap="large")
     with left:
-        st.markdown("##### Per-section score (semantic)")
+        st.markdown("##### Per-section Clinical Composite Score")
         st.code(
-            "Gold: 100×(0.50·alignment + 0.30·quality + 0.20·stem)\n"
-            "Rubric: 100×(0.30·must + 0.20·acceptable + 0.40·quality + 0.10·stem)\n"
-            "→ capped at 96.5 · literal 100% unused",
+            "section = 50% graded coverage + 35% clinical quality + 15% discipline",
             language=None,
         )
         st.markdown(
             """
 | Param | Wt | Meaning |
 |-------|----|---------|
-| **alignment** (gold) | 50% | Semantic closeness to gold thesis (synonyms / near-equivalents OK) |
-| **quality** | 30% | Clinical judgment — not writing style |
-| **stem** | 20% | Case-specific anchors (anti-generic paste) |
-| **must/accept** (rubric only) | 30%/20% | Soft checklist by **meaning**, not keywords |
+| **coverage** | 50% | Graded coverage of every frozen reference claim |
+| **quality** | 35% | Clinical judgment — coherence, prioritization, caution |
+| **discipline** | 15% | Penalizes unsupported / contradictory / dangerous additions |
 """
         )
         st.markdown(
-            "Judge reads **diagnosis framing, workup intent, advice, next steps** — "
-            "not word-for-word matches. Near-equivalent formulations score high."
+            "Every nonzero coverage decision and every added claim needs evidence "
+            "present in the candidate answer (presentation-tolerant, text-strict)."
         )
     with right:
         st.markdown("##### Final ranking %")
         st.code(
             "Clinical Composite Score = Σ (section_weight × section_score)\n"
-            "run cap ≈ 97% · always unique ranks across candidates\n"
+            "exact ties keep the same rank · technical failures are N/A\n"
             "Multi ×N official rank = mean Acc ± std (CV% = reliability)",
             language=None,
         )
@@ -1193,11 +1196,11 @@ def scoring_guide_dialog():
             """
 | Piece | Role |
 |-------|------|
-| **Section weights** | Fixed in the case JSON (diagnosis usually heaviest) |
-| **Tie-break** | safety → quality → stem → diagnosis |
+| **Section weights** | Diagnosis 30% · Safety 25% · Plan 20% · Tests 15% · Urgency 10% |
+| **Ties** | Same unrounded score → same rank (no forced tie-break) |
 | **Multi reliability** | CV% · Super High ≤3% · High ≤10% · Med ≤20% · Low ≤30% · else Very Low · prefer ×5 |
 
-**Flow:** same prompt → answers → blind semantic judge → host formula → ranking.
+**Flow:** same prompt → answers → blind graded judge → host formula → ranking.
 """
         )
         cid = st.session_state.get("case_pick")
@@ -2769,23 +2772,32 @@ if st.session_state.get("confirmed_run"):
                     _paint_lo_board()
                 elif phase == "progress" and key:
                     prev = lo_board.get(key) or {}
-                    lo_board[key] = {
-                        **prev,
-                        "label": name,
-                        "status": "judging",
-                        "accuracy": None,
-                        "progress_pct": int(evt.get("percent") or 10),
-                        "progress_label": str(evt.get("stage") or "judging"),
-                        "elapsed_s": float(evt.get("elapsed_s") or 0),
-                    }
-                    _paint_lo_board()
+                    # Never regress a finished score; only reopen a failed row when
+                    # a real new attempt starts (active_attempt / retry stages).
+                    if prev.get("status") == "scored":
+                        pass
+                    elif prev.get("status") == "failed" and not evt.get(
+                        "active_attempt"
+                    ):
+                        pass
+                    else:
+                        lo_board[key] = {
+                            **prev,
+                            "label": name,
+                            "status": "judging",
+                            "accuracy": None,
+                            "progress_pct": int(evt.get("percent") or 10),
+                            "progress_label": str(evt.get("stage") or "judging"),
+                            "elapsed_s": float(evt.get("elapsed_s") or 0),
+                        }
+                        _paint_lo_board()
                 elif phase in ("done", "retry_done"):
                     prev_q = (lo_board.get(key) or {}).get("queue_i")
                     if evt.get("failed"):
                         lo_board[key] = {
                             "label": name,
                             "status": "failed",
-                            "accuracy": float(evt.get("accuracy") or 0),
+                            "accuracy": None,
                             "queue_i": prev_q,
                             "progress_pct": 100,
                             "progress_label": "complete",
@@ -2793,7 +2805,7 @@ if st.session_state.get("confirmed_run"):
                         }
                         if key in status_boxes:
                             status_boxes[key].markdown(
-                                _status_pill("err", "Judge failed"),
+                                _status_pill("err", "N/A · technical"),
                                 unsafe_allow_html=True,
                             )
                     else:
@@ -2826,22 +2838,26 @@ if st.session_state.get("confirmed_run"):
                         )
                 elif phase == "retry":
                     if key:
-                        if key not in lo_board:
-                            lo_ui["queue_i"] = int(lo_ui["queue_i"]) + 1
-                        lo_board[key] = {
-                            "label": name,
-                            "status": "judging",
-                            "accuracy": None,
-                            "queue_i": (lo_board.get(key) or {}).get(
-                                "queue_i", lo_ui["queue_i"]
-                            ),
-                            "progress_pct": int(evt.get("percent") or 75),
-                            "progress_label": str(
-                                evt.get("stage") or "corrective retry"
-                            ),
-                            "elapsed_s": float(evt.get("elapsed_s") or 0),
-                        }
-                        _paint_lo_board()
+                        prev = lo_board.get(key) or {}
+                        # Scored rows stay scored; only failed/in-flight rows may
+                        # reopen for a real attempt with a live elapsed clock.
+                        if prev.get("status") == "scored":
+                            pass
+                        else:
+                            if key not in lo_board:
+                                lo_ui["queue_i"] = int(lo_ui["queue_i"]) + 1
+                            lo_board[key] = {
+                                "label": name,
+                                "status": "judging",
+                                "accuracy": None,
+                                "queue_i": prev.get("queue_i", lo_ui["queue_i"]),
+                                "progress_pct": int(evt.get("percent") or 75),
+                                "progress_label": str(
+                                    evt.get("stage") or "corrective retry"
+                                ),
+                                "elapsed_s": float(evt.get("elapsed_s") or 0),
+                            }
+                            _paint_lo_board()
                 progress_slot.progress(
                     min(1.0, done_n / max(1, tot)),
                     text=f"Judge · {done_n}/{tot} (overlap with collect)",
@@ -4080,37 +4096,47 @@ if st.session_state.get("confirmed_run"):
                     _paint_full_board()
                 elif phase == "progress" and key:
                     prev = full_board.get(key) or {}
-                    full_board[key] = {
-                        **prev,
-                        "label": name,
-                        "status": "judging",
-                        "accuracy": None,
-                        "progress_pct": int(evt.get("percent") or 10),
-                        "progress_label": str(evt.get("stage") or "judging"),
-                        "elapsed_s": float(evt.get("elapsed_s") or 0),
-                    }
-                    _paint_full_board()
+                    if prev.get("status") == "scored":
+                        pass
+                    elif prev.get("status") == "failed" and not evt.get(
+                        "active_attempt"
+                    ):
+                        pass
+                    else:
+                        full_board[key] = {
+                            **prev,
+                            "label": name,
+                            "status": "judging",
+                            "accuracy": None,
+                            "progress_pct": int(evt.get("percent") or 10),
+                            "progress_label": str(evt.get("stage") or "judging"),
+                            "elapsed_s": float(evt.get("elapsed_s") or 0),
+                        }
+                        _paint_full_board()
                 elif phase == "retry" and key:
                     prev = full_board.get(key) or {}
-                    full_board[key] = {
-                        **prev,
-                        "label": name,
-                        "status": "judging",
-                        "accuracy": None,
-                        "progress_pct": int(evt.get("percent") or 75),
-                        "progress_label": str(
-                            evt.get("stage") or "corrective retry"
-                        ),
-                        "elapsed_s": float(evt.get("elapsed_s") or 0),
-                    }
-                    _paint_full_board()
+                    if prev.get("status") == "scored":
+                        pass
+                    else:
+                        full_board[key] = {
+                            **prev,
+                            "label": name,
+                            "status": "judging",
+                            "accuracy": None,
+                            "progress_pct": int(evt.get("percent") or 75),
+                            "progress_label": str(
+                                evt.get("stage") or "corrective retry"
+                            ),
+                            "elapsed_s": float(evt.get("elapsed_s") or 0),
+                        }
+                        _paint_full_board()
                 elif phase in ("done", "retry_done"):
                     prev_q = (full_board.get(key) or {}).get("queue_i")
                     if evt.get("failed"):
                         full_board[key] = {
                             "label": name,
                             "status": "failed",
-                            "accuracy": float(evt.get("accuracy") or 0),
+                            "accuracy": None,
                             "queue_i": prev_q,
                             "progress_pct": 100,
                             "progress_label": "complete",
@@ -4118,7 +4144,7 @@ if st.session_state.get("confirmed_run"):
                         }
                         if key in status_boxes:
                             status_boxes[key].markdown(
-                                _status_pill("err", "Judge failed"),
+                                _status_pill("err", "N/A · technical"),
                                 unsafe_allow_html=True,
                             )
                     else:
@@ -4773,7 +4799,7 @@ if st.session_state.get("confirmed_run"):
                         )
                     st.caption(
                         "**Quality** = clinical judgment (not style). "
-                        "Tie-break: safety → quality → stem → diagnosis."
+                        "Exact ties keep the same rank; technical failures are N/A."
                     )
 
             if last_ranking:
