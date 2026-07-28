@@ -3,7 +3,8 @@
 Experimental, open-source comparison of pinned OpenRouter API models and
 on-device GGUFs through the QVAC SDK. It uses frozen, user-supplied source
 quotes as canonical claims, a blind DeepSeek R1 judge, strict evidence
-validation, and an independent whole-run verifier when primary judging fails.
+validation, and an independent whole-run verifier only when primary judging
+fails systemically.
 
 This is a research/demo tool, not a medical device. It does not validate the
 clinical truth of user input. If the case or reference is wrong or incomplete,
@@ -12,68 +13,43 @@ the result is not clinically meaningful.
 Live app: https://francescoaloe91-qvac-vs-cloud-llms-health-test-app-wihxyd.streamlit.app
 Repository: https://github.com/FrancescoAloe91/qvac-vs-cloud-llms-health-test
 
-## Active protocol
+## How the system works (end-to-end)
+
+### 1. Gold-only reference
 
 1. Paste one anonymized real/custom clinical case.
 2. Paste a free-form reference covering diagnosis, tests, urgency, safety, and
    initial plan.
-3. When Run is clicked, the reference is frozen and a pinned cloud extractor
-   automatically reorganizes only source-supported claims before any candidate
-   is called. There is no separate extraction/review step.
-4. Run either the `controlled` or `native_defaults` track. They are separate
+3. When Run is clicked, the reference is frozen. A pinned cloud extractor
+   reorganizes only source-supported claims into five sections before any
+   candidate is called. There is no separate extraction/review step.
+4. The exact user `source_quote` is the canonical scored claim. Extractor
+   summaries, rewrites, or weights cannot change claim meaning or score weight.
+5. Run either the `controlled` or `native_defaults` track. They are separate
    cohorts and are never pooled.
-5. Candidate identities are blinded for judging. Evidence matching ignores only
-   presentation differences (Markdown, whitespace, case, and punctuation) and
-   accepts combined quotes only when every substantial sentence is textually
-   present in the candidate answer. It never uses fuzzy or semantic matching.
-6. The **Clinical Composite Score** computes each section from 50% graded
-   reference coverage, 35%
-   clinical quality, and 15% evidence discipline. Helpful and neutral additions
-   are unpenalized; unsupported, contradictory, and dangerous content has a
-   proportional effect.
-7. Transport, timeout, malformed evidence, cancellation, and empty output are
-   technical N/A—not synthetic zero scores.
 
-Demo cases, rubric scoring, fallback scores, score caps, and forced tie-breaks
-have been removed from the active benchmark. Exact ties remain ties.
+Demo cases and rubric scoring are not part of the active protocol.
 
-Full scoring contract: [benchmark/SCORING.md](benchmark/SCORING.md).
+### 2. Candidates collect answers
 
-## Models and claims
+Nine roster slots answer the same five questions under the same prompt:
 
-Cloud candidates are exact API routes pinned in
-[benchmark/models.yaml](benchmark/models.yaml):
+- Cloud (OpenRouter API routes in [benchmark/models.yaml](benchmark/models.yaml)):
+  `openai/gpt-5.5`, `anthropic/claude-sonnet-5`, `google/gemini-3.5-flash`
+- Local GGUFs via the QVAC SDK sidecar: Gemma 2 2B IT Q4, Llama 3.2 3B Instruct
+  Q4, Phi-3.5 Mini Instruct Q4, MedPsy 1.7B Q4, MedPsy 4B Q4, MedPsy 4B Q8
 
-- `openai/gpt-5.5`
-- `anthropic/claude-sonnet-5`
-- `google/gemini-3.5-flash`
+Candidate identities are blinded before judging. Every candidate keeps a hard
+**3000-token output budget** (cloud and local). That budget was **not** raised
+when the judge output budget was increased; only the judge may emit up to 16k
+tokens on the primary call.
 
-These are OpenRouter API comparisons. They are not claims about the consumer
-ChatGPT, Claude, or Gemini free web tiers.
+Collection retries at most once for a retryable transport fault, a local
+sidecar/GGUF fault, explicit truncation, or sections the model left unwritten.
+Transport retries the call; truncation and unwritten sections request only the
+affected questions and retain everything already answered.
 
-The primary judge is `deepseek/deepseek-r1`. The independent verifier is
-`qwen/qwen3.5-397b-a17b`, outside the candidate roster and extractor family.
-Requested and routed model/provider metadata are
-stored when OpenRouter supplies them. Retryable transport failures and rejected
-schema/evidence receive bounded automatic retries. Before another paid judge
-call, deterministic local repair normalizes harmless wrappers, aliases, extra
-fields, lists, and numeric strings without changing evidence text or clinical
-words. A corrective retry requests only invalid sections when valid sections
-can be retained from the same judge. Candidate collection retries once for a
-retryable transport fault, a local sidecar/GGUF fault, explicit truncation, or
-sections the model left unwritten. Transport retries the call; truncation and
-unwritten sections request only the affected questions and retain everything
-already answered. Genuinely absent clinical content remains N/A. The independent
-verifier is activated only after
-systemic residual failure (at least two affected candidates and at least the
-30% cohort threshold). If activated, it re-judges
-the complete fixed candidate set; one ranking never mixes judge cohorts. Empty or partial candidate
-answers, invented evidence, and genuinely unusable JSON remain technical N/A.
-Clinical meaning is the judge's first coverage/quality criterion. The host
-accepts evidence assembled from textually present sentences, but never uses
-unconstrained fuzzy matching that could accept changed clinical facts.
-
-### Reading the candidate answer
+### 3. Reading answers (cloud vs local)
 
 Section recovery is tolerant about presentation and strict about substance.
 Small on-device models seldom reproduce the requested `A#:` layout exactly, and
@@ -88,22 +64,107 @@ a different layout is not a clinical failure, so the parser accepts:
 - sections written out of order, and a question restated before its answer
   (both fragments are attributed to that one section).
 
-Reasoning wrappers such as `<think>…</think>` are removed before scoring, so a
-private monologue is never graded as an answer and never steals content from a
-neighbouring section. The parser only re-attributes text the model actually
-wrote; it never generates, completes, or copies clinical content, so a section
-the model genuinely never produced still ends as N/A.
+Reasoning wrappers such as `<think>…</think>` are removed before scoring.
+The parser never generates, completes, or copies clinical content, so a section
+the model genuinely never produced still ends as N/A. Cloud answers usually
+follow the template more closely; the same meaning-first parser is used for both
+tracks so local formatting quirks are not mistaken for missing medicine.
 
-Local candidates are loaded from gitignored GGUF files through the QVAC SDK
-sidecar:
+### 4. Blind judge flow
 
-- Gemma 2 2B IT Q4
-- Llama 3.2 3B Instruct Q4
-- Phi-3.5 Mini Instruct Q4
-- MedPsy 1.7B Q4, 4B Q4, and 4B Q8
+The primary judge is `deepseek/deepseek-r1`. For each blinded candidate:
 
-The sidecar reports a stop reason so a cut-off on-device answer is visible to
-the host, and its default context window (`QVAC_CTX_SIZE`, 8192) holds the
+1. **Primary call** — up to **16384** completion tokens (JSON object). This is
+   the only token-budget change relative to earlier runs; candidate caps stay at
+   3000.
+2. **Local salvage first** — deterministic normalization repairs harmless
+   wrappers, aliases, extra fields, lists, and numeric strings. Presentation-
+   tolerant evidence matching accepts quotes that are textually present after
+   Markdown/whitespace/case/punctuation normalization. Clinically meaningful
+   numeric punctuation (decimals, ranges like `10–20`, `±`, slash ratios) is
+   preserved. Matching is token-sequence / word-boundary safe. Combined quotes
+   are accepted only when every substantial sentence is present. No fuzzy or
+   semantic matching. Unverifiable quote rows are dropped or zeroed locally
+   rather than forcing a paid retry.
+3. **Section repair (not a doomed full redo)** — if some sections remain
+   invalid after salvage, the host requests **only those sections**. When the
+   primary hit the length cap (common on long Claude/OpenAI answers) or more
+   than one section failed, repair runs **one section at a time** with a 4096-
+   token budget each, retaining already-accepted sections. There is no full
+   five-section corrective retry that would truncate again.
+4. **Whole-run verifier only when systemic** — if bounded primary recovery
+   still leaves systemic judge failure (≥2 technical failures and ≥30% of the
+   fixed cohort), and an eligible independent verifier is configured
+   (`qwen/qwen3.5-397b-a17b`, outside the candidate roster and extractor
+   family), that verifier re-judges the **entire** fixed candidate set and
+   becomes the sole effective judge for that ranking. One anomaly never
+   activates it. Primary and verifier scores are never mixed. There is no
+   Claude (or other candidate) verifier path.
+
+### 5. Clinical Composite Score
+
+Each section score is:
+
+```text
+50% graded reference coverage + 35% clinical quality + 15% evidence discipline
+```
+
+The final score is the weighted mean of sections (Diagnosis 30%, Safety 25%,
+Plan 20%, Tests 15%, Urgency 10%). Helpful and neutral additions are
+unpenalized; unsupported, contradictory, and dangerous content has a
+proportional discipline effect. Exact ties remain ties.
+
+Artifact JSON may still label the field `accuracy` for compatibility; that
+value is the Clinical Composite Score relative to the user reference. It is
+**not** clinical accuracy, correctness against an external truth set, or
+clinical validation. Fallback scores, artificial score caps, and forced
+tie-breaks are not used.
+
+Full scoring contract: [benchmark/SCORING.md](benchmark/SCORING.md).
+
+### 6. N/A semantics
+
+Transport, timeout, malformed evidence that cannot be salvaged, cancellation,
+empty output, provider blocks, and genuinely unusable judge JSON are technical
+N/A—not synthetic zero scores. They are excluded from means and reported with
+reason counts. Genuinely absent clinical content is never scored, imputed, or
+credited.
+
+### 7. Multi-run completion
+
+Multi runs continue when any valid judged results remain and abort early only
+when judge infrastructure is globally unavailable. Every fixed candidate reaches
+exactly one terminal row before an iteration is written and the next starts.
+Candidate-specific N/A never aborts a batch. STOP persists a cancelled/partial
+artifact. Charts omit N/A rather than drawing 0%. Terminal N/A rows stay at
+completion (100%) and do not regress into a stuck “corrective retry” (75%) UI
+state.
+
+### 8. Offline rescore / rebuild
+
+History can rebuild last-N means with **zero API cost**:
+
+- Recompute section scores from stored claim assessments with the current host
+  formula.
+- Re-validate stored judge JSON with current local salvage; presentation/schema
+  salvageable N/A rows may recover offline.
+- Official means require five valid observations from one immutable cohort.
+  Controlled and native-default runs never mix.
+- Prior rankings are preserved under `reproducibility.offline_rescore`.
+
+A local utility script `scripts/_offline_rescore_all.py` can batch-rescore an
+owner artifact tree the same way (no paid calls).
+
+## Models and claims
+
+Cloud candidates are exact API routes pinned in
+[benchmark/models.yaml](benchmark/models.yaml). These are OpenRouter API
+comparisons. They are not claims about the consumer ChatGPT, Claude, or Gemini
+free web tiers.
+
+Requested and routed model/provider metadata are stored when OpenRouter supplies
+them. The sidecar reports a stop reason so a cut-off on-device answer is visible
+to the host, and its default context window (`QVAC_CTX_SIZE`, 8192) holds the
 prompt plus the same 3000-token output budget cloud candidates receive. Every
 roster slot reaches exactly one terminal row: a GGUF that fails to load or to
 stream is reported as a technical N/A instead of disappearing from the cohort.
@@ -122,7 +183,7 @@ Each artifact uses schema v2 and includes:
 - blind map and protocol track;
 - git/config/prompt/scoring hashes where available;
 - per-candidate validity status and failure reason;
-- requested, valid, and failed observation counts.
+- requested, valid, and failed observation counts;
 - batch and iteration IDs, effective judge, retry/failure metadata, sampling,
   token cap, timing, and available local hardware measurements.
 
@@ -135,9 +196,7 @@ not general clinical validity.
 
 The primary view keeps every valid per-model observation. A secondary paired
 complete-case sensitivity ranking uses only iterations where every model has a
-valid score; it never imputes missing scores. All results measure
-agreement/usefulness relative to one user reference, not clinical accuracy or
-clinical validation.
+valid score; it never imputes missing scores.
 
 ## Privacy and hosted persistence
 
@@ -201,7 +260,7 @@ equivalent schema-valid file.
   request sent 25%, response validation 70%, corrective retry 75–88%,
   independent verification 92%, and completion 100%.
 - Right: dynamic provisional Clinical Composite Score histogram.
-- Completed technical failures display `N/A · technical`.
+- Completed technical failures display `N/A · technical` and stay terminal.
 - Repeated text logs were removed to avoid duplicating the queue state.
 - Responsive rules stack the board and review cards on narrow screens and force
   long labels/claims to wrap instead of overlap.
@@ -226,11 +285,12 @@ files are not tracked.
 app.py                         Streamlit app
 benchmark/gold.py              extraction validation + cohort identity
 benchmark/judge.py             evidence validation, N/A semantics, verifier
-benchmark/scoring.py           deterministic balanced claim scoring
-benchmark/report.py            atomic artifacts + homogeneous statistics
+benchmark/scoring.py           Clinical Composite Score (50/35/15)
+benchmark/report.py            artifacts, offline rescore, homogeneous stats
 benchmark/cases/caseC.json     only active case template
 lib/secure_account_store.py    Supabase Auth/RLS encrypted persistence
 supabase/migrations/           hosted storage schema and policies
 sidecar/qvac_server.mjs        QVAC SDK bridge and track sampling
+scripts/_offline_rescore_all.py  batch offline rescore utility (no API)
 tests/                         offline methodology/runtime tests
 ```

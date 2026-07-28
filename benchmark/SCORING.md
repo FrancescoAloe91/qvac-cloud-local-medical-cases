@@ -52,13 +52,47 @@ prioritization, usefulness, and appropriate caution. Discipline discourages
 speculation and harm without penalizing reasonable additions. Nothing is
 converted to a binary pass/fail merely for convenience.
 
+Artifact fields may still be named `accuracy` for schema compatibility. That
+number is the Clinical Composite Score relative to one user reference. It is
+not clinical accuracy, correctness against an external truth set, or clinical
+validation. There are no fallback scores, artificial score caps, or forced
+tie-breaks. Exact ties keep the same rank.
+
+## Judge pipeline and token budgets
+
+Candidate answers (all nine cloud + local models) keep a hard **3000-token**
+output budget. Raising the judge budget did **not** raise candidate limits.
+
+Primary judge (`deepseek/deepseek-r1`) flow per candidate:
+
+1. **Primary call** — up to **16384** completion tokens as a JSON object.
+2. **Local salvage first** — deterministic normalization of wrappers, aliases,
+   singleton/list forms, extra fields, and numeric strings. Presentation salvage
+   for evidence quotes (Markdown/whitespace/case/punctuation). Unverifiable
+   quote rows are dropped or zeroed locally. Salvage never invents evidence and
+   never changes clinical words.
+3. **Section repair** — paid retry only for sections still invalid after salvage.
+   Already-accepted sections are retained. If the primary hit the length cap
+   (common on long Claude/OpenAI answers) or more than one section failed,
+   repair runs **one section at a time** with a **4096-token** budget each.
+   There is no full five-section corrective redo that would truncate again.
+4. **Whole-run verifier** — only after systemic residual failure: at least two
+   technical failures and at least 30% of the fixed cohort, with an eligible
+   independent verifier configured (`qwen/qwen3.5-397b-a17b`, outside the
+   candidate roster and extractor family). The verifier re-judges the entire
+   fixed set and becomes the sole effective judge for that ranking. A single
+   anomaly never activates it. Primary and verifier cohorts are never mixed.
+   There is no Claude (or other candidate-model) verifier path.
+
+These recovery paths may repair formatting or judge-output defects; they do not
+relax candidate completeness, evidence integrity, or the scoring formula.
+
 ## Failure semantics and ranking
 
 Collection errors, empty/partial output, timeout, judge transport failure,
-invalid schema, invalid evidence, and cancellation are technical N/A
-observations. They are excluded from means and reported with reason counts.
-There is no synthetic zero, fallback score, or forced tie-break.
-Exact ties keep the same rank.
+invalid schema, invalid evidence after salvage/repair, and cancellation are
+technical N/A observations. They are excluded from means and reported with
+reason counts. There is no synthetic zero.
 
 ### Recovering the candidate's sections
 
@@ -77,20 +111,18 @@ answer.
 
 This tolerance is presentational only. The parser never writes, completes, or
 duplicates clinical content, so recovery is possible exactly when the model
-itself produced the content.
+itself produced the content. Cloud answers usually follow the template more
+closely; local GGUFs often need the tolerant path. The same parser is used for
+both so formatting quirks are not treated as missing medicine.
 
 A hit output-length cap is not by itself a failure. A truncated response whose
 required sections all carry content is judged normally; it becomes N/A only when
 a required section has no content at all.
 
-Before a paid corrective call, deterministic local normalization repairs only
-unambiguous wrappers, aliases, singleton/list forms, extra fields, and numeric
-strings. It never changes evidence text or clinical words. A schema/evidence
-rejection retries only invalid sections when accepted sections from the same
-judge can be retained. Candidate collection spends at most one retry, on a
-retryable transport fault, a local sidecar/GGUF fault, explicit truncation, or
-sections the model left unwritten. Truncation and unwritten sections regenerate
-only the affected questions and retain already parsed sections verbatim.
+Candidate collection spends at most one retry, on a retryable transport fault, a
+local sidecar/GGUF fault, explicit truncation, or sections the model left
+unwritten. Truncation and unwritten sections regenerate only the affected
+questions and retain already parsed sections verbatim.
 
 ### What remains N/A
 
@@ -99,18 +131,8 @@ N/A when the candidate returned nothing, when a required clinical section has no
 recoverable content (including a degenerate loop that never reaches the later
 questions), when collection or the local runtime failed outright, when the
 provider blocked the content, or when the judge produced unusable JSON or
-evidence that is not verbatim in the answer. Genuinely absent clinical content
-is never scored, imputed, or credited.
-
-If bounded primary recovery leaves systemic judge failure—at least two
-technical failures and at least 30% of the fixed cohort—and an eligible
-independent verifier is configured, the verifier re-judges the entire fixed
-candidate set and becomes the effective judge for that ranking. A single
-anomaly never activates whole-run verification. Scores from
-primary and verifier judges are never mixed. Without an eligible verifier, the
-failed observations remain N/A. These recovery paths may repair formatting or judge-output defects;
-they do not relax candidate completeness, evidence integrity, or the scoring
-formula.
+evidence that is not verbatim in the answer after local salvage and section
+repair. Genuinely absent clinical content is never scored, imputed, or credited.
 
 ## Repeated runs
 
@@ -128,7 +150,8 @@ wall-clock budget; unfinished rows become explicit timeout N/A. STOP persists a
 cancelled/partial artifact and reason. Charts omit N/A rather than drawing 0%.
 Every fixed candidate reaches exactly one terminal row before an iteration is
 written and the next iteration starts. Candidate-specific N/A never aborts a
-batch.
+batch. Terminal N/A rows remain at completion progress and do not regress into a
+stuck corrective-retry UI stage.
 
 N=5 is labelled exploratory. Sample SD, median, and IQR describe repeatability
 for that exact case/reference; they do not establish general clinical validity.
@@ -139,6 +162,18 @@ ranking includes only iterations in the same batch where every model has a
 valid score. It is labelled sensitivity analysis and never replaces or imputes
 retained observations.
 
-The Clinical Composite Score measures agreement and usefulness relative to one
-user-supplied reference. It is not clinical accuracy, correctness against an
-external truth set, or clinical validation.
+## Offline rescore and rebuild
+
+Saved artifacts can be rescored without API calls:
+
+- Recompute section Clinical Composite Scores from stored claim assessments with
+  the current host formula (`graded-clinical-v3`).
+- Re-validate stored judge JSON with current local salvage; N/A rows that were
+  only presentation/schema failures may recover offline.
+- History “rebuild last N” builds exploratory or official means from the newest
+  same-cohort runs (official means still need ≥5 valid cohort observations).
+- Prior rankings are stamped under `reproducibility.offline_rescore.stored_ranking`
+  so old vs new comparisons remain possible.
+
+`scripts/_offline_rescore_all.py` batch-applies the same offline path over an
+owner artifact directory. It does not call OpenRouter.
