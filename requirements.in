@@ -6,3 +6,4 @@ PyYAML
 huggingface_hub
 supabase
 cryptography
+watchdog==6.0.0
