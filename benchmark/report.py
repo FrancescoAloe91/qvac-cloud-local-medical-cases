@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from benchmark.cases_loader import load_case
+from benchmark.gold import case_family_key, load_confirmed_gold
 from benchmark.prompts import use_gold_ground_truth
 from benchmark.schema import MultiRunSummary, RunArtifact
 from benchmark.scoring import (
@@ -686,16 +687,91 @@ def artifacts_for_case(
     return out
 
 
+def find_case_family_cohorts(
+    out_dir: Path,
+    *,
+    case_stem: str,
+    reference_raw: str,
+    case_id: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    """Group local history by cohort under one case-family key.
+
+    Family = normalized clinical stem + free-form reference raw text.
+    Different confirmed gold contracts (claim splits) stay as separate cohorts.
+    Never merges cohorts. Newest cohort first.
+    """
+    stem = (case_stem or "").strip()
+    raw = (reference_raw or "").strip()
+    if not stem or len(raw) < 40:
+        return []
+    target = case_family_key(case_stem=stem, reference_raw=raw)
+    # cohort_id -> aggregate
+    buckets: Dict[str, Dict[str, Any]] = {}
+    for path in list_run_artifacts(out_dir):
+        try:
+            art = load_artifact(path)
+        except Exception:
+            continue
+        if case_id and art.case_id != case_id:
+            continue
+        if not art.cohort_id:
+            continue
+        cfg = art.models_config or {}
+        gold_ref = str(cfg.get("gold_reference") or "").strip()
+        art_stem = str(cfg.get("case_stem") or "")
+        if not gold_ref:
+            continue
+        try:
+            gold = load_confirmed_gold(gold_ref)
+        except Exception:
+            continue
+        family = case_family_key(
+            case_stem=art_stem, reference_raw=gold.raw_text
+        )
+        if family != target:
+            continue
+        bucket = buckets.get(art.cohort_id)
+        finished = art.finished_at or art.started_at or ""
+        if bucket is None:
+            buckets[art.cohort_id] = {
+                "cohort_id": art.cohort_id,
+                "cohort_short": art.cohort_id[:12],
+                "run_count": 1,
+                "latest_finished_at": finished,
+                "case_stem": art_stem,
+                "gold_reference": gold_ref,
+                "family_key": family,
+                "case_id": art.case_id,
+            }
+        else:
+            bucket["run_count"] = int(bucket["run_count"]) + 1
+            if finished >= str(bucket.get("latest_finished_at") or ""):
+                bucket["latest_finished_at"] = finished
+                # Prefer newest artifact's exact gold JSON for restore.
+                bucket["gold_reference"] = gold_ref
+                bucket["case_stem"] = art_stem
+    rows = list(buckets.values())
+    rows.sort(
+        key=lambda r: str(r.get("latest_finished_at") or ""),
+        reverse=True,
+    )
+    return rows
+
+
 def rebuild_multi_from_history(
     out_dir: Path,
     case_id: str,
     *,
     n: int = 5,
+    cohort_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Offline Multi×N: take the N newest runs for case_id, rescore with the
     current formula, return summarize_runs-compatible summary + per-run rows.
     Zero API cost.
+
+    When ``cohort_id`` is set (e.g. after restoring a prior confirmed gold),
+    rebuild that immutable cohort instead of the newest case cohort.
     """
     n = max(5, min(int(n), 30))
     all_pairs = artifacts_for_case(out_dir, case_id, limit=None)
@@ -705,8 +781,11 @@ def rebuild_multi_from_history(
             "reason": f"No saved runs for {case_id}.",
             "available": 0,
         }
-    latest_cohort = all_pairs[0][1].cohort_id
-    if not latest_cohort:
+    if cohort_id:
+        target_cohort = cohort_id
+    else:
+        target_cohort = all_pairs[0][1].cohort_id
+    if not target_cohort:
         legacy_pairs = all_pairs[:n]
         return {
             "ok": False,
@@ -723,7 +802,7 @@ def rebuild_multi_from_history(
             ],
         }
     pairs = [
-        pair for pair in all_pairs if pair[1].cohort_id == latest_cohort
+        pair for pair in all_pairs if pair[1].cohort_id == target_cohort
     ][:n]
     if len(pairs) < 5:
         return {
@@ -733,7 +812,7 @@ def rebuild_multi_from_history(
                 "Different stems, references, protocols or model configs cannot be mixed."
             ),
             "available": len(pairs),
-            "cohort_id": latest_cohort,
+            "cohort_id": target_cohort,
         }
 
     rescored_arts: List[RunArtifact] = []
@@ -796,7 +875,7 @@ def rebuild_multi_from_history(
         "per_run": per_run,
         "formula": "reference-relative Clinical Composite Score · same immutable cohort only",
         "api_cost_usd": 0.0,
-        "cohort_id": latest_cohort,
+        "cohort_id": target_cohort,
         "official": True,
     }
 

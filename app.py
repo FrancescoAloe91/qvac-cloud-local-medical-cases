@@ -39,6 +39,7 @@ from benchmark.workspace import (
     short_owner_label,
 )
 from lib.deployment import is_local_install, is_streamlit_cloud
+from lib.i18n import t
 from benchmark.judge import (
     PipelinedJudge,
     abandon_all_pipelines,
@@ -62,6 +63,7 @@ from benchmark.qvac_variants import (
 from benchmark.prompts import candidate_system, candidate_user, parse_candidate_answers
 from benchmark.report import (
     artifacts_for_case,
+    find_case_family_cohorts,
     list_run_artifacts,
     load_artifact,
     rebuild_multi_from_history,
@@ -610,6 +612,68 @@ def _on_case_fields_edit() -> None:
 def _on_rebuild_n_pick_change() -> None:
     """Changing 'Average over N runs' must not open any KPI popup."""
     _clear_all_kpi_popups()
+
+
+def _ui_lang() -> str:
+    return str(st.session_state.get("lang") or "en")
+
+
+def _source_fingerprint(case_stem: str, reference_raw: str) -> str:
+    return hashlib.sha256(
+        f"{(case_stem or '').strip()}\n---\n{(reference_raw or '').strip()}".encode(
+            "utf-8"
+        )
+    ).hexdigest()
+
+
+def _restore_confirmed_gold_contract(
+    *,
+    gold_reference_json: str,
+    case_stem_saved: str,
+    cohort_id: str = "",
+) -> None:
+    """Load an exact prior confirmed gold into session (resume-by-restore).
+
+    Does not fuzzy-match claims. Treats restore as a fresh user confirmation of
+    that saved contract (new confirmed_at; cohort hash excludes timestamp).
+    """
+    gold = load_confirmed_gold(gold_reference_json)
+    gold = gold.model_copy(update={"confirmed_at": utc_now_iso()})
+    effective = gold_json(gold)
+    stem = (case_stem_saved or "").strip() or str(
+        st.session_state.get("demo_case_stem") or ""
+    ).strip()
+    st.session_state["demo_gold_ref"] = gold.raw_text
+    if stem:
+        st.session_state["demo_case_stem"] = stem
+    st.session_state["_confirmed_gold_json"] = effective
+    st.session_state["_gold_confirmed_at"] = gold.confirmed_at
+    sections_dump = {
+        sid: gold.sections[sid].model_dump() for sid in SECTION_IDS
+    }
+    st.session_state["_prepared_gold_sections"] = sections_dump
+    st.session_state["_gold_sections"] = sections_dump
+    st.session_state["_prepared_extraction_meta"] = {
+        "model": gold.extraction_model or "",
+        "cost_usd": float(gold.extraction_cost_usd or 0.0),
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+    }
+    st.session_state["_prepared_extraction_cost"] = float(
+        gold.extraction_cost_usd or 0.0
+    )
+    if cohort_id:
+        st.session_state["_restored_cohort_id"] = cohort_id
+    else:
+        st.session_state.pop("_restored_cohort_id", None)
+    for _wk in list(st.session_state.keys()):
+        if str(_wk).startswith("prep_sum_") or str(_wk).startswith("prep_q_"):
+            st.session_state.pop(_wk, None)
+    st.session_state["_gold_source_fingerprint"] = _source_fingerprint(
+        stem, gold.raw_text
+    )
+    st.session_state["_persist_case_stem"] = stem
+    st.session_state["_persist_gold_ref"] = gold.raw_text
 
 
 def _dlg_full_text(text: str) -> None:
@@ -1509,11 +1573,7 @@ with col_gold:
 st.session_state["_persist_case_stem"] = case_stem or ""
 st.session_state["_persist_gold_ref"] = gold_reference or ""
 # Fingerprint case + reference so editing either invalidates prepared/confirmed (H3).
-raw_gold_fingerprint = hashlib.sha256(
-    f"{(case_stem or '').strip()}\n---\n{(gold_reference or '').strip()}".encode(
-        "utf-8"
-    )
-).hexdigest()
+raw_gold_fingerprint = _source_fingerprint(case_stem or "", gold_reference or "")
 if st.session_state.get("_gold_source_fingerprint") != raw_gold_fingerprint:
     # Invalidating raw case/reference clears prepared + confirmed + edit widgets.
     for _gk in (
@@ -1523,6 +1583,7 @@ if st.session_state.get("_gold_source_fingerprint") != raw_gold_fingerprint:
         "_prepared_extraction_meta",
         "_prepared_extraction_cost",
         "_gold_confirmed_at",
+        "_restored_cohort_id",
     ):
         st.session_state.pop(_gk, None)
     for _wk in list(st.session_state.keys()):
@@ -1531,6 +1592,67 @@ if st.session_state.get("_gold_source_fingerprint") != raw_gold_fingerprint:
     st.session_state["_gold_source_fingerprint"] = raw_gold_fingerprint
 
 gold_reference = (gold_reference or "").strip()
+
+# Quiet resume: same case+raw reference family → restore exact prior confirmed gold
+# (never auto-merges different claim-split cohorts).
+_family_cohorts: list = []
+if (case_stem or "").strip() and len(gold_reference) >= 40:
+    try:
+        _family_cohorts = find_case_family_cohorts(
+            WORKSPACE_DIR,
+            case_stem=case_stem or "",
+            reference_raw=gold_reference,
+            case_id=case_id,
+        )
+    except Exception:
+        _family_cohorts = []
+_family_run_total = sum(int(c.get("run_count") or 0) for c in _family_cohorts)
+_current_confirmed = st.session_state.get("_confirmed_gold_json") or ""
+_show_family_restore = bool(_family_cohorts) and not _current_confirmed
+if _show_family_restore:
+    _lang = _ui_lang()
+    st.caption(
+        t(
+            "bench.family_found",
+            _lang,
+            n=_family_run_total,
+            cohorts=len(_family_cohorts),
+        )
+    )
+    _fam_labels = []
+    _fam_by_label = {}
+    for _fc in _family_cohorts:
+        _when = str(_fc.get("latest_finished_at") or "")[:19].replace("T", " ")
+        _lab = (
+            f"{int(_fc.get('run_count') or 0)} runs · {_when} · "
+            f"cohort {_fc.get('cohort_short') or ''}"
+        )
+        _fam_labels.append(_lab)
+        _fam_by_label[_lab] = _fc
+    _fam_pick = st.selectbox(
+        t("bench.family_select", _lang),
+        options=_fam_labels,
+        key="family_restore_pick",
+        label_visibility="collapsed",
+    )
+    if st.button(
+        t("bench.family_restore_btn", _lang),
+        use_container_width=True,
+        key="family_restore_btn",
+        help=t("bench.family_restore_help", _lang),
+    ):
+        _chosen = _fam_by_label.get(_fam_pick) or _family_cohorts[0]
+        try:
+            _restore_confirmed_gold_contract(
+                gold_reference_json=str(_chosen.get("gold_reference") or ""),
+                case_stem_saved=str(_chosen.get("case_stem") or case_stem or ""),
+                cohort_id=str(_chosen.get("cohort_id") or ""),
+            )
+            st.success(t("bench.family_restore_ok", _lang))
+            st.rerun()
+        except Exception as _rex:
+            st.error(t("bench.family_restore_fail", _lang, err=str(_rex)))
+
 _prep_col, _conf_col = st.columns(2)
 with _prep_col:
     prepare_clicked = st.button(
@@ -1586,6 +1708,7 @@ if prepare_clicked:
             )
             st.session_state.pop("_confirmed_gold_json", None)
             st.session_state.pop("_gold_confirmed_at", None)
+            st.session_state.pop("_restored_cohort_id", None)
             st.success("Reference prepared — review/edit claims, then Confirm.")
             st.rerun()
         except Exception as exc:
@@ -1674,6 +1797,7 @@ if isinstance(_prepared, dict) and _prepared:
                 st.session_state["_confirmed_gold_json"] = effective
                 st.session_state["_gold_confirmed_at"] = contract.confirmed_at
                 st.session_state["_gold_sections"] = edited_sections
+                st.session_state.pop("_restored_cohort_id", None)
                 st.success(
                     f"Reference confirmed at {contract.confirmed_at} · "
                     f"extractor cost ${extract_cost:.4f}"
@@ -5604,13 +5728,76 @@ st.markdown(
     unsafe_allow_html=True,
 )
 st.caption(
-    f"**{case_display_name(case_id)}** · newest immutable cohort only. "
+    f"**{case_display_name(case_id)}** · one immutable cohort only. "
     "Cohort hash = normalized case + confirmed gold (excl. timestamp) + models + track. "
-    "Same Confirm contract restores prior runs; a new Prepare that splits claims differently "
-    "starts a fresh cohort. Legacy artifacts stay experimental. **No API calls**."
+    "Restore a prior confirmed reference to pool that cohort again; a new Prepare that "
+    "splits claims differently starts a fresh cohort. Legacy artifacts stay experimental. "
+    "**No API calls**."
 )
 _hist_for_case = artifacts_for_case(WORKSPACE_DIR, case_id)
-_avail_n = len(_hist_for_case)
+_rebuild_cohort_id = st.session_state.get("_restored_cohort_id") or None
+if _rebuild_cohort_id and not any(
+    a.cohort_id == _rebuild_cohort_id for _, a in _hist_for_case
+):
+    _rebuild_cohort_id = None
+# Resolve active cohort from confirmed gold on artifacts (models/track live there).
+if not _rebuild_cohort_id and effective_gold:
+    try:
+        _want_gold = load_confirmed_gold(effective_gold).model_dump(
+            mode="json", exclude={"confirmed_at"}
+        )
+    except Exception:
+        _want_gold = None
+    _gold_cohort_counts: dict = {}
+    if _want_gold is not None:
+        for _, _art in _hist_for_case:
+            if not _art.cohort_id:
+                continue
+            _gref = str((_art.models_config or {}).get("gold_reference") or "")
+            if not _gref:
+                continue
+            try:
+                if load_confirmed_gold(_gref).model_dump(
+                    mode="json", exclude={"confirmed_at"}
+                ) != _want_gold:
+                    continue
+            except Exception:
+                continue
+            _gold_cohort_counts[_art.cohort_id] = (
+                int(_gold_cohort_counts.get(_art.cohort_id) or 0) + 1
+            )
+        if _gold_cohort_counts:
+            _rebuild_cohort_id = max(
+                _gold_cohort_counts.items(), key=lambda kv: kv[1]
+            )[0]
+if not _rebuild_cohort_id and _hist_for_case and _hist_for_case[0][1].cohort_id:
+    _rebuild_cohort_id = _hist_for_case[0][1].cohort_id
+if _rebuild_cohort_id:
+    _avail_n = sum(
+        1 for _, a in _hist_for_case if a.cohort_id == _rebuild_cohort_id
+    )
+else:
+    _avail_n = len(_hist_for_case)
+
+# Other confirm versions in the same case family (never auto-merged).
+_other_family_runs = 0
+if _family_cohorts and _rebuild_cohort_id:
+    _other_family_runs = sum(
+        int(c.get("run_count") or 0)
+        for c in _family_cohorts
+        if c.get("cohort_id") != _rebuild_cohort_id
+    )
+elif _family_cohorts and not effective_gold:
+    _other_family_runs = sum(int(c.get("run_count") or 0) for c in _family_cohorts)
+
+if _other_family_runs > 0 and _avail_n < 5:
+    st.caption(
+        t(
+            "bench.family_other_cohorts",
+            _ui_lang(),
+            n=_other_family_runs,
+        )
+    )
 
 # Per-model valid N; N=5 remains exploratory.
 _n_options = [5, 10, 20, 30]
@@ -5645,8 +5832,13 @@ with _rb1:
     )
 with _rb2:
     st.caption(
-        f"Saved runs for {case_display_name(case_id)}: **{_avail_n}** · "
-        "5 exploratory · ~10 steadier CV · 20+ nicer but costly"
+        f"Saved runs for {case_display_name(case_id)}"
+        + (
+            f" · this cohort: **{_avail_n}**"
+            if _rebuild_cohort_id
+            else f": **{_avail_n}**"
+        )
+        + " · 5 exploratory · ~10 steadier CV · 20+ nicer but costly"
     )
     _can_rebuild = _avail_n >= 2
     _do_rebuild = st.button(
@@ -5671,7 +5863,10 @@ elif _do_rebuild:
             icon="ℹ️",
         )
     _built = rebuild_multi_from_history(
-        WORKSPACE_DIR, case_id, n=_n_use
+        WORKSPACE_DIR,
+        case_id,
+        n=_n_use,
+        cohort_id=_rebuild_cohort_id,
     )
     if not _built.get("ok"):
         st.warning(_built.get("reason") or "Rebuild failed.")

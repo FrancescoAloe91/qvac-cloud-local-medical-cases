@@ -355,6 +355,25 @@ def load_confirmed_gold(value: str | Mapping[str, Any] | ConfirmedGold) -> Confi
     return gold
 
 
+def case_family_key(*, case_stem: str, reference_raw: str) -> str:
+    """Stable key for clinical case + free-form reference (before claim splits).
+
+    Does **not** include claim IDs, section splits, extractor metadata, or
+    ``confirmed_at``. Same pasted case+reference → same family; different
+    Prepare/Confirm contracts remain separate cohorts under that family.
+    """
+    canonical = json.dumps(
+        {
+            "case_stem": _normalized(case_stem),
+            "reference_raw": _normalized(reference_raw),
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
 def cohort_id(
     *,
     case_stem: str,

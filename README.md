@@ -32,9 +32,12 @@ Repository: https://github.com/FrancescoAloe91/qvac-vs-cloud-llms-health-test
    `confirmed_at` + scoring/prompt versions + model roster + track). Pasting the
    same raw case/reference alone is not enough: a new Prepare that changes claim
    splits (or extraction cost metadata) starts a new cohort even when the text
-   looks identical. Re-Confirming the **same** frozen contract restores prior
-   runs for that cohort. Active protocol is gold-only; strings under `OLD/` and
-   legacy i18n paste-web keys are archived, not the live path.
+   looks identical. The UI can **restore** an exact prior confirmed gold from
+   local History when the pasted case+raw reference match a case family — that
+   reopens the same `cohort_id` for Rebuild. Different Confirm versions are
+   listed separately and never auto-merged. Active protocol is gold-only;
+   strings under `OLD/` and legacy i18n paste-web keys are archived, not the
+   live path.
 
 Demo cases and rubric scoring are not part of the active protocol.
 

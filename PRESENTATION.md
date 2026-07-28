@@ -26,7 +26,7 @@ This is a **research/demo tool**. Artifact “accuracy” is a **Clinical Compos
 2. **Prepare → review/edit → Confirm** freezes gold; exact user `source_quote` is the scored claim
 3. Same five questions to cloud (OpenRouter) and local (QVAC sidecar) under the same prompt
 4. Blind **DeepSeek R1** judge → reference-relative Clinical Composite Score; optional whole-run verifier only if systemic judge failure
-5. Dashboard ranking for that cohort; **Multi ×5** for exploratory means (sample SD / median / IQR)
+5. Dashboard ranking for that cohort; **Multi ×5** for exploratory means (sample SD / median / IQR). History resume = restore the exact prior confirmed gold (same claim splits) — never auto-merge different Confirm versions under one rebuild.
 
 ### Scoring (current protocol · graded-clinical-v4)
 

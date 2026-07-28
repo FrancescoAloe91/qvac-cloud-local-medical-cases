@@ -484,6 +484,25 @@ _STRINGS = {
         "decision.sell_success_body": "+{amount:.2f} USDT credited to your wallet.",
         "decision.sell_new_balance": "New balance",
         "decision.close": "Close",
+        # Automated Benchmark · case-family history resume
+        "bench.family_found": (
+            "Found {n} prior run(s) across {cohorts} confirm version(s) for this "
+            "case+reference — restore a saved confirmed reference to reopen that cohort."
+        ),
+        "bench.family_select": "Prior confirm versions",
+        "bench.family_restore_btn": "Restore last confirmed reference",
+        "bench.family_restore_help": (
+            "Loads the exact frozen gold contract from History (same claim splits). "
+            "Does not merge different Confirm versions."
+        ),
+        "bench.family_restore_ok": (
+            "Confirmed reference restored — candidates unlocked; Rebuild uses this cohort."
+        ),
+        "bench.family_restore_fail": "Restore failed: {err}",
+        "bench.family_other_cohorts": (
+            "Other confirm versions of this case exist ({n} runs) — restore that "
+            "reference to pool them. Different gold contracts are never auto-merged."
+        ),
     },
     "it": {
         "page_title": "QVAC vs Cloud LLMs - Health Test",
@@ -963,6 +982,28 @@ _STRINGS = {
         "decision.sell_success_body": "+{amount:.2f} USDT accreditati sul tuo wallet.",
         "decision.sell_new_balance": "Nuovo saldo",
         "decision.close": "Chiudi",
+        # Automated Benchmark · ripresa storia per famiglia di caso
+        "bench.family_found": (
+            "Trovate {n} run precedenti in {cohorts} versioni di Confirm per questo "
+            "caso+riferimento — ripristina un riferimento confermato salvato per "
+            "riaprire quel cohort."
+        ),
+        "bench.family_select": "Versioni Confirm precedenti",
+        "bench.family_restore_btn": "Ripristina ultimo riferimento confermato",
+        "bench.family_restore_help": (
+            "Carica il contratto gold congelato esatto dalla History (stessi split "
+            "dei claim). Non unisce versioni Confirm diverse."
+        ),
+        "bench.family_restore_ok": (
+            "Riferimento confermato ripristinato — candidati sbloccati; Rebuild usa "
+            "questo cohort."
+        ),
+        "bench.family_restore_fail": "Ripristino non riuscito: {err}",
+        "bench.family_other_cohorts": (
+            "Esistono altre versioni Confirm di questo caso ({n} run) — ripristina "
+            "quel riferimento per raggrupparle. Contratti gold diversi non vengono "
+            "mai uniti in automatico."
+        ),
     },
 }
 
