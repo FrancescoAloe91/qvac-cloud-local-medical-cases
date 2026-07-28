@@ -553,16 +553,68 @@ def client_toast_run_done(run_i: int, n_total: int, ranking: List[Dict[str, Any]
 """
 
 
+# CV% band colors — same thresholds as benchmark.report.reliability_from_cv
+# Super High ≤3 · High ≤10 · Medium ≤20 · Low ≤30 · else Very Low
+RELIABILITY_BAND_COLORS = {
+    "super_high": ("#064e3b", "#6ee7b7", "Super High"),
+    "high": ("#14532d", "#86efac", "High"),
+    "medium": ("#713f12", "#fde047", "Medium"),
+    "low": ("#9a3412", "#fdba74", "Low"),
+    "very_low": ("#7f1d1d", "#fca5a5", "Very Low"),
+}
+_RELIABILITY_FALLBACK = ("#1e293b", "#94a3b8", "—")
+
+
+def reliability_band_colors(level: str) -> tuple:
+    """Return (bg, fg, label) for a CV reliability band key."""
+    key = (level or "").strip().lower()
+    if key in RELIABILITY_BAND_COLORS:
+        return RELIABILITY_BAND_COLORS[key]
+    return (*_RELIABILITY_FALLBACK[:2], (level or "—").replace("_", " ").title() or "—")
+
+
+def reliability_band_from_cv(cv_pct: Optional[float]) -> str:
+    """Map CV% → band key; None / non-finite → empty (neutral style)."""
+    if cv_pct is None:
+        return ""
+    try:
+        from benchmark.report import reliability_from_cv
+
+        return reliability_from_cv(float(cv_pct))
+    except (TypeError, ValueError):
+        return ""
+
+
 def reliability_badge(level: str) -> str:
-    colors = {
-        "super_high": ("#064e3b", "#6ee7b7", "Super High"),
-        "high": ("#14532d", "#86efac", "High"),
-        "medium": ("#713f12", "#fde047", "Medium"),
-        "low": ("#9a3412", "#fdba74", "Low"),
-        "very_low": ("#7f1d1d", "#fca5a5", "Very Low"),
-    }
-    bg, fg, lab = colors.get(level, ("#1e293b", "#94a3b8", level or "—"))
+    bg, fg, lab = reliability_band_colors(level)
     return (
         f'<span style="display:inline-block;padding:0.12rem 0.45rem;border-radius:999px;'
         f'background:{bg};color:{fg};font-size:0.72rem;font-weight:700;">{lab}</span>'
     )
+
+
+def cv_reliability_cells_html(
+    cv_pct: Optional[float],
+    *,
+    td_style: str = "padding:0.45rem 0.55rem;border-bottom:1px solid #1e293b",
+) -> tuple:
+    """CV% <td> + Reliability badge HTML, both tinted with the legend band colors.
+
+    Returns (cv_td_html, badge_html, band_key).
+    """
+    band = reliability_band_from_cv(cv_pct)
+    bg, fg, lab = reliability_band_colors(band)
+    badge = (
+        f'<span style="display:inline-block;min-width:4.2rem;text-align:center;'
+        f'padding:0.2rem 0.45rem;border-radius:999px;background:{bg};color:{fg};'
+        f'font-size:0.72rem;font-weight:800;letter-spacing:0.04em;">'
+        f"{html.escape(lab.upper())}</span>"
+    )
+    if band and cv_pct is not None:
+        cv_td = (
+            f"<td style='{td_style};background:{bg};color:{fg};font-weight:700;"
+            f"text-align:right;border-radius:6px'>{float(cv_pct):.1f}%</td>"
+        )
+    else:
+        cv_td = f"<td style='{td_style};color:#64748b;text-align:right'>—</td>"
+    return cv_td, badge, band

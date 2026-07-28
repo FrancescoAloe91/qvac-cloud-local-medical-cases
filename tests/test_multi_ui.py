@@ -1,9 +1,18 @@
 from lib.benchmark_multi_ui import (
+    RELIABILITY_BAND_COLORS,
     _ranking_table_html,
+    cv_reliability_cells_html,
     finished_multi_progress,
     live_judging_board_html,
     progressive_multi_panel_html,
+    reliability_band_from_cv,
     snapshot_from_artifact,
+)
+from benchmark.report import (
+    CV_HIGH_MAX,
+    CV_LOW_MAX,
+    CV_MEDIUM_MAX,
+    CV_SUPER_HIGH_MAX,
 )
 from lib.charts import fig_judge_accuracy_bars
 from benchmark.schema import (
@@ -202,3 +211,26 @@ def test_snapshot_from_artifact_preserves_na_status():
     assert gem["status"] == "n/a"
     dim = next(d for d in snap["dimensions"] if d["key"] == "gemini")
     assert dim["weighted"] is None
+
+
+def test_cv_reliability_bands_match_report_thresholds():
+    assert reliability_band_from_cv(CV_SUPER_HIGH_MAX) == "super_high"
+    assert reliability_band_from_cv(CV_SUPER_HIGH_MAX + 0.1) == "high"
+    assert reliability_band_from_cv(CV_HIGH_MAX) == "high"
+    assert reliability_band_from_cv(CV_HIGH_MAX + 0.1) == "medium"
+    assert reliability_band_from_cv(CV_MEDIUM_MAX) == "medium"
+    assert reliability_band_from_cv(CV_MEDIUM_MAX + 0.1) == "low"
+    assert reliability_band_from_cv(CV_LOW_MAX) == "low"
+    assert reliability_band_from_cv(CV_LOW_MAX + 0.1) == "very_low"
+    assert reliability_band_from_cv(None) == ""
+
+
+def test_cv_reliability_cells_use_legend_colors():
+    samples = [2.0, 8.0, 15.0, 25.0, 40.0]
+    expected = ["super_high", "high", "medium", "low", "very_low"]
+    for cv, band in zip(samples, expected):
+        cv_td, badge, got = cv_reliability_cells_html(cv)
+        assert got == band
+        bg, fg, _ = RELIABILITY_BAND_COLORS[band]
+        assert bg in cv_td and fg in cv_td and f"{cv:.1f}%" in cv_td
+        assert bg in badge and fg in badge

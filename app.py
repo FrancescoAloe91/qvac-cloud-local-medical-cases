@@ -80,6 +80,7 @@ from benchmark.runner import (
 from benchmark.schema import CandidateAnswer, Case, ModelCallMeta, RunArtifact, utc_now_iso
 from lib.benchmark_multi_ui import (
     client_toast_run_done,
+    cv_reliability_cells_html,
     finished_multi_progress,
     live_judging_board_html,
     progressive_multi_panel_html,
@@ -1022,55 +1023,45 @@ def _render_saved_run_panel(path_str: str, *, key_prefix: str = "saved") -> None
 
 
 def _reliability_table_html(ranking_mean: list) -> str:
-    """Colored Super High → Very Low reliability table for mean-KPI popup."""
-    rel_style = {
-        "super_high": ("#064e3b", "#6ee7b7", "SUPER HIGH"),
-        "high": ("#14532d", "#86efac", "HIGH"),
-        "medium": ("#713f12", "#fde047", "MEDIUM"),
-        "low": ("#9a3412", "#fdba74", "LOW"),
-        "very_low": ("#7f1d1d", "#fca5a5", "VERY LOW"),
-    }
+    """Mean ranking table: CV% + Reliability cells tinted by CV band (legend)."""
     rows_html = []
     ranking_mean = _current_ranking(
         ranking_mean or [], score_field="accuracy_mean"
     )
+    _td = "padding:0.45rem 0.55rem;border-bottom:1px solid #1e293b"
     for r in ranking_mean:
-        rel = str(r.get("reliability") or "—").lower()
-        bg, fg, lab = rel_style.get(rel, ("#1e293b", "#94a3b8", rel.upper() or "—"))
-        badge = (
-            f'<span style="display:inline-block;min-width:4.2rem;text-align:center;'
-            f'padding:0.2rem 0.45rem;border-radius:999px;background:{bg};color:{fg};'
-            f'font-size:0.72rem;font-weight:800;letter-spacing:0.04em;">{lab}</span>'
-        )
+        raw_cv = r.get("cv_pct")
+        try:
+            cv_val = float(raw_cv) if raw_cv is not None else None
+        except (TypeError, ValueError):
+            cv_val = None
+        cv_cell, badge, _band = cv_reliability_cells_html(cv_val, td_style=_td)
         nm, ver = _nv(r.get("key"), label=r.get("label"), model=r.get("model"))
         n_runs = int(r.get("n_runs") or r.get("n") or 0)
         rows_html.append(
             "<tr>"
-            f"<td style='padding:0.45rem 0.55rem;border-bottom:1px solid #1e293b'>#{r.get('rank')}</td>"
-            f"<td style='padding:0.45rem 0.55rem;border-bottom:1px solid #1e293b;font-weight:600'>"
-            f"{html.escape(nm)}</td>"
-            f"<td style='padding:0.45rem 0.55rem;border-bottom:1px solid #1e293b;color:#cbd5e1;"
-            f"font-size:0.85rem'>{html.escape(ver)}</td>"
-            f"<td style='padding:0.45rem 0.55rem;border-bottom:1px solid #1e293b;"
-            f"font-weight:700;color:#fbbf24;font-size:1.05rem'>"
+            f"<td style='{_td}'>#{r.get('rank')}</td>"
+            f"<td style='{_td};font-weight:600'>{html.escape(nm)}</td>"
+            f"<td style='{_td};color:#cbd5e1;font-size:0.85rem'>"
+            f"{html.escape(ver)}</td>"
+            f"<td style='{_td};font-weight:700;color:#fbbf24;font-size:1.05rem'>"
             f"{float(r.get('accuracy_mean') or 0):.1f}%</td>"
-            f"<td style='padding:0.45rem 0.55rem;border-bottom:1px solid #1e293b;color:#cbd5e1'>"
+            f"<td style='{_td};color:#cbd5e1'>"
             f"{float(r.get('coverage_mean') or 0):.0f}/"
             f"{float(r.get('quality_mean') or 0):.0f}/"
             f"{float(r.get('discipline_mean') or 0):.0f}</td>"
-            f"<td style='padding:0.45rem 0.55rem;border-bottom:1px solid #1e293b;color:#cbd5e1'>"
+            f"<td style='{_td};color:#cbd5e1'>"
             f"± {float(r.get('std') or 0):.1f}</td>"
-            f"<td style='padding:0.45rem 0.55rem;border-bottom:1px solid #1e293b;color:#cbd5e1'>"
-            f"{float(r.get('cv_pct') or 0):.1f}%</td>"
-            f"<td style='padding:0.45rem 0.55rem;border-bottom:1px solid #1e293b'>{badge}</td>"
-            f"<td style='padding:0.45rem 0.55rem;border-bottom:1px solid #1e293b;color:#94a3b8'>"
+            f"{cv_cell}"
+            f"<td style='{_td}'>{badge}</td>"
+            f"<td style='{_td};color:#94a3b8'>"
             f"{float(r.get('median') or 0):.1f}</td>"
-            f"<td style='padding:0.45rem 0.55rem;border-bottom:1px solid #1e293b;color:#64748b;"
-            f"font-size:0.85rem'>{float(r.get('min') or 0):.0f}–{float(r.get('max') or 0):.0f}</td>"
-            f"<td style='padding:0.45rem 0.55rem;border-bottom:1px solid #1e293b;font-weight:700;"
-            f"color:#e2e8f0;text-align:right'>{n_runs}</td>"
-            f"<td style='padding:0.45rem 0.55rem;border-bottom:1px solid #1e293b;"
-            f"color:#fca5a5;text-align:right'>{int(r.get('n_failed') or 0)} "
+            f"<td style='{_td};color:#64748b;font-size:0.85rem'>"
+            f"{float(r.get('min') or 0):.0f}–{float(r.get('max') or 0):.0f}</td>"
+            f"<td style='{_td};font-weight:700;color:#e2e8f0;text-align:right'>"
+            f"{n_runs}</td>"
+            f"<td style='{_td};color:#fca5a5;text-align:right'>"
+            f"{int(r.get('n_failed') or 0)} "
             f"({100 * float(r.get('failure_rate') or 0):.0f}%)</td>"
             "</tr>"
         )
@@ -1097,9 +1088,10 @@ def _reliability_table_html(ranking_mean: list) -> str:
         f"{reliability_badge('medium')} CV ≤ 20% &nbsp; "
         f"{reliability_badge('low')} CV ≤ 30% &nbsp; "
         f"{reliability_badge('very_low')} CV &gt; 30% &nbsp;·&nbsp; "
-        "lower CV = stabler mean · <b>Runs</b> = scored passes for that model/version "
+        "cell color = CV band · lower CV = stabler mean · "
+        "<b>Runs</b> = scored passes for that model/version "
         "(can differ if local was repeated more than cloud) · "
-        "prefer Multi ×10–30 for tight means · "
+        "N=5 exploratory · ~10 better for CV eye-check · 20+ diminishing returns · "
         "<b>C/Q/D</b> = coverage / quality / discipline "
         "(quality is independent of coverage; a high board % can still have low C)</div>"
     )
@@ -1242,7 +1234,7 @@ def scoring_guide_dialog():
 |-------|------|
 | **Section weights** | Diagnosis 30% · Safety 25% · Plan 20% · Tests 15% · Urgency 10% |
 | **Ties** | Same unrounded score → same rank (no forced tie-break) |
-| **Multi reliability** | CV% · Super High ≤3% · High ≤10% · Med ≤20% · Low ≤30% · else Very Low · prefer ×5 |
+| **Multi reliability** | CV% · Super High ≤3% · High ≤10% · Med ≤20% · Low ≤30% · else Very Low · N=5 exploratory · ~10 better for CV |
 
 **Flow:** same prompt → answers → blind graded judge → host formula → ranking.
 """
@@ -1734,9 +1726,9 @@ n_multi = st.number_input(
     max_value=30,
     value=5,
     help="Repeats for Multi run and Only local. "
-    "N=5 is exploratory (not bit-identical). "
-    "5 = quick mean · 10 = better CV · 20–30 = tighter means (long on-device). "
-    "1 = single pass.",
+    "N=5 exploratory (CV noisy) · ~10 pragmatic floor for eyeballing CV / rank stability · "
+    "20–30 nicer means but diminishing returns for this anecdotal protocol · "
+    "1 = single pass. Not clinical validation.",
 )
 
 if not include_cloud and not st.session_state.get("benchmark_running"):
@@ -1911,7 +1903,7 @@ with _run_r1[1]:
         type="primary",
         use_container_width=True,
         disabled=selected_unavailable,
-        help="Official path: mean/median/std across N runs (default 5 for reliability).",
+        help="Mean/median/std across N runs (default 5 exploratory; ~10 steadier CV).",
     )
     st.markdown(_fmt_cost_multi(selected_bd_multi, int(n_multi)), unsafe_allow_html=True)
 
@@ -1946,6 +1938,7 @@ with _run_r2[1]:
 st.caption(
     "**Minimum aggregate:** 5 valid runs per model (exploratory cohort); "
     "N/A does not block other models. "
+    "Multi N: 5 = quick look · ~10 = better CV stability · 20+ = diminishing returns. "
     "With Cloud OFF, Multi is the on-device bake-off (Gemma/Llama/Phi + 3× MedPsy). "
     "QVAC only = MedPsy rehearsal without cloud."
 )
@@ -5606,19 +5599,23 @@ with _rb1:
         options=_n_options,
         format_func=lambda n: (
             f"{n} runs"
-            + (" · recommended" if n == 5 else "")
-            + (" · better CV" if n == 10 else "")
-            + (" · tight mean" if n == 20 else "")
-            + (" · max stability" if n == 30 else "")
+            + (" · exploratory" if n == 5 else "")
+            + (" · better CV (suggested)" if n == 10 else "")
+            + (" · diminishing returns" if n == 20 else "")
+            + (" · max cost" if n == 30 else "")
             + (f"  (only {_avail_n} saved)" if _avail_n < n else "")
         ),
         key="history_rebuild_n_pick",
         on_change=_on_rebuild_n_pick_change,
-        help="Tiers: 5 · 10 · 20 · 30. If fewer runs are saved, rebuild uses all available. "
+        help="Tiers: 5 exploratory · ~10 better for CV eye-check · 20–30 diminishing returns. "
+        "Default stays 5. If fewer runs are saved, rebuild uses all available. "
         "Selecting N alone does not open a popup — use Rebuild mean.",
     )
 with _rb2:
-    st.caption(f"Saved runs for {case_display_name(case_id)}: **{_avail_n}**")
+    st.caption(
+        f"Saved runs for {case_display_name(case_id)}: **{_avail_n}** · "
+        "5 exploratory · ~10 steadier CV · 20+ nicer but costly"
+    )
     _can_rebuild = _avail_n >= 2
     _do_rebuild = st.button(
         f"Rebuild mean · {_rebuild_n} runs · open KPI popup · $0",
