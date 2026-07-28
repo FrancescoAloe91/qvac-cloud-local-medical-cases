@@ -229,7 +229,8 @@ key in the hosting secret manager, never in git.
 
 ## Install and run
 
-Requirements: Python 3.10+, Node.js 22.17+, and OpenSSL 3 on macOS for the local
+Requirements: Python 3.9+ (hashed locks and CI use 3.9; `./install.sh` prefers
+3.10+), Node.js 22.17+, and OpenSSL 3 on macOS for the local
 sidecar.
 
 ```bash
