@@ -522,10 +522,13 @@ Clinical Composite Score = 30% diagnosis + 25% safety + 20% plan + 15% tests + 1
 </table>
 <p>Synonyms and faithful paraphrases count. Every match/contradiction must cite candidate evidence.
 Judge is an uncalibrated LLM-as-judge unless human calibration fixtures have been checked.
+Quality is independent of coverage by design (v4). Verifier = systemic re-judge, not human calibration.
 UI shows <b>Clinical Composite</b>; artifact JSON may still use the field name <code>accuracy</code> for compatibility.</p>
 <p>Each model enters the aggregate ranking after 5 valid runs, independently of
 other models' N/A results. Every mean keeps its own N; missing scores are never imputed.
-N=5 remains exploratory (not bit-identical reruns) and measures repeatability on this reference, not general clinical validity.</p>
+N=5 remains exploratory (not bit-identical reruns) and measures repeatability on this reference, not general clinical validity.
+Local format-repair (same parser as cloud) only re-asks A# markers — it does not invent clinical content.
+Screenshots should keep at least one honesty caption (API≠web · reference-relative · N=5).</p>
 <p style="opacity:.8;font-size:0.8rem">This window is browser-only — opening it does <b>not</b> pause collect/judge.</p>
 """
     return (
@@ -1264,6 +1267,7 @@ def scoring_guide_dialog():
         "Blind DeepSeek R1 (uncalibrated LLM-as-judge unless fixtures checked) · "
         "host recomputes scores · exact ties keep the same rank · technical failures are N/A · "
         "requires a confirmed five-section reference · "
+        "quality independent of coverage (v4) · "
         "artifact JSON may still label the field `accuracy` (Clinical Composite, reference-relative)"
     )
     left, right = st.columns(2, gap="large")
@@ -1286,8 +1290,9 @@ def scoring_guide_dialog():
             "Every nonzero coverage decision and every added claim needs evidence "
             "present in the candidate answer (presentation-tolerant, text-strict). "
             "Unverifiable harmful additions are **dropped** (audit marker), not fail-closed. "
-            "Parser salvage / section-repair never invents clinical content; "
-            "a missing section stays N/A."
+            "Parser salvage / section-repair / local format-repair never invent clinical content; "
+            "a missing section stays N/A. "
+            "Whole-run verifier ≠ human calibration."
         )
     with right:
         st.markdown("##### Final ranking %")
@@ -1394,7 +1399,8 @@ st.caption(
 st.caption(
     "Research/demo exercise — not a medical device or clinical advice. "
     "Collect can stay on-device; extract/judge still use OpenRouter when scoring. "
-    "Judge = uncalibrated LLM-as-judge; N=5 exploratory (not bit-identical)."
+    "Judge = uncalibrated LLM-as-judge; N=5 exploratory (not bit-identical). "
+    "TTFT/TPS = ops metrics · not hardware-normalized."
 )
 if is_streamlit_cloud() and not qvac_ok:
     st.caption(
@@ -1721,6 +1727,11 @@ if isinstance(_prepared, dict) and _prepared:
         '<div class="sec-label">Prepared claims (edit · source_quote must stay a substring of the raw reference)</div>',
         unsafe_allow_html=True,
     )
+    st.caption(
+        "Extractor may invent-then-repair segmentation — only Confirm locks scored claims. "
+        "`source_quote` = author-supplied verbatim substring (reference-relative, not clinical truth). "
+        "`critical` flag is ignored · equal claim weights."
+    )
     raw_norm_check = gold_reference or ""
     edited_sections: dict = {}
     quote_ok = True
@@ -1925,7 +1936,13 @@ st.caption(
         else "**Cloud API excluded** · "
     )
     + "**On-device** Gemma / Llama / Phi + three MedPsy GGUFs · "
-    "pinned prefer-order; OpenRouter fallbacks remain on."
+    "pinned prefer-order; OpenRouter fallbacks remain on · not bit-identical backends. "
+    f"Track **{benchmark_track}**"
+    + (
+        " · temp 0.2 (controlled ≠ stock web/API defaults)."
+        if benchmark_track == "controlled"
+        else " · native_defaults (separate cohort; never pooled with controlled)."
+    )
 )
 _chip_n = 3 if n_models >= 6 else min(3, max(1, n_models))
 chip_cols = st.columns(_chip_n)
@@ -2051,7 +2068,10 @@ with _run_r1[0]:
         help="Quick one-shot. For published-style comparison prefer Multi ×5.",
     )
     st.markdown(_fmt_cost_single(selected_bd), unsafe_allow_html=True)
-    st.caption("Pre-run estimate ≠ billed OpenRouter ledger (repair/verifier/pricing drift).")
+    st.caption(
+        "Length-aware estimate ≠ billed OpenRouter ledger "
+        "(repair/verifier/pricing drift · usage is truth)."
+    )
 with _run_r1[1]:
     multi_clicked = st.button(
         f"Multi run ×{int(n_multi)} · {selected_scope}",
@@ -2061,6 +2081,10 @@ with _run_r1[1]:
         help="Mean/median/std across N runs (default 5 exploratory; ~10 steadier CV).",
     )
     st.markdown(_fmt_cost_multi(selected_bd_multi, int(n_multi)), unsafe_allow_html=True)
+    st.caption(
+        "Length-aware estimate ≠ billed OpenRouter ledger "
+        "(repair/verifier/pricing drift · usage is truth)."
+    )
 
 _run_r2 = st.columns([1, 1], gap="small")
 with _run_r2[0]:

@@ -5,6 +5,10 @@ committed to GitHub (size + license hygiene). Your private run History under
 `artifacts/` is also **never** in git — cloning the repo does not give anyone
 your prompts, outputs, scores, or means.
 
+SHA pin is **optional**: leave `MEDPSY_GGUF_SHA256` unset for a convenience
+download, or set it (and peer digests via the download scripts) to bit-pin the
+quant used for Band B / MedPsy reproducibility.
+
 ## One-shot: full pack (~14 GB)
 
 All three MedPsy quants used by **3× QVAC** + Band B peers (Gemma / Llama / Phi):

@@ -325,8 +325,15 @@ _STRINGS = {
         "status.step_error": "Local inference failed",
         "status.live_tokens": "{n} words generated live, on-device",
         "status.live_words": "words",
-        "error.ollama_offline": "⚠️ Local inference engine (Ollama) is not reachable at 127.0.0.1:11434. QVAC's answer cannot be simulated or faked — start the local engine (see README) and try again.",
-        "error.model_missing": "⚠️ The medpsy-4b-cpu model has not been created in Ollama yet. Run the setup script (scripts/setup_medpsy.sh) then try again.",
+        # Legacy paste-web path only (OLD/); gold Automated Benchmark uses QVAC sidecar.
+        "error.ollama_offline": (
+            "⚠️ Legacy helper: local Ollama path unused on the gold Automated Benchmark. "
+            "Start the QVAC sidecar (see README) for on-device MedPsy."
+        ),
+        "error.model_missing": (
+            "⚠️ Legacy helper: Ollama medpsy-4b-cpu unused on the gold path. "
+            "Download GGUFs via ./install.sh and start the QVAC sidecar."
+        ),
         "error.ollama_runtime": "⚠️ Local inference failed: {error}. No fallback answer is shown — this benchmark never fabricates a QVAC result.",
         # Model cards
         "card.instructions_cloud": "Open **{name}** with the Link ↗ above, paste the identical prompt there, then paste its answer into this box.",
@@ -493,7 +500,8 @@ _STRINGS = {
         "bench.family_restore_btn": "Restore last confirmed reference",
         "bench.family_restore_help": (
             "Loads the exact frozen gold contract from History (same claim splits). "
-            "Does not merge different Confirm versions."
+            "Does not merge different Confirm versions. "
+            "Re-Prepare or extraction_cost metadata can split cohort_id — restore exact Confirm."
         ),
         "bench.family_restore_ok": (
             "Confirmed reference restored — candidates unlocked; Rebuild uses this cohort."
@@ -501,7 +509,8 @@ _STRINGS = {
         "bench.family_restore_fail": "Restore failed: {err}",
         "bench.family_other_cohorts": (
             "Other confirm versions of this case exist ({n} runs) — restore that "
-            "reference to pool them. Different gold contracts are never auto-merged."
+            "reference to pool them. Different gold contracts are never auto-merged. "
+            "Cost metadata / claim-split changes start a new cohort."
         ),
     },
     "it": {
@@ -823,8 +832,15 @@ _STRINGS = {
         "status.step_error": "Inferenza locale non riuscita",
         "status.live_tokens": "{n} parole generate dal vivo, on-device",
         "status.live_words": "parole",
-        "error.ollama_offline": "⚠️ Il motore di inferenza locale (Ollama) non è raggiungibile su 127.0.0.1:11434. La risposta di QVAC non può essere simulata o inventata — avvia il motore locale (vedi README) e riprova.",
-        "error.model_missing": "⚠️ Il modello medpsy-4b-cpu non è ancora stato creato in Ollama. Esegui lo script di setup (scripts/setup_medpsy.sh) e riprova.",
+        # Solo path legacy paste-web (OLD/); il gold Automated Benchmark usa sidecar QVAC.
+        "error.ollama_offline": (
+            "⚠️ Helper legacy: path Ollama non usato sul gold Automated Benchmark. "
+            "Avvia il sidecar QVAC (vedi README) per MedPsy on-device."
+        ),
+        "error.model_missing": (
+            "⚠️ Helper legacy: Ollama medpsy-4b-cpu non usato sul path gold. "
+            "Scarica i GGUF con ./install.sh e avvia il sidecar QVAC."
+        ),
         "error.ollama_runtime": "⚠️ Inferenza locale non riuscita: {error}. Nessuna risposta sostitutiva viene mostrata — questo benchmark non inventa mai un risultato per QVAC.",
         # Model cards
         "card.instructions_cloud": "Apri **{name}** dal Link ↗ qui sopra, incolla lì lo stesso prompt, poi incolla qui la sua risposta.",
@@ -992,7 +1008,9 @@ _STRINGS = {
         "bench.family_restore_btn": "Ripristina ultimo riferimento confermato",
         "bench.family_restore_help": (
             "Carica il contratto gold congelato esatto dalla History (stessi split "
-            "dei claim). Non unisce versioni Confirm diverse."
+            "dei claim). Non unisce versioni Confirm diverse. "
+            "Re-Prepare o metadata extraction_cost possono spezzare cohort_id — "
+            "ripristina il Confirm esatto."
         ),
         "bench.family_restore_ok": (
             "Riferimento confermato ripristinato — candidati sbloccati; Rebuild usa "
@@ -1002,7 +1020,8 @@ _STRINGS = {
         "bench.family_other_cohorts": (
             "Esistono altre versioni Confirm di questo caso ({n} run) — ripristina "
             "quel riferimento per raggrupparle. Contratti gold diversi non vengono "
-            "mai uniti in automatico."
+            "mai uniti in automatico. Metadata di costo / split claim diversi "
+            "aprono un nuovo cohort."
         ),
     },
 }

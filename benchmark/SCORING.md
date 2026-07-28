@@ -4,10 +4,11 @@ Every active run requires an anonymized real/custom case and a user-supplied
 reference covering diagnosis, tests, urgency, safety, and plan. Demo/rubric
 scoring is not part of the active benchmark.
 
-The cloud extractor may segment free-form text into sections, but the exact
-user `source_quote` is the canonical scored claim. Extractor summaries,
-rewrites, duplicate quotes, and extractor-selected critical weights cannot
-change claim meaning or score weight.
+The cloud extractor may segment free-form text into sections (invent-then-repair
+is possible), but the exact user `source_quote` confirmed in the UI is the
+canonical scored claim. Extractor summaries, rewrites, duplicate quotes, and
+extractor-selected critical weights cannot change claim meaning or score
+weight. The host forces `critical=False` on every claim — equal weights.
 
 ## Clinical Composite Score
 
@@ -31,7 +32,9 @@ Host evidence contract (not the same as technical N/A):
   judge remains responsible for low quality on clinically bad answers; the host
   does not clamp quality to coverage.
 - Candidate parsing never photocopies an unstructured full response into all
-  five sections. Missing sections stay missing / N/A.
+  five sections. Missing sections stay missing / N/A. Local **format-repair**
+  (one pass when prose lacks `A#` markers) re-asks layout only; same
+  meaning-first parser as cloud; no invented clinical content.
 - Technical N/A remains reserved for empty/partial candidates, transport,
   unusable schema after salvage/repair, timeout, and cancellation.
 

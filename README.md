@@ -26,6 +26,9 @@ Repository: https://github.com/FrancescoAloe91/qvac-vs-cloud-llms-health-test
    clears prepared/confirmed state. CLI still requires a pre-confirmed gold JSON.
 4. The exact user `source_quote` is the canonical scored claim. Extractor
    summaries, rewrites, or weights cannot change claim meaning or score weight.
+   The schema `critical` flag is forced off / ignored — all claims share equal
+   weight. Prepare may invent-then-repair segmentation; Confirm locks the
+   verbatim quotes you approve.
 5. Run either the `controlled` or `native_defaults` track. They are separate
    cohorts and are never pooled. History “rebuild last N” uses the newest
    immutable `cohort_id` (normalized case stem + confirmed gold excluding
@@ -79,7 +82,10 @@ Reasoning wrappers such as `<think>…</think>` are removed before scoring.
 The parser never generates, completes, or copies clinical content, so a section
 the model genuinely never produced still ends as N/A. Cloud answers usually
 follow the template more closely; the same meaning-first parser is used for both
-tracks so local formatting quirks are not mistaken for missing medicine.
+tracks so local formatting quirks are not mistaken for missing medicine. When a
+local GGUF returns substantial prose with almost no `A#:` markers, one
+**format-repair** pass may re-ask for markers only — it does not invent clinical
+content and uses the same parser afterward.
 
 ### 4. Blind judge flow
 
@@ -213,8 +219,9 @@ validity.
 
 Optional SHA digests and provider-routed model metadata may vary across
 OpenRouter responses; treat them as reproducibility aids, not guarantees of
-identical provider backends. Empty `EXPECTED_SHA` pins and
-`allow_fallbacks=True` mean a rerun can land on a different routed backend.
+identical provider backends. Empty `EXPECTED_SHA` / unset `MEDPSY_GGUF_SHA256`
+and `allow_fallbacks=True` mean a rerun can land on a different routed backend
+or GGUF digest — set `MEDPSY_GGUF_SHA256` to pin local weights.
 
 The primary view keeps every valid per-model observation. A secondary paired
 complete-case sensitivity ranking uses only iterations where every model has a
@@ -241,7 +248,10 @@ visitor key into process-global environment state.
 - Files under `artifacts/`, `.env`, secrets, and GGUF weights are gitignored.
 
 Scores are **reference-relative** (Clinical Composite vs the user-confirmed
-gold), not external clinical accuracy.
+gold), not external clinical accuracy. Public screenshots should keep at least
+one honesty caption visible (OpenRouter API ≠ web · author-supplied gold ·
+uncalibrated judge · N=5 exploratory). Legacy Ollama i18n/`lib/medpsy` helpers
+are unused on the gold Automated Benchmark path (live path = QVAC sidecar).
 
 See [.env.example](.env.example) for deployment variables. Keep the encryption
 key in the hosting secret manager, never in git.
