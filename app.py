@@ -505,19 +505,21 @@ technical failures are N/A and exact ties remain ties.</p>
 <pre>Section score = 50% graded coverage + 35% clinical quality + 15% discipline
 coverage = continuous 0..1 for every frozen reference claim
 helpful / neutral additions = no penalty
-unsupported / contradictory / dangerous = proportional discipline penalty
+verified unsupported / contradictory / dangerous = proportional discipline
+unverifiable harmful additions = dropped (audit marker; not fail-closed)
 Clinical Composite Score = 30% diagnosis + 25% safety + 20% plan + 15% tests + 10% urgency</pre>
 <table>
   <tr><th>Signal</th><th>Role</th><th>Meaning</th></tr>
   <tr><td>Graded coverage</td><td>50%</td><td>Partial and complete semantic coverage on a 0..1 continuum</td></tr>
   <tr><td>Clinical quality</td><td>35%</td><td>Coherence, prioritization, usefulness and caution</td></tr>
-  <tr><td>Discipline</td><td>15%</td><td>Only genuinely unsupported, contradictory or dangerous additions reduce it</td></tr>
+  <tr><td>Discipline</td><td>15%</td><td>Verified unsupported / contradictory / dangerous additions only; unverifiable harm is dropped, not auto-penalized</td></tr>
   <tr><td>Failure status</td><td>N/A</td><td>Transport, timeout, malformed evidence or cancellation</td></tr>
 </table>
-<p>Synonyms and faithful paraphrases count. Every match/contradiction must cite candidate evidence.</p>
+<p>Synonyms and faithful paraphrases count. Every match/contradiction must cite candidate evidence.
+Judge is an uncalibrated LLM-as-judge unless human calibration fixtures have been checked.</p>
 <p>Each model enters the aggregate ranking after 5 valid runs, independently of
 other models' N/A results. Every mean keeps its own N; missing scores are never imputed.
-N=5 remains exploratory and measures repeatability on this reference, not general clinical validity.</p>
+N=5 remains exploratory (not bit-identical reruns) and measures repeatability on this reference, not general clinical validity.</p>
 <p style="opacity:.8;font-size:0.8rem">This window is browser-only — opening it does <b>not</b> pause collect/judge.</p>
 """
     return (
@@ -935,7 +937,7 @@ def _render_saved_run_panel(path_str: str, *, key_prefix: str = "saved") -> None
                     "#": None if na else r.get("rank"),
                     "Name": nm,
                     "Version": ver,
-                    "Composite %": "N/A · technical" if na else r.get("accuracy"),
+                    "Clinical Composite %": "N/A · technical" if na else r.get("accuracy"),
                     "TTFT": r.get("ttft_s"),
                     "TPS": r.get("tps"),
                     "RAM(RSS)": _fmt_ram_mb(r.get("ram_mb")) or "—",
@@ -1071,7 +1073,7 @@ def _reliability_table_html(ranking_mean: list) -> str:
         "letter-spacing:0.04em;text-transform:uppercase'>"
         "<th style='padding:0.55rem'>#</th><th style='padding:0.55rem'>Name</th>"
         "<th style='padding:0.55rem'>Version</th>"
-        "<th style='padding:0.55rem'>Composite</th>"
+        "<th style='padding:0.55rem'>Clin. Composite</th>"
         "<th style='padding:0.55rem'>C/Q/D</th><th style='padding:0.55rem'>± Std</th>"
         "<th style='padding:0.55rem'>CV %</th><th style='padding:0.55rem'>Reliability</th>"
         "<th style='padding:0.55rem'>Median</th><th style='padding:0.55rem'>Min–Max</th>"
@@ -1189,8 +1191,8 @@ def history_mean_rebuild_dialog():
 def scoring_guide_dialog():
     """Wide, shallow popup: formula + parameters side-by-side (not a deep expander)."""
     st.caption(
-        "Blind DeepSeek R1 · host recomputes scores · "
-        "exact ties on unrounded scores keep the same rank · technical failures are N/A · "
+        "Blind DeepSeek R1 (uncalibrated LLM-as-judge unless fixtures checked) · "
+        "host recomputes scores · exact ties keep the same rank · technical failures are N/A · "
         "requires a confirmed five-section reference"
     )
     left, right = st.columns(2, gap="large")
@@ -1206,19 +1208,20 @@ def scoring_guide_dialog():
 |-------|----|---------|
 | **coverage** | 50% | Graded coverage of every frozen reference claim |
 | **quality** | 35% | Clinical judgment — coherence, prioritization, caution |
-| **discipline** | 15% | Penalizes unsupported / contradictory / dangerous additions |
+| **discipline** | 15% | Verified unsupported / contradictory / dangerous only |
 """
         )
         st.markdown(
             "Every nonzero coverage decision and every added claim needs evidence "
-            "present in the candidate answer (presentation-tolerant, text-strict)."
+            "present in the candidate answer (presentation-tolerant, text-strict). "
+            "Unverifiable harmful additions are **dropped** (audit marker), not fail-closed."
         )
     with right:
         st.markdown("##### Final ranking %")
         st.code(
             "Clinical Composite Score = Σ (section_weight × section_score)\n"
             "exact ties keep the same rank · technical failures are N/A\n"
-            "Multi ×N official rank = mean Acc ± std (CV% = reliability)",
+            "Multi ×N official rank = mean Clinical Composite ± std (CV% = reliability)",
             language=None,
         )
         st.markdown(
@@ -1314,6 +1317,14 @@ st.caption(
     "candidates run only after confirm · cloud cards show exact OpenRouter API models, "
     "not consumer free-tier equivalents. Scores are reference-relative."
 )
+st.caption(
+    "Research/demo exercise — not a medical device or clinical advice. "
+    "Collect can stay on-device; extract/judge still use OpenRouter when scoring."
+)
+if is_streamlit_cloud() and not qvac_ok:
+    st.caption(
+        "Hosted demo · on-device QVAC/MedPsy needs a local sidecar — cloud roster only here."
+    )
 
 # Client-side guide overlays in main DOM (sidebar labels toggle via for=… — no run interrupt)
 # Use st.html (not markdown) so hidden overlays are not sanitized into visible page text.
@@ -1477,7 +1488,9 @@ with col_gold:
         label_visibility="collapsed",
         on_change=_on_case_fields_edit,
     )
-    st.caption("This is an experimental user reference, not medically certified by the app.")
+    st.caption(
+        "User-confirmed reference for scoring — not certified clinical ground truth."
+    )
 
 st.session_state["_persist_case_stem"] = case_stem or ""
 st.session_state["_persist_gold_ref"] = gold_reference or ""
@@ -1512,7 +1525,10 @@ with _conf_col:
         use_container_width=True,
         disabled=not st.session_state.get("_prepared_gold_sections")
         or bool(st.session_state.get("benchmark_running")),
-        help="Freezes confirmed_at + gold JSON. Candidates unlock after this.",
+        help=(
+            "Freezes confirmed_at + gold JSON. Candidates unlock after this. "
+            "Scores are relative to this reference, not external clinical truth."
+        ),
     )
 
 if prepare_clicked:
@@ -1704,6 +1720,7 @@ n_multi = st.number_input(
     max_value=30,
     value=5,
     help="Repeats for Multi run and Only local. "
+    "N=5 is exploratory (not bit-identical). "
     "5 = quick mean · 10 = better CV · 20–30 = tighter means (long on-device). "
     "1 = single pass.",
 )
@@ -1913,7 +1930,8 @@ with _run_r2[1]:
         "and Multi run the 6 on-device models."
     )
 st.caption(
-    "**Minimum aggregate:** 5 valid runs per model; N/A does not block other models. "
+    "**Minimum aggregate:** 5 valid runs per model (exploratory cohort); "
+    "N/A does not block other models. "
     "With Cloud OFF, Multi is the on-device bake-off (Gemma/Llama/Phi + 3× MedPsy). "
     "QVAC only = MedPsy rehearsal without cloud."
 )
@@ -3862,7 +3880,7 @@ if st.session_state.get("confirmed_run"):
                                     "#": r.get("rank"),
                                     "Name": _nm,
                                     "Version": _ver,
-                                    "Composite %": r.get("accuracy"),
+                                    "Clinical Composite %": r.get("accuracy"),
                                     "TTFT": r.get("ttft_s"),
                                     "TPS": r.get("tps"),
                                     "RAM(RSS)": _fmt_ram_mb(r.get("ram_mb")) or "—",
@@ -5104,7 +5122,7 @@ if st.session_state.get("confirmed_run"):
                             {
                                 "Name": nm,
                                 "Version": ver,
-                                "Composite %": pm["accuracy"],
+                                "Clinical Composite %": pm["accuracy"],
                                 "Diagnosis": pm.get("diagnosis"),
                                 "Safety": pm.get("safety"),
                                 "Strongest": pm.get("strongest"),
@@ -5120,6 +5138,7 @@ if st.session_state.get("confirmed_run"):
                         )
                     st.caption(
                         "**Quality** = clinical judgment (not style). "
+                        "Reference-relative Clinical Composite — not clinical ground truth. "
                         "Exact ties keep the same rank; technical failures are N/A."
                     )
 
@@ -5135,7 +5154,8 @@ if st.session_state.get("confirmed_run"):
             tab_l, tab_r = st.columns(2)
             with tab_l:
                 st.caption(
-                    "Clinical Composite Score + KPI · technical errors remain N/A"
+                    "Clinical Composite Score (reference-relative) + KPI · "
+                    "LLM-as-judge · not clinical ground truth · technical errors remain N/A"
                 )
                 if last_ranking:
                     rows = []
@@ -5150,7 +5170,7 @@ if st.session_state.get("confirmed_run"):
                                 "#": r["rank"],
                                 "Name": nm,
                                 "Version": ver,
-                                "Composite %": r["accuracy"],
+                                "Clinical Composite %": r["accuracy"],
                                 "Status": (
                                     "ok"
                                     if r.get("status", "ok") == "ok"
@@ -5381,7 +5401,7 @@ if (
                     "#": r["rank"],
                     "Name": nm,
                     "Version": ver,
-                    "Composite %": r["accuracy"],
+                    "Clinical Composite %": r["accuracy"],
                     "Status": (
                         "ok"
                         if r.get("status", "ok") == "ok"

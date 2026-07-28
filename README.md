@@ -196,9 +196,14 @@ Each artifact uses schema v2 and includes:
 Each model enters the aggregate ranking after five valid observations in one
 cohort, even when another model has fewer valid results or N/A failures. Every
 mean retains its own N; missing scores are never imputed and never discard valid
-data from other models. N=5 is explicitly exploratory. The dashboard reports
-sample SD, median, and IQR as repeatability signals for that exact case/reference,
-not general clinical validity.
+data from other models. N=5 is explicitly exploratory (reruns are not
+bit-identical). The dashboard reports sample SD, median, and IQR as
+repeatability signals for that exact case/reference, not general clinical
+validity.
+
+Optional SHA digests and provider-routed model metadata may vary across
+OpenRouter responses; treat them as reproducibility aids, not guarantees of
+identical provider backends.
 
 The primary view keeps every valid per-model observation. A secondary paired
 complete-case sensitivity ranking uses only iterations where every model has a
@@ -210,12 +215,14 @@ The app no longer stores raw keys in an IP-address vault and never copies a
 visitor key into process-global environment state.
 
 - Local mode: key and data are scoped to the current session/local workspace
-  under `artifacts/owners/<key-fingerprint>/`.
+  under `artifacts/owners/<key-fingerprint>/`. Saved artifacts may contain case
+  text, reference quotes, and model answers — treat the folder as sensitive.
 - Hosted mode (Streamlit Cloud + Supabase Auth): configure Supabase Auth, apply
   `supabase/migrations/202607270001_secure_benchmark.sql`, and provide a Fernet
   `APP_ENCRYPTION_KEY`. Workspace directories use the Supabase user id. After
   decrypt, artifacts stay in session memory — plaintext is **not** written to
-  disk on the host.
+  disk on the host. The public Streamlit demo typically has **no QVAC sidecar**;
+  on-device MedPsy requires a local install (`./install.sh` + sidecar).
 - Supabase Row Level Security restricts rows to `auth.uid()`.
 - API keys and full artifacts (case, reference, answers, judgments) are encrypted
   before cloud storage.

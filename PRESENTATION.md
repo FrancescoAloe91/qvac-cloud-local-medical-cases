@@ -55,7 +55,7 @@ Coverage is claim-level vs frozen quotes; quality is independent of coverage; un
 
 | Mode | Link / command |
 |---|---|
-| **Public** | [Live demo](https://francescoaloe91-qvac-vs-cloud-llms-health-test-app-wihxyd.streamlit.app) |
+| **Public** | [Live demo](https://francescoaloe91-qvac-vs-cloud-llms-health-test-app-wihxyd.streamlit.app) — hosted path usually has no QVAC sidecar (cloud roster only) |
 | **Full (live QVAC)** | `git clone` → `./install.sh` → sidecar + `streamlit run app.py` → `http://localhost:8501` |
 
 ## Stack

@@ -24,7 +24,8 @@ Host evidence contract (not the same as technical N/A):
   inventing text).
 - Unverifiable **contradictory / dangerous** additions → **dropped** with an
   audit marker (`judge_unverified_harm_dropped:*`); no invented quote and no
-  automatic discipline penalty. Verified harmful quotes still apply proportional
+  automatic discipline penalty. This is **not fail-closed**: unverifiable harm
+  does not invent a penalty. Verified harmful quotes still apply proportional
   discipline.
 - Clinical **quality is independent of coverage** (`graded-clinical-v4`). The
   judge remains responsible for low quality on clinically bad answers; the host
@@ -173,8 +174,9 @@ written and the next iteration starts. Candidate-specific N/A never aborts a
 batch. Terminal N/A rows remain at completion progress and do not regress into a
 stuck corrective-retry UI stage.
 
-N=5 is labelled exploratory. Sample SD, median, and IQR describe repeatability
-for that exact case/reference; they do not establish general clinical validity.
+N=5 is labelled exploratory. Reruns are not bit-identical. Sample SD, median,
+and IQR describe repeatability for that exact case/reference; they do not
+establish general clinical validity.
 
 The primary analysis reports all valid observations with per-model valid N,
 failed N, and failure rate. A secondary paired complete-case sensitivity
@@ -205,7 +207,8 @@ rewrite old artifacts as v4 silently. It does not call OpenRouter.
 
 ## Calibration
 
-The LLM judge is **calibrated** only when human-reviewed fixtures under
-`fixtures/calibration/` have been checked and the offline comparison helper
-passes. The whole-run verifier is an independent re-judge for systemic primary
-failure — it is **not** calibration.
+The LLM judge is **uncalibrated for public claims** until human-reviewed fixtures
+under `fixtures/calibration/` have been checked and the offline comparison
+helper passes. Treat scores as LLM-as-judge estimates until then. The whole-run
+verifier is an independent re-judge for systemic primary failure — it is **not**
+calibration.
