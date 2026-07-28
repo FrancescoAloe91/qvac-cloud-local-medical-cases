@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import html
+import hashlib
 import json
 import os
 import time
@@ -27,6 +28,7 @@ from benchmark.gold import (
     extract_with_chat,
     gold_json,
     load_confirmed_gold,
+    source_quote_is_verbatim,
 )
 from benchmark.schema import GoldSection
 from benchmark.workspace import (
@@ -1500,9 +1502,14 @@ with col_gold:
 
 st.session_state["_persist_case_stem"] = case_stem or ""
 st.session_state["_persist_gold_ref"] = gold_reference or ""
-raw_gold_fingerprint = str(hash((gold_reference or "").strip()))
+# Fingerprint case + reference so editing either invalidates prepared/confirmed (H3).
+raw_gold_fingerprint = hashlib.sha256(
+    f"{(case_stem or '').strip()}\n---\n{(gold_reference or '').strip()}".encode(
+        "utf-8"
+    )
+).hexdigest()
 if st.session_state.get("_gold_source_fingerprint") != raw_gold_fingerprint:
-    # Invalidating raw reference clears prepared + confirmed.
+    # Invalidating raw case/reference clears prepared + confirmed + edit widgets.
     for _gk in (
         "_confirmed_gold_json",
         "_gold_sections",
@@ -1512,6 +1519,9 @@ if st.session_state.get("_gold_source_fingerprint") != raw_gold_fingerprint:
         "_gold_confirmed_at",
     ):
         st.session_state.pop(_gk, None)
+    for _wk in list(st.session_state.keys()):
+        if str(_wk).startswith("prep_sum_") or str(_wk).startswith("prep_q_"):
+            st.session_state.pop(_wk, None)
     st.session_state["_gold_source_fingerprint"] = raw_gold_fingerprint
 
 gold_reference = (gold_reference or "").strip()
@@ -1573,6 +1583,31 @@ if prepare_clicked:
             st.success("Reference prepared — review/edit claims, then Confirm.")
             st.rerun()
         except Exception as exc:
+            # #region agent log
+            try:
+                import json as _json
+                from pathlib import Path as _Path
+
+                _log = _Path(__file__).resolve().parent / ".cursor" / "debug-a76cc5.log"
+                _log.parent.mkdir(parents=True, exist_ok=True)
+                with _log.open("a", encoding="utf-8") as _fh:
+                    _fh.write(
+                        _json.dumps(
+                            {
+                                "sessionId": "a76cc5",
+                                "hypothesisId": "H6",
+                                "location": "app.py:prepare",
+                                "message": "prepare_failed_ui",
+                                "data": {"error": str(exc)[:400]},
+                                "timestamp": int(time.time() * 1000),
+                            },
+                            ensure_ascii=False,
+                        )
+                        + "\n"
+                    )
+            except Exception:
+                pass
+            # #endregion
             st.error(f"Prepare failed: {exc}")
 
 # Editable prepared sections
@@ -1582,7 +1617,7 @@ if isinstance(_prepared, dict) and _prepared:
         '<div class="sec-label">Prepared claims (edit · source_quote must stay a substring of the raw reference)</div>',
         unsafe_allow_html=True,
     )
-    raw_norm_check = (gold_reference or "").casefold()
+    raw_norm_check = gold_reference or ""
     edited_sections: dict = {}
     quote_ok = True
     for section_id in SECTION_IDS:
@@ -1602,10 +1637,16 @@ if isinstance(_prepared, dict) and _prepared:
                     key=f"prep_q_{section_id}_{ci}",
                     height=68,
                 )
-                if quote.strip() and quote.strip().casefold() not in raw_norm_check:
+                if quote.strip() and not source_quote_is_verbatim(
+                    raw_norm_check, quote
+                ):
+                    preview = quote.strip().replace("\n", " ")
+                    if len(preview) > 100:
+                        preview = preview[:97] + "..."
                     st.error(
                         f"{section_id}-{ci + 1}: source_quote must be a contiguous "
-                        "substring of the raw reference."
+                        f"substring of the raw reference (paraphrase not allowed). "
+                        f"Rejected: {preview!r}"
                     )
                     quote_ok = False
                 claims_out.append(

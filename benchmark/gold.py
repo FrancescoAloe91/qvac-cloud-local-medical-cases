@@ -5,18 +5,59 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import time
+import unicodedata
 from datetime import datetime, timezone
-from typing import Any, Callable, Dict, Mapping, Optional, Tuple
+from pathlib import Path
+from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple
 
-from benchmark.schema import ConfirmedGold, GoldClaim, GoldSection
+from benchmark.schema import ConfirmedGold, GoldClaim, GoldSection, ModelCallMeta
 
 SECTION_IDS = ("diagnosis", "tests", "urgency", "safety", "plan")
-EXTRACTION_PROMPT_VERSION = "gold-extract-v1"
+EXTRACTION_PROMPT_VERSION = "gold-extract-v2"
 SCORING_VERSION = "graded-clinical-v4"
+
+# #region agent log
+_AGENT_DEBUG_LOG = (
+    Path(__file__).resolve().parents[1] / ".cursor" / "debug-a76cc5.log"
+)
+
+
+def _agent_log(
+    hypothesis_id: str,
+    location: str,
+    message: str,
+    data: Optional[Mapping[str, Any]] = None,
+) -> None:
+    try:
+        payload = {
+            "sessionId": "a76cc5",
+            "hypothesisId": hypothesis_id,
+            "location": location,
+            "message": message,
+            "data": dict(data or {}),
+            "timestamp": int(time.time() * 1000),
+        }
+        _AGENT_DEBUG_LOG.parent.mkdir(parents=True, exist_ok=True)
+        with _AGENT_DEBUG_LOG.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(payload, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+
+
+# #endregion
 
 
 def _normalized(text: str) -> str:
-    return re.sub(r"\s+", " ", (text or "").strip()).casefold()
+    """NFC + collapse whitespace + casefold — matching only; never invents text."""
+    collapsed = re.sub(r"\s+", " ", unicodedata.normalize("NFC", text or "").strip())
+    return collapsed.casefold()
+
+
+def source_quote_is_verbatim(raw_text: str, quote: str) -> bool:
+    """True when quote is a contiguous substring of raw after matching normalize."""
+    q = _normalized(quote)
+    return bool(q) and q in _normalized(raw_text)
 
 
 def _quotes_overlap_substantially(a: str, b: str) -> bool:
@@ -27,6 +68,18 @@ def _quotes_overlap_substantially(a: str, b: str) -> bool:
     if min(len(a), len(b)) < 12:
         return False
     return a in b or b in a
+
+
+def _quote_reject_message(claim_id: str, quote: str) -> str:
+    preview = (quote or "").strip().replace("\n", " ")
+    if len(preview) > 140:
+        preview = preview[:137] + "..."
+    return (
+        f"Claim {claim_id} has no verbatim source quote; extractor output rejected. "
+        f"Rejected quote (paraphrase not allowed): {preview!r}. "
+        f"Fix: set source_quote to an exact contiguous substring of the raw reference "
+        f"(matching ignores case/NFC/whitespace only — wording must appear in the text)."
+    )
 
 
 def _validate_source_quotes(
@@ -42,15 +95,33 @@ def _validate_source_quotes(
             if not quote:
                 raise ValueError(f"Claim {claim.id} has an empty source quote")
             if quote not in raw_norm:
-                raise ValueError(
-                    f"Claim {claim.id} has no verbatim source quote; extractor output rejected"
+                # #region agent log
+                _agent_log(
+                    "H1",
+                    "gold.py:_validate_source_quotes",
+                    "non_verbatim_quote",
+                    {
+                        "claim_id": claim.id,
+                        "quote_preview": (claim.source_quote or "")[:160],
+                        "raw_len": len(raw_text or ""),
+                    },
                 )
+                # #endregion
+                raise ValueError(_quote_reject_message(claim.id, claim.source_quote))
             if quote in seen:
                 raise ValueError(
                     f"Duplicate source quote across scoring claims: {claim.source_quote}"
                 )
             for prior in seen:
                 if _quotes_overlap_substantially(quote, prior):
+                    # #region agent log
+                    _agent_log(
+                        "H2",
+                        "gold.py:_validate_source_quotes",
+                        "overlapping_quote",
+                        {"claim_id": claim.id, "quote_preview": (claim.source_quote or "")[:160]},
+                    )
+                    # #endregion
                     raise ValueError(
                         f"Overlapping source quote across scoring claims: {claim.source_quote}"
                     )
@@ -109,8 +180,10 @@ def extraction_messages(raw_text: str) -> list[dict[str, str]]:
                 "You reorganize a user-supplied clinical reference; you do not diagnose. "
                 "Extract only facts explicitly present in the source. Never infer, complete, "
                 "correct, or add medical information. Every claim requires an exact verbatim "
-                "source_quote. If a section is absent, return an empty summary and claims. "
-                "Return JSON only."
+                "source_quote copied character-for-character from REFERENCE (a contiguous "
+                "substring). Do not paraphrase source_quote. Prefer fewer claims with real "
+                "quotes over extra invented claims. If a section is absent, return an empty "
+                "summary and claims. Return JSON only."
             ),
         },
         {
@@ -124,9 +197,50 @@ def extraction_messages(raw_text: str) -> list[dict[str, str]]:
     ]
 
 
-def parse_extraction(raw_text: str, payload: Mapping[str, Any]) -> Dict[str, GoldSection]:
-    """Strictly validate source-linked sections proposed by the extractor."""
-    raw_norm = _normalized(raw_text)
+def quote_repair_messages(
+    raw_text: str,
+    prior_payload: Mapping[str, Any],
+    failures: List[str],
+) -> list[dict[str, str]]:
+    """Ask the extractor to fix only source_quote fields that failed verbatim checks."""
+    return [
+        {
+            "role": "system",
+            "content": (
+                "You repair gold extraction JSON. Keep section structure and claim ids. "
+                "For each failed claim, replace source_quote with an exact contiguous "
+                "substring copied from REFERENCE (never paraphrase). If no verbatim quote "
+                "exists for a claim, remove that claim. Keep each section nonempty when "
+                "the reference supports it. Return JSON only with the same shape."
+            ),
+        },
+        {
+            "role": "user",
+            "content": (
+                f"PROMPT VERSION: {EXTRACTION_PROMPT_VERSION}-quote-repair\n"
+                f"REFERENCE:\n{raw_text.strip()}\n\n"
+                f"VALIDATION FAILURES:\n"
+                + "\n".join(f"- {item}" for item in failures)
+                + "\n\nPRIOR JSON:\n"
+                + json.dumps(prior_payload, ensure_ascii=False, indent=2)
+            ),
+        },
+    ]
+
+
+def _resolve_claim_quote(
+    raw_norm: str,
+    claim: GoldClaim,
+) -> Optional[str]:
+    """Return a strip()'d candidate that matches raw after normalize, else None."""
+    for candidate in (claim.source_quote, claim.text):
+        q = _normalized(candidate)
+        if q and q in raw_norm:
+            return (candidate or "").strip()
+    return None
+
+
+def _sections_mapping(payload: Mapping[str, Any]) -> Mapping[str, Any]:
     raw_sections = payload.get("sections")
     # Some providers honor the requested content but omit the outer
     # {"sections": ...} wrapper. Accept that harmless schema variation.
@@ -136,8 +250,21 @@ def parse_extraction(raw_text: str, payload: Mapping[str, Any]) -> Dict[str, Gol
         raw_sections = payload
     if not isinstance(raw_sections, Mapping):
         raise ValueError("Extractor response has no sections object")
+    return raw_sections
+
+
+def parse_extraction(
+    raw_text: str,
+    payload: Mapping[str, Any],
+    *,
+    drop_invalid_claims: bool = False,
+) -> Dict[str, GoldSection]:
+    """Strictly validate source-linked sections proposed by the extractor."""
+    raw_norm = _normalized(raw_text)
+    raw_sections = _sections_mapping(payload)
 
     sections: Dict[str, GoldSection] = {}
+    dropped: list[str] = []
     for section_id in SECTION_IDS:
         item = raw_sections.get(section_id)
         if not isinstance(item, Mapping):
@@ -156,23 +283,109 @@ def parse_extraction(raw_text: str, payload: Mapping[str, Any]) -> Dict[str, Gol
             if claim.id in seen:
                 raise ValueError(f"Duplicate claim id: {claim.id}")
             seen.add(claim.id)
-            quote = _normalized(claim.source_quote)
-            if not quote or quote not in raw_norm:
-                raise ValueError(
-                    f"Claim {claim.id} has no verbatim source quote; extractor output rejected"
+            resolved = _resolve_claim_quote(raw_norm, claim)
+            if resolved is None:
+                # #region agent log
+                _agent_log(
+                    "H1",
+                    "gold.py:parse_extraction",
+                    "claim_quote_rejected",
+                    {
+                        "claim_id": claim.id,
+                        "section": section_id,
+                        "quote_preview": (claim.source_quote or "")[:160],
+                        "text_preview": (claim.text or "")[:160],
+                        "drop_invalid_claims": drop_invalid_claims,
+                    },
                 )
+                # #endregion
+                if drop_invalid_claims:
+                    dropped.append(claim.id)
+                    continue
+                raise ValueError(_quote_reject_message(claim.id, claim.source_quote))
+            if resolved != (claim.source_quote or "").strip():
+                # #region agent log
+                _agent_log(
+                    "H4",
+                    "gold.py:parse_extraction",
+                    "salvaged_quote_from_text_or_normalize",
+                    {
+                        "claim_id": claim.id,
+                        "from_source_quote": (claim.source_quote or "")[:120],
+                        "resolved": resolved[:120],
+                    },
+                )
+                # #endregion
+            claim.source_quote = resolved
             if not claim.text.strip():
+                if drop_invalid_claims:
+                    dropped.append(claim.id)
+                    continue
                 raise ValueError(f"Claim {claim.id} is empty")
             # The extractor may segment but cannot rewrite scored meaning or assign weight.
             claim.text = claim.source_quote.strip()
             claim.critical = False
             claims.append(claim)
+        if drop_invalid_claims and not claims and claims_raw:
+            # #region agent log
+            _agent_log(
+                "H5",
+                "gold.py:parse_extraction",
+                "section_emptied_after_drop",
+                {"section": section_id, "dropped": dropped},
+            )
+            # #endregion
+            raise ValueError(
+                f"Section {section_id} has no claims with verbatim source_quote after "
+                f"dropping invalid quotes ({', '.join(dropped) or 'none'}). "
+                f"Add exact substrings from the raw reference for this section."
+            )
         sections[section_id] = GoldSection(
             summary=str(item.get("summary") or "").strip(),
             claims=claims,
         )
+    if dropped:
+        # #region agent log
+        _agent_log(
+            "H5",
+            "gold.py:parse_extraction",
+            "dropped_invalid_claims",
+            {"dropped": dropped},
+        )
+        # #endregion
     _validate_source_quotes(raw_text, sections)
     return sections
+
+
+def collect_quote_failures(
+    raw_text: str, payload: Mapping[str, Any]
+) -> List[str]:
+    """List per-claim quote failures without raising (for repair prompts / UI)."""
+    failures: list[str] = []
+    try:
+        raw_sections = _sections_mapping(payload)
+    except ValueError as exc:
+        return [str(exc)]
+    raw_norm = _normalized(raw_text)
+    for section_id in SECTION_IDS:
+        item = raw_sections.get(section_id)
+        if not isinstance(item, Mapping):
+            failures.append(f"Missing extracted section: {section_id}")
+            continue
+        claims_raw = item.get("claims")
+        if not isinstance(claims_raw, list):
+            failures.append(f"Invalid claims list: {section_id}")
+            continue
+        for index, claim_raw in enumerate(claims_raw, 1):
+            if not isinstance(claim_raw, Mapping):
+                failures.append(f"Invalid claim in {section_id}")
+                continue
+            claim = GoldClaim.model_validate(claim_raw)
+            if not claim.id:
+                claim.id = f"{section_id}-{index}"
+            if _resolve_claim_quote(raw_norm, claim) is None:
+                failures.append(_quote_reject_message(claim.id, claim.source_quote))
+    return failures
 
 
 def confirmed_gold(
@@ -262,6 +475,35 @@ def cohort_id(
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
+def _accumulate_extract_meta(
+    prior: ModelCallMeta, nxt: ModelCallMeta, *, role: str
+) -> ModelCallMeta:
+    attempts = list(prior.paid_attempts or [])
+    attempts.append(
+        {
+            "role": role,
+            "model": nxt.model,
+            "cost_usd": float(nxt.cost_usd or 0.0),
+            "prompt_tokens": int(nxt.prompt_tokens or 0),
+            "completion_tokens": int(nxt.completion_tokens or 0),
+            "error": nxt.error or "",
+        }
+    )
+    return prior.model_copy(
+        update={
+            "cost_usd": round(
+                float(prior.cost_usd or 0.0) + float(nxt.cost_usd or 0.0), 8
+            ),
+            "prompt_tokens": int(prior.prompt_tokens or 0)
+            + int(nxt.prompt_tokens or 0),
+            "completion_tokens": int(prior.completion_tokens or 0)
+            + int(nxt.completion_tokens or 0),
+            "paid_attempts": attempts,
+            "retry_count": max(0, int(prior.retry_count or 0) + 1),
+        }
+    )
+
+
 def extract_with_chat(
     raw_text: str,
     *,
@@ -269,7 +511,11 @@ def extract_with_chat(
     chat: Callable[..., Tuple[str, Any]],
     api_key: Optional[str] = None,
 ) -> Tuple[Dict[str, GoldSection], Any]:
-    """Call a pinned extractor through an injected chat transport."""
+    """Call a pinned extractor through an injected chat transport.
+
+    On non-verbatim quotes: one quote-repair chat call, then drop remaining
+    invalid claims if each section still has ≥1 verifiable claim.
+    """
     if len(raw_text.strip()) < 40:
         raise ValueError("Reference is too short to extract safely")
     kwargs: Dict[str, Any] = {
@@ -280,8 +526,107 @@ def extract_with_chat(
     }
     if api_key is not None:
         kwargs["api_key"] = api_key
+
     raw, meta = chat(model, extraction_messages(raw_text), **kwargs)
     if getattr(meta, "error", None):
         raise RuntimeError(f"Gold extraction failed: {meta.error}")
+
     payload = extract_json_object(raw)
-    return parse_extraction(raw_text, payload), meta
+    try:
+        return parse_extraction(raw_text, payload), meta
+    except ValueError as first_exc:
+        failures = collect_quote_failures(raw_text, payload) or [str(first_exc)]
+        # #region agent log
+        _agent_log(
+            "H5",
+            "gold.py:extract_with_chat",
+            "primary_extract_rejected_starting_repair",
+            {"failures": failures[:8], "failure_count": len(failures)},
+        )
+        # #endregion
+        quote_related = any(
+            "source quote" in f.casefold() or "verbatim" in f.casefold()
+            for f in failures
+        ) or ("source quote" in str(first_exc).casefold())
+        if not quote_related:
+            raise
+
+        repair_raw, repair_meta = chat(
+            model, quote_repair_messages(raw_text, payload, failures), **kwargs
+        )
+        if getattr(repair_meta, "error", None):
+            raise RuntimeError(
+                f"Gold quote repair failed: {repair_meta.error}. "
+                f"Primary issue: {first_exc}"
+            ) from first_exc
+        if isinstance(meta, ModelCallMeta) and isinstance(repair_meta, ModelCallMeta):
+            meta = _accumulate_extract_meta(
+                meta, repair_meta, role="gold_quote_repair"
+            )
+        else:
+            # Preserve whatever the transport returned when not ModelCallMeta.
+            meta = repair_meta
+
+        repair_payload = extract_json_object(repair_raw)
+        try:
+            sections = parse_extraction(raw_text, repair_payload)
+            # #region agent log
+            _agent_log(
+                "H5",
+                "gold.py:extract_with_chat",
+                "quote_repair_succeeded",
+                {"sections": list(sections.keys())},
+            )
+            # #endregion
+            return sections, meta
+        except ValueError as repair_exc:
+            # #region agent log
+            _agent_log(
+                "H5",
+                "gold.py:extract_with_chat",
+                "quote_repair_still_invalid_trying_drop",
+                {"error": str(repair_exc)[:300]},
+            )
+            # #endregion
+            try:
+                sections = parse_extraction(
+                    raw_text, repair_payload, drop_invalid_claims=True
+                )
+                # #region agent log
+                _agent_log(
+                    "H5",
+                    "gold.py:extract_with_chat",
+                    "drop_invalid_claims_succeeded",
+                    {
+                        "claim_counts": {
+                            sid: len(sec.claims) for sid, sec in sections.items()
+                        }
+                    },
+                )
+                # #endregion
+                return sections, meta
+            except ValueError:
+                # Last resort: drop from primary payload
+                try:
+                    sections = parse_extraction(
+                        raw_text, payload, drop_invalid_claims=True
+                    )
+                    return sections, meta
+                except ValueError as drop_exc:
+                    # #region agent log
+                    _agent_log(
+                        "H6",
+                        "gold.py:extract_with_chat",
+                        "all_recovery_paths_failed",
+                        {
+                            "primary": str(first_exc)[:240],
+                            "repair": str(repair_exc)[:240],
+                            "drop": str(drop_exc)[:240],
+                        },
+                    )
+                    # #endregion
+                    raise ValueError(
+                        f"{repair_exc} "
+                        f"(after quote-repair; paraphrases are not allowed — copy "
+                        f"exact phrases from the raw reference into source_quote)"
+                    ) from repair_exc
