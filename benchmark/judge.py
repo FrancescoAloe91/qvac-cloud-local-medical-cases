@@ -1456,7 +1456,7 @@ class PipelinedJudge:
                 if self.benchmark_track == "controlled"
                 else None
             ),
-            require_parameters=self.benchmark_track == "controlled",
+            require_parameters=False,
             progress_callback=lambda stage, percent: self._worker_progress.put(
                 {
                     "key": cand.candidate_key,
@@ -1834,7 +1834,10 @@ class PipelinedJudge:
                 "quality": result.quality_score,
                 "discipline": result.discipline_score,
                 "failed": is_failed_judgment(result),
-                "note": (result.judge_meta.error if result.judge_meta else None) or "",
+                "note": (result.failure_reason or "")
+                or ((result.judge_meta.error if result.judge_meta else None) or ""),
+                "failure_reason": result.failure_reason or "",
+                "status": result.status,
                 "stage": "complete",
                 "percent": 100,
                 "elapsed_s": max(
@@ -1955,7 +1958,7 @@ class PipelinedJudge:
                     if self.benchmark_track == "controlled"
                     else None
                 ),
-                require_parameters=self.benchmark_track == "controlled",
+                require_parameters=False,
                 progress_callback=lambda stage, percent: self._worker_progress.put(
                     {
                         "key": cand.candidate_key,

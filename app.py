@@ -2993,6 +2993,29 @@ if st.session_state.get("confirmed_run"):
                     elif phase in ("done", "retry_done"):
                         prev_q = (lo_board.get(key) or {}).get("queue_i")
                         if evt.get("failed"):
+                            reason = str(
+                                evt.get("failure_reason")
+                                or evt.get("note")
+                                or evt.get("status")
+                                or ""
+                            )
+                            low = reason.lower()
+                            status = str(evt.get("status") or "").lower()
+                            if (
+                                status == "candidate_partial"
+                                or "missing required sections" in low
+                                or "partial candidate" in low
+                            ):
+                                na_label = "N/A · missing sections"
+                            elif status == "candidate_empty" or "empty answer" in low:
+                                na_label = "N/A · empty"
+                            elif (
+                                status == "collect_failed"
+                                or "candidate error" in low
+                            ):
+                                na_label = "N/A · collect error"
+                            else:
+                                na_label = "N/A · technical"
                             lo_board[key] = {
                                 "label": name,
                                 "status": "failed",
@@ -3004,7 +3027,7 @@ if st.session_state.get("confirmed_run"):
                             }
                             if key in status_boxes:
                                 status_boxes[key].markdown(
-                                    _status_pill("err", "N/A · technical"),
+                                    _status_pill("err", na_label),
                                     unsafe_allow_html=True,
                                 )
                         else:
@@ -4394,6 +4417,26 @@ if st.session_state.get("confirmed_run"):
                 elif phase in ("done", "retry_done"):
                     prev_q = (full_board.get(key) or {}).get("queue_i")
                     if evt.get("failed"):
+                        reason = str(
+                            evt.get("failure_reason")
+                            or evt.get("note")
+                            or evt.get("status")
+                            or ""
+                        )
+                        low = reason.lower()
+                        status = str(evt.get("status") or "").lower()
+                        if (
+                            status == "candidate_partial"
+                            or "missing required sections" in low
+                            or "partial candidate" in low
+                        ):
+                            na_label = "N/A · missing sections"
+                        elif status == "candidate_empty" or "empty answer" in low:
+                            na_label = "N/A · empty"
+                        elif status == "collect_failed" or "candidate error" in low:
+                            na_label = "N/A · collect error"
+                        else:
+                            na_label = "N/A · technical"
                         full_board[key] = {
                             "label": name,
                             "status": "failed",
@@ -4405,7 +4448,7 @@ if st.session_state.get("confirmed_run"):
                         }
                         if key in status_boxes:
                             status_boxes[key].markdown(
-                                _status_pill("err", "N/A · technical"),
+                                _status_pill("err", na_label),
                                 unsafe_allow_html=True,
                             )
                     else:

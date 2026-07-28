@@ -28,6 +28,8 @@ def candidate_system() -> str:
         "You are an expert physician taking a structured clinical benchmark. "
         "Answer each numbered question clearly and specifically. "
         "Do not invent patient identifiers. Be concise but complete. "
+        "You MUST label every answer with the exact markers A1:, A2:, A3:, A4:, A5: "
+        "(one block per question). Unlabeled prose cannot be scored. "
         f"Hard length budget: at most {CANDIDATE_MAX_OUTPUT_TOKENS} tokens for the entire "
         "reply (all A# answers together). Stopping earlier is fine; do not pad. "
         "Cover every question within that budget — put the most important clinical "
@@ -53,6 +55,40 @@ def candidate_user(case: Case) -> str:
         f"Stay within {CANDIDATE_MAX_OUTPUT_TOKENS} tokens total for the whole answer."
     )
     return "\n".join(lines)
+
+
+def format_repair_messages(case: Case, previous_raw: str) -> List[Dict[str, str]]:
+    """Ask the same model to re-label existing text with A1–A5 (no new facts)."""
+    template_lines = [
+        "Reformat the clinical answer below into the exact A1–A5 layout.",
+        "Keep the same clinical content — do not invent new facts, tests, or plans.",
+        "Every required section must appear under its A# marker.",
+        "",
+        "Required layout:",
+        "",
+    ]
+    for i, q in enumerate(case.questions, 1):
+        template_lines.append(f"Q{i} [{q.id}]: {q.text}")
+        template_lines.append(f"A{i}:")
+        template_lines.append("")
+    template_lines.extend(
+        [
+            "PREVIOUS ANSWER TO REFORMAT:",
+            (previous_raw or "").strip(),
+            "",
+            "Now emit ONLY the reformatted A1–A5 answer.",
+        ]
+    )
+    return [
+        {
+            "role": "system",
+            "content": (
+                "You reformat clinical answers into a fixed A1–A5 layout. "
+                "Preserve clinical meaning; never invent new content."
+            ),
+        },
+        {"role": "user", "content": "\n".join(template_lines)},
+    ]
 
 
 # --------------------------------------------------------------------------

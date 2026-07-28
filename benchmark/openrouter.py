@@ -175,16 +175,24 @@ def _provider_prefs(
     allowed_providers: Optional[List[str]] = None,
     require_parameters: bool = False,
 ) -> Optional[Dict[str, Any]]:
-    """OpenRouter provider routing prefs for controlled reproducibility."""
+    """OpenRouter provider routing prefs for controlled reproducibility.
+
+    Prefer the pinned provider order, but keep fallbacks enabled. Hard-failing
+    with allow_fallbacks=false + require_parameters was zeroing OpenAI/Anthropic
+    collects while Gemini still worked (account/routing variance).
+    Deviations are recorded on ModelCallMeta when the routed provider differs.
+    """
     if not allowed_providers and not require_parameters:
         return None
     prefs: Dict[str, Any] = {}
     if allowed_providers:
         prefs["order"] = list(allowed_providers)
-        prefs["allow_fallbacks"] = False
-    if require_parameters:
-        prefs["require_parameters"] = True
-    return prefs
+        # Prefer pin, do not abort the collect if that vendor is briefly unavailable.
+        prefs["allow_fallbacks"] = True
+    # require_parameters is intentionally unused for hard routing: many frontier
+    # endpoints skip/ignore unsupported knobs and OpenRouter then returns no
+    # endpoints when require_parameters=true. Temperature is still sent in-body.
+    return prefs or None
 
 
 def _parse_chat_payload(

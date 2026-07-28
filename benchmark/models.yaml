@@ -5,8 +5,9 @@
 
 profile: openrouter_api_controlled
 
-# Controlled-track OpenRouter provider pins (order + no fallbacks + require_parameters).
-# Native-defaults track omits these prefs.
+# Controlled-track OpenRouter provider prefs: preferred order is recorded and
+# requested, but fallbacks stay enabled so a brief vendor outage does not turn
+# ChatGPT/Claude into technical N/A while Gemini still scores.
 extractor:
   model: openai/gpt-4o-mini
   allowed_providers:

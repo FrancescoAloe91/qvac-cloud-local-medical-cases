@@ -25,6 +25,7 @@ from benchmark.prompts import (
     CANDIDATE_MAX_OUTPUT_TOKENS,
     candidate_system,
     candidate_user,
+    format_repair_messages,
     missing_section_ids,
     parse_candidate_answers,
 )
@@ -76,6 +77,19 @@ def _git_sha() -> str:
         return os.environ.get("GIT_COMMIT", "")
 
 
+def _rehydrate_model(model_cls: type, value: Any):
+    """Re-bind Pydantic instances to the current class (Streamlit reload safe)."""
+    if value is None:
+        return None
+    if isinstance(value, model_cls):
+        return model_cls.model_validate(value.model_dump())
+    if isinstance(value, dict):
+        return model_cls.model_validate(value)
+    if hasattr(value, "model_dump"):
+        return model_cls.model_validate(value.model_dump())
+    raise TypeError(f"Cannot rehydrate {model_cls.__name__} from {type(value)!r}")
+
+
 def build_run_artifact(
     *,
     config_snapshot: Dict[str, Any],
@@ -86,8 +100,19 @@ def build_run_artifact(
     """Build equivalent Streamlit/CLI artifacts with one reproducibility manifest."""
     existing = dict(artifact_fields.pop("reproducibility", {}) or {})
     models_config = dict(artifact_fields.get("models_config") or {})
-    candidates = list(artifact_fields.get("candidates") or [])
-    judgments = list(artifact_fields.get("judgments") or [])
+    # Streamlit script reloads can leave CandidateAnswer/JudgeResult instances from
+    # a previous module identity; re-validate so RunArtifact construction never
+    # raises model_type on live instances that are otherwise valid.
+    candidates = [
+        _rehydrate_model(CandidateAnswer, item)
+        for item in list(artifact_fields.get("candidates") or [])
+    ]
+    judgments = [
+        _rehydrate_model(JudgeResult, item)
+        for item in list(artifact_fields.get("judgments") or [])
+    ]
+    artifact_fields["candidates"] = candidates
+    artifact_fields["judgments"] = judgments
     track = str(artifact_fields.get("benchmark_track") or "controlled")
     judge_cfg = models_config.get("judge") or config_snapshot.get("judge") or {}
     configured_candidates = {
@@ -528,6 +553,7 @@ def _collect_candidate_once(
     on_event: EventCallback = None,
     benchmark_track: str = "controlled",
     api_key: Optional[str] = None,
+    messages: Optional[List[Dict[str, str]]] = None,
 ) -> CandidateAnswer:
     key = cand_cfg["key"]
     label = cand_cfg.get("label") or key
@@ -556,10 +582,11 @@ def _collect_candidate_once(
             {"type": "candidate_token", "key": key, "delta": delta},
         )
 
-    messages = [
-        {"role": "system", "content": candidate_system()},
-        {"role": "user", "content": candidate_user(case)},
-    ]
+    if messages is None:
+        messages = [
+            {"role": "system", "content": candidate_system()},
+            {"role": "user", "content": candidate_user(case)},
+        ]
 
     if provider == "openrouter":
         temperature = 0.2 if benchmark_track == "controlled" else None
@@ -577,10 +604,11 @@ def _collect_candidate_once(
             display_label=display,
             api_key=api_key,
             allowed_providers=allowed,
-            require_parameters=benchmark_track == "controlled",
+            require_parameters=False,
         )
     elif provider == "qvac":
         gguf = cand_cfg.get("gguf_path")
+        loaded: Dict[str, Any] = {}
         if gguf:
             loaded = qvac_bridge.load_model(
                 gguf,
@@ -621,19 +649,18 @@ def _collect_candidate_once(
                     },
                 )
                 return cand
-        # Prefer structured chat messages so Instruct GGUFs (Qwen/Llama/Phi)
-        # apply their embedded chat_template correctly.
-        sys_p = candidate_system()
-        user_p = candidate_user(case)
+        sys_p = str(messages[0].get("content") or "") if messages else candidate_system()
+        user_p = (
+            str(messages[1].get("content") or "")
+            if messages and len(messages) > 1
+            else candidate_user(case)
+        )
         prompt = sys_p + "\n\n" + user_p
         raw, meta = qvac_bridge.generate(
             prompt,
             on_token=on_token,
             display_label=display,
-            messages=[
-                {"role": "system", "content": sys_p},
-                {"role": "user", "content": user_p},
-            ],
+            messages=messages,
         )
         digest = str(loaded.get("gguf_sha256") or "")
         if digest:
@@ -699,6 +726,19 @@ def is_retryable_local_error(err: str) -> bool:
     )
 
 
+def _merge_collect_meta(first: CandidateAnswer, second: CandidateAnswer) -> None:
+    first_cost = float(first.meta.cost_usd or 0.0)
+    second_cost = float(second.meta.cost_usd or 0.0)
+    second.meta.cost_usd = round(first_cost + second_cost, 8)
+    second.meta.prompt_tokens += first.meta.prompt_tokens
+    second.meta.completion_tokens += first.meta.completion_tokens
+    second.meta.latency_s = round(
+        float(first.meta.latency_s or 0.0) + float(second.meta.latency_s or 0.0),
+        3,
+    )
+    second.meta.retry_count = max(1, int(first.meta.retry_count or 0) + 1)
+
+
 def _collect_candidate(
     case: Case,
     cand_cfg: Dict[str, Any],
@@ -710,9 +750,10 @@ def _collect_candidate(
     """Collect once, then spend at most one bounded retry on a recoverable fault.
 
     Recoverable means transport failure, a local sidecar/GGUF fault, explicit
-    truncation, or sections the model left unwritten. Truncation and missing
-    sections regenerate only the affected questions; everything already answered
-    is kept verbatim.
+    truncation, or sections the model left unwritten. When the first reply has
+    content but almost no parseable A# markers, one format-repair pass asks the
+    same model to re-label that text (no new clinical facts). Otherwise missing
+    sections regenerate only the affected questions.
     """
     first = _collect_candidate_once(
         case,
@@ -735,11 +776,65 @@ def _collect_candidate(
         "max_tokens",
     }
     missing = missing_section_ids(case, first.answers or {})
-    # Only regenerate gaps when the first attempt otherwise succeeded; a hard
-    # candidate error is already handled by the transport branch.
     section_gap = bool(missing) and not error_text
+    raw_blob = (first.raw_response or "").strip()
+    needs_format_repair = (
+        section_gap and len(first.answers or {}) < 2 and len(raw_blob) > 80
+    )
     if not (transport_failure or truncation or section_gap):
         return first
+
+    if needs_format_repair:
+        _emit(
+            on_event,
+            {
+                "type": "candidate_retry",
+                "key": first.candidate_key,
+                "reason": "format repair",
+            },
+        )
+        repaired = _collect_candidate_once(
+            case,
+            cand_cfg,
+            blind_id,
+            on_event,
+            benchmark_track,
+            api_key,
+            messages=format_repair_messages(case, raw_blob),
+        )
+        _merge_collect_meta(first, repaired)
+        repaired.raw_response = (
+            raw_blob
+            + "\n\n[FORMAT REPAIR]\n"
+            + (repaired.raw_response or "").lstrip()
+        ).strip()
+        if not missing_section_ids(case, repaired.answers or {}):
+            return repaired
+        if repaired.answers:
+            # Partial labels recovered — keep and try targeted fill for the rest.
+            first = repaired
+            missing = missing_section_ids(case, first.answers or {})
+            section_gap = bool(missing) and not (first.meta.error or "")
+            truncation = False
+            transport_failure = False
+            if not section_gap:
+                return first
+        else:
+            # Format repair failed; fall through to clinical gap recovery.
+            first = first.model_copy(
+                update={
+                    "meta": first.meta.model_copy(
+                        update={
+                            "cost_usd": repaired.meta.cost_usd,
+                            "prompt_tokens": repaired.meta.prompt_tokens,
+                            "completion_tokens": repaired.meta.completion_tokens,
+                            "latency_s": repaired.meta.latency_s,
+                            "retry_count": repaired.meta.retry_count,
+                        }
+                    )
+                }
+            )
+
     if transport_failure:
         reason = "transport"
     elif truncation:
@@ -771,16 +866,7 @@ def _collect_candidate(
         benchmark_track,
         api_key,
     )
-    first_cost = float(first.meta.cost_usd or 0.0)
-    second_cost = float(second.meta.cost_usd or 0.0)
-    second.meta.cost_usd = round(first_cost + second_cost, 8)
-    second.meta.prompt_tokens += first.meta.prompt_tokens
-    second.meta.completion_tokens += first.meta.completion_tokens
-    second.meta.latency_s = round(
-        float(first.meta.latency_s or 0.0) + float(second.meta.latency_s or 0.0),
-        3,
-    )
-    second.meta.retry_count = 1
+    _merge_collect_meta(first, second)
     if targeted:
         merged_answers = dict(first.answers or {})
         for question_id in target_question_ids:
@@ -793,8 +879,6 @@ def _collect_candidate(
             + "\n\n[TARGETED SECTION RECOVERY]\n"
             + (second.raw_response or "").lstrip()
         ).strip()
-        # The recovery call answered a subset, so its own stop reason says
-        # nothing about the merged answer.
         if not missing_section_ids(case, second.answers):
             second.meta.finish_reason = first.meta.finish_reason
     return second

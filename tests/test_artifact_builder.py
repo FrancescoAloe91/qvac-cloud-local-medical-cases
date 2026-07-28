@@ -56,6 +56,36 @@ def test_shared_artifact_builder_records_reproducibility_and_judge_cohort():
     assert manifest["scoring_sha256"]
 
 
+def test_build_run_artifact_accepts_foreign_candidate_class_instances():
+    """Streamlit reloads can leave instances whose class id != current CandidateAnswer."""
+    candidate = CandidateAnswer(
+        candidate_key="c1",
+        label="C1",
+        blind_id="Candidate 1",
+        answers={"diagnosis": "x"},
+        meta=ModelCallMeta(model="m", provider="openrouter", requested_providers=["OpenAI"]),
+    )
+    dump = candidate.model_dump()
+
+    class ForeignCandidate:
+        def model_dump(self):
+            return dump
+
+    artifact = build_run_artifact(
+        config_snapshot={"judge": {"model": "judge"}},
+        run_id="run-foreign",
+        case_id="caseC",
+        started_at="2026-01-01T00:00:00Z",
+        finished_at="2026-01-01T00:01:00Z",
+        candidates=[ForeignCandidate()],
+        judgments=[],
+        ranking=[],
+    )
+    assert len(artifact.candidates) == 1
+    assert artifact.candidates[0].candidate_key == "c1"
+    assert artifact.candidates[0].meta.requested_providers == ["OpenAI"]
+
+
 def test_verifier_must_be_independent_of_candidates_and_extractor(monkeypatch):
     monkeypatch.setenv("BENCHMARK_GOLD_EXTRACTOR_MODEL", "google/extractor")
     with pytest.raises(ValueError, match="candidate roster"):

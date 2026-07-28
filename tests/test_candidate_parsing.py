@@ -194,7 +194,33 @@ def test_truncated_but_complete_answer_is_judged_despite_length_stop(monkeypatch
     assert judged == ["qvac"]
 
 
-def test_genuinely_missing_section_stays_na():
+def test_long_unstructured_prose_does_not_fill_all_sections():
+    raw = (
+        "The patient likely has acute kidney injury with hyperkalemia. "
+        "I would order renal ultrasound and repeat electrolytes. "
+        "This is critical. Avoid NSAIDs and hold ACE inhibitors. "
+        "Give calcium gluconate then insulin-glucose and consider dialysis. "
+    ) * 3
+    parsed = _parse(raw)
+    assert missing_section_ids(load_case("caseC"), parsed) == [
+        "diagnosis",
+        "tests",
+        "urgency",
+        "safety",
+        "plan",
+    ]
+
+
+def test_format_repair_messages_ask_for_a_markers():
+    from benchmark.prompts import format_repair_messages
+
+    case = load_case("caseC")
+    msgs = format_repair_messages(case, "Loose prose about AKI and dialysis.")
+    assert len(msgs) == 2
+    assert "A1" in msgs[1]["content"]
+    assert "Loose prose about AKI" in msgs[1]["content"]
+    assert "do not invent" in msgs[1]["content"].casefold()
+
     case = load_case("caseC")
     candidate = CandidateAnswer(
         candidate_key="qvac",
