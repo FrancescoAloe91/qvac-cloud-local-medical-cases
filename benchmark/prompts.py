@@ -355,7 +355,9 @@ def judge_system() -> str:
         "neutral, never unsupported merely because they are absent from the reference. "
         "Every nonzero coverage decision and every added-content classification must "
         "cite exact candidate text. "
-        "Do not guess the model/vendor. Return ONLY valid JSON."
+        "Keep JSON compact: short verbatim quotes (≤40 words), omit long rationales, "
+        "no chain-of-thought outside JSON. Prefer finishing all sections over verbose "
+        "prose. Do not guess the model/vendor. Return ONLY valid JSON."
     )
 
 
@@ -424,6 +426,7 @@ def judge_user(
         "likely harmful advice. Optional detail can be neutral. "
         "Do not score empty answers: the host treats them as technical N/A. "
         "Every candidate_quote must be verbatim text present in that section's answer. "
+        "Keep quotes short (≤40 words). Omit optional rationales unless essential. "
         "Quality is independent but evidence-grounded; use the full 0-1 continuum: "
         "0 only unusable/dangerous, 0.25 major deficiencies, 0.5 mixed but useful, "
         "0.75 strong with limited omissions, 1 exceptional. Do not reduce quality "

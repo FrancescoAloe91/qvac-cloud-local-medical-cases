@@ -72,7 +72,8 @@ def test_valid_evidence_linked_item_scores_balanced_formula():
     assert score.recall == 1.0
 
 
-def test_invented_evidence_is_rejected_not_scored_zero():
+def test_invented_evidence_is_demoted_locally_not_paid_retry():
+    """Legacy matched+invented quote: demote to missed locally (no raise → no retry)."""
     case = load_case("caseC")
     item = {
         "question_id": "diagnosis",
@@ -90,13 +91,16 @@ def test_invented_evidence_is_rejected_not_scored_zero():
         "rationale": "",
         "errors": [],
     }
-    with pytest.raises(ValueError, match="not present"):
-        _score_from_judge_item(
-            case,
-            item,
-            answer_text="The diagnosis is migraine.",
-            gold_reference=_contract(),
-        )
+    score = _score_from_judge_item(
+        case,
+        item,
+        answer_text="The diagnosis is migraine.",
+        gold_reference=_contract(),
+    )
+    assert score.matched_claim_ids == []
+    assert "diagnosis-1" in score.missed_claim_ids
+    assert score.recall == 0.0
+    assert score.score < 95.0
 
 
 def test_markdown_only_quote_differences_are_accepted():
@@ -226,6 +230,7 @@ def test_local_repair_accepts_unambiguous_schema_and_numeric_variants():
 
 
 def test_corrective_retry_requests_only_invalid_sections(monkeypatch):
+    """Missing-section schema failure still gets a targeted paid repair (not invented quotes)."""
     case = load_case("caseC")
     answers = {q.id: f"{q.id} answer" for q in case.questions}
     candidate = CandidateAnswer(
@@ -251,18 +256,20 @@ def test_corrective_retry_requests_only_invalid_sections(monkeypatch):
             "quality": 1,
         }
 
+    # Primary omits diagnosis entirely → structural failure (not presentation).
     first = {
         "question_scores": [
-            item(q.id, "invented evidence" if q.id == "diagnosis" else answers[q.id])
-            for q in case.questions
+            item(q.id, answers[q.id]) for q in case.questions if q.id != "diagnosis"
         ]
     }
     second = {"question_scores": [item("diagnosis", answers["diagnosis"])]}
     payloads = [first, second]
     sent_messages = []
+    sent_kwargs = []
 
     def fake_chat(model, messages, **kwargs):
         sent_messages.append(messages)
+        sent_kwargs.append(kwargs)
         payload = payloads.pop(0)
         return (
             __import__("json").dumps(payload),
@@ -282,9 +289,94 @@ def test_corrective_retry_requests_only_invalid_sections(monkeypatch):
     assert len(result.question_scores) == 5
     assert "['diagnosis']" in sent_messages[1][-1]["content"]
     assert "rejected ONLY these sections" in sent_messages[1][-1]["content"]
-    # Repair call must be cheaper/shorter than a full re-judge.
-    assert sent_messages  # primary + targeted repair only
     assert len(sent_messages) == 2
+
+
+def test_length_truncated_primary_repairs_each_section(monkeypatch):
+    """Regression: DeepSeek finish_reason=length on long cloud answers (caseC-a0d375f208).
+
+    Primary returns unusable JSON at the token cap; repair must go section-by-section
+    with a real token budget so Claude/OpenAI still receive scores (not N/A).
+    """
+    case = load_case("caseC")
+    answers = {q.id: f"{q.id} clinical answer with enough text" for q in case.questions}
+    candidate = CandidateAnswer(
+        candidate_key="claude",
+        label="Claude",
+        blind_id="Candidate 3",
+        answers=answers,
+        raw_response="\n".join(answers.values()),
+        meta=ModelCallMeta(model="anthropic/claude", provider="openrouter"),
+    )
+
+    def item(qid: str) -> dict:
+        return {
+            "question_id": qid,
+            "claim_assessments": [
+                {
+                    "reference_claim_id": f"{qid}-1",
+                    "coverage": 1,
+                    "candidate_quotes": [answers[qid]],
+                }
+            ],
+            "additional_claims": [],
+            "quality": 0.8,
+        }
+
+    calls = {"n": 0}
+    max_tokens_seen = []
+
+    def fake_chat(model, messages, **kwargs):
+        calls["n"] += 1
+        max_tokens_seen.append(int(kwargs.get("max_tokens") or 0))
+        if calls["n"] == 1:
+            # Truncated primary: prose / broken JSON, same symptom as a0d375f208.
+            return (
+                "We are evaluating Candidate 3 only.\nIncomplete {",
+                ModelCallMeta(
+                    model=model,
+                    provider="openrouter",
+                    cost_usd=0.02,
+                    completion_tokens=8192,
+                    finish_reason="length",
+                ),
+            )
+        # One compact section repair per remaining call.
+        content = messages[-1]["content"]
+        import ast, re
+
+        m = re.search(r"deterministic repair: (\[[^\]]+\])", content)
+        assert m, content[:200]
+        targets = ast.literal_eval(m.group(1))
+        assert len(targets) == 1
+        qid = targets[0]
+        return (
+            __import__("json").dumps({"question_scores": [item(qid)]}),
+            ModelCallMeta(
+                model=model,
+                provider="openrouter",
+                cost_usd=0.01,
+                completion_tokens=400,
+                finish_reason="stop",
+            ),
+        )
+
+    monkeypatch.setattr("benchmark.judge.openrouter.chat", fake_chat)
+    stages: list[tuple[str, int]] = []
+    result = judge_candidate(
+        case,
+        candidate,
+        "judge",
+        gold_reference=_contract(),
+        progress_callback=lambda stage, pct: stages.append((stage, pct)),
+    )
+    assert result.status == "valid", result.failure_reason
+    assert result.retry_count >= 1
+    assert calls["n"] == 1 + len(case.questions)
+    assert max_tokens_seen[0] >= 16000
+    assert all(t >= 4000 for t in max_tokens_seen[1:])
+    assert ("corrective retry", 75) in stages
+    assert len(result.question_scores) == 5
 
 
 def _judgment(key: str, score: float, status: str = "valid") -> JudgeResult:
@@ -671,6 +763,65 @@ def test_short_token_does_not_match_inside_longer_word():
     answer = _evidence_normalized("Consider adrenal insufficiency in this context.")
     assert not _evidence_quote_present("renal", answer)
     assert _evidence_quote_present("adrenal insufficiency", answer)
+
+
+def test_graded_invented_quotes_zero_coverage_without_paid_retry(monkeypatch):
+    """Paraphrased/invented judge quotes must not trip the 75% paid corrective path."""
+    case = load_case("caseC")
+    answers = {
+        q.id: f"Clinical note for {q.id}: treat supportively and reassess."
+        for q in case.questions
+    }
+    candidate = CandidateAnswer(
+        candidate_key="chatgpt",
+        label="ChatGPT",
+        blind_id="Candidate 1",
+        answers=answers,
+        raw_response="\n".join(answers.values()),
+        meta=ModelCallMeta(model="openai/gpt", provider="openrouter"),
+    )
+    payload = {
+        "question_scores": [
+            {
+                "question_id": q.id,
+                "claim_assessments": [
+                    {
+                        "reference_claim_id": f"{q.id}-1",
+                        "coverage": 0.9,
+                        "candidate_quotes": [
+                            "This paraphrased sentence is not in the candidate answer."
+                        ],
+                    }
+                ],
+                "additional_claims": [],
+                "quality": 0.7,
+            }
+            for q in case.questions
+        ]
+    }
+    calls = {"n": 0}
+
+    def fake_chat(model, messages, **kwargs):
+        calls["n"] += 1
+        return (
+            "```json\n" + __import__("json").dumps(payload) + "\n```",
+            ModelCallMeta(model=model, provider="openrouter", cost_usd=0.01),
+        )
+
+    monkeypatch.setattr("benchmark.judge.openrouter.chat", fake_chat)
+    stages: list[tuple[str, int]] = []
+    result = judge_candidate(
+        case,
+        candidate,
+        "judge",
+        gold_reference=_contract(),
+        progress_callback=lambda stage, pct: stages.append((stage, pct)),
+    )
+    assert result.status == "valid"
+    assert result.retry_count == 0
+    assert calls["n"] == 1
+    assert ("corrective retry", 75) not in stages
+    assert all(qs.recall == 0.0 for qs in result.question_scores)
 
 
 def test_markdown_wrapped_string_numbers_pass_without_paid_retry(monkeypatch):

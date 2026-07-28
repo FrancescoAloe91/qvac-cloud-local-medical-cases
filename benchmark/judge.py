@@ -555,10 +555,12 @@ def _score_from_judge_item(
                 raise ValueError("candidate_quotes must be a list")
             quotes = [str(value).strip() for value in quotes_raw if str(value).strip()]
             present_quotes = _filter_present_quotes(quotes, answer_norm)
-            # Coverage>0 needs at least one verbatim/presentable quote. Drop
-            # presentation-only mismatches; never invent replacement evidence.
+            # Coverage>0 needs a presentable quote. Presentation salvage already
+            # ran in _filter_present_quotes; if nothing remains, zero coverage
+            # locally — never invent evidence and never force a paid retry.
             if coverage > 0 and not present_quotes:
-                raise ValueError("Judge evidence quote is not present in candidate answer")
+                coverage = 0.0
+                present_quotes = []
             if coverage <= 0:
                 present_quotes = []
             coverage_by_id[claim_id] = coverage
@@ -685,16 +687,21 @@ def _score_from_judge_item(
     evidence_by_id: Dict[str, str] = {}
     for ev in evidence_raw:
         if not isinstance(ev, dict):
-            raise ValueError("Invalid evidence object")
+            continue
         claim_id = str(ev.get("reference_claim_id") or "")
         quote = str(ev.get("candidate_quote") or "").strip()
+        # Drop unverifiable / unknown evidence rows locally (no paid retry).
         if claim_id not in reference_ids or not quote:
-            raise ValueError("Invalid evidence claim or quote")
+            continue
         if not _evidence_quote_present(quote, answer_norm):
-            raise ValueError("Judge evidence quote is not present in candidate answer")
+            continue
         evidence_by_id[claim_id] = quote
-    if any(claim_id not in evidence_by_id for claim_id in matched):
-        raise ValueError("Every matched claim requires candidate evidence")
+    # Matched claims without a presentable quote demote to missed locally.
+    still_matched = [cid for cid in matched if cid in evidence_by_id]
+    demoted = [cid for cid in matched if cid not in evidence_by_id]
+    matched = still_matched
+    if demoted:
+        missed = list(dict.fromkeys([*missed, *demoted]))
 
     def _claim_objects(field: str) -> tuple[List[str], List[str]]:
         value = item.get(field)
@@ -1026,6 +1033,39 @@ def _score_sections_from_payload(
     return accepted, section_errors
 
 
+# Primary judge often hits finish_reason=length at 8k on long Claude/OpenAI
+# answers (see caseC-a0d375f208). Give headroom; repairs go section-by-section.
+_JUDGE_PRIMARY_MAX_TOKENS = 16384
+_JUDGE_SECTION_MAX_TOKENS = 4096
+
+
+def _judge_output_truncated(meta: Optional[ModelCallMeta], *, cap: int) -> bool:
+    if meta is None:
+        return False
+    reason = (meta.finish_reason or "").strip().lower()
+    if reason in {"length", "max_tokens", "max_length"}:
+        return True
+    # Some providers omit finish_reason but still stop exactly at the cap.
+    return int(meta.completion_tokens or 0) >= max(1, int(cap) - 4)
+
+
+def _repair_prompt_for_sections(
+    retry_ids: set[str],
+    section_errors: Dict[str, str],
+) -> str:
+    details = "; ".join(
+        f"{qid}: {section_errors.get(qid, 'invalid')}" for qid in sorted(retry_ids)
+    )
+    return (
+        "Local validation rejected ONLY these sections after deterministic repair: "
+        f"{sorted(retry_ids)}. Errors: {details}. "
+        "Return ONE compact JSON object with question_scores containing exactly "
+        "those rejected sections (claim_assessments + additional_claims + quality). "
+        "Use short verbatim candidate quotes (≤40 words; Markdown/whitespace OK). "
+        "Omit long rationales. Never invent evidence. Finish the JSON completely."
+    )
+
+
 def judge_candidate(
     case: Case,
     candidate: CandidateAnswer,
@@ -1059,14 +1099,17 @@ def judge_candidate(
         judge_model,
         messages,
         temperature=temperature,
-        max_tokens=8192,
+        max_tokens=_JUDGE_PRIMARY_MAX_TOKENS,
         response_format={"type": "json_object"},
         max_attempts=3,
-        timeout=240.0,
+        timeout=300.0,
         api_key=api_key,
     )
     accumulated_meta = _append_paid_attempt(meta, role="primary", prior=None)
     meta = accumulated_meta
+    primary_truncated = _judge_output_truncated(
+        meta, cap=_JUDGE_PRIMARY_MAX_TOKENS
+    )
     if progress_callback:
         progress_callback("validating response", 70)
     if meta.error:
@@ -1091,69 +1134,74 @@ def judge_candidate(
     accepted.update(scored)
     retry_ids = required - set(accepted)
 
-    # One paid corrective call only when local salvage could not accept sections.
-    # Targeted to failed sections; shorter budget than the primary judge call.
+    # Paid repair only for sections local salvage could not accept. Presentation /
+    # invented-quote mismatches already zero coverage locally and never land here.
+    # When the primary hit the length cap (common on long Claude/OpenAI answers),
+    # repair ONE section at a time — a single multi-section corrective also truncates.
     if retry_ids:
         details = "; ".join(
             f"{qid}: {section_errors.get(qid, 'invalid')}"
             for qid in sorted(retry_ids)
         )
         last_validation_error = details
-        repair_messages = messages + [
-            {
-                "role": "user",
-                "content": (
-                    "Local validation rejected ONLY these sections after "
-                    f"deterministic repair: {sorted(retry_ids)}. Errors: {details}. "
-                    "Return a compact JSON object with question_scores containing "
-                    "exactly those rejected sections (claim_assessments + "
-                    "additional_claims + quality). Use verbatim candidate quotes "
-                    "from the candidate answer (Markdown/whitespace differences OK). "
-                    "Never rewrite accepted sections and never invent evidence."
-                ),
-            }
-        ]
-        # UI shows 75% only when the paid repair HTTP call is about to start.
+        per_section = primary_truncated or len(retry_ids) >= 2
+        # UI shows 75% only when a paid repair HTTP call is about to start.
         if progress_callback:
             progress_callback("corrective retry", 75)
-        raw_repair, meta_repair = openrouter.chat(
-            judge_model,
-            repair_messages,
-            temperature=temperature,
-            max_tokens=min(4096, 900 * max(1, len(retry_ids))),
-            response_format={"type": "json_object"},
-            max_attempts=2,
-            timeout=120.0,
-            api_key=api_key,
+
+        section_batches: List[set[str]] = (
+            [{qid} for qid in sorted(retry_ids)]
+            if per_section
+            else [set(retry_ids)]
         )
-        accumulated_meta = _append_paid_attempt(
-            meta_repair, role="corrective_retry", prior=accumulated_meta
-        )
-        meta = accumulated_meta
-        if raw_repair:
-            raw = raw_repair
-        if progress_callback:
-            progress_callback("validating response", 88)
-        if not meta_repair.error:
+        for batch in section_batches:
+            if not batch:
+                continue
+            repair_messages = messages + [
+                {
+                    "role": "user",
+                    "content": _repair_prompt_for_sections(batch, section_errors),
+                }
+            ]
+            raw_repair, meta_repair = openrouter.chat(
+                judge_model,
+                repair_messages,
+                temperature=temperature,
+                max_tokens=_JUDGE_SECTION_MAX_TOKENS,
+                response_format={"type": "json_object"},
+                max_attempts=2,
+                timeout=180.0,
+                api_key=api_key,
+            )
+            accumulated_meta = _append_paid_attempt(
+                meta_repair, role="corrective_retry", prior=accumulated_meta
+            )
+            meta = accumulated_meta
+            if raw_repair:
+                raw = raw_repair
+            if meta_repair.error:
+                last_validation_error = (
+                    f"{details}; corrective retry failed: {meta_repair.error}"
+                )
+                continue
             repair_data = _extract_json(raw_repair)
             repaired, repair_errors = _score_sections_from_payload(
                 case,
                 candidate,
                 repair_data if isinstance(repair_data, dict) else {},
                 gold_reference=gold_reference,
-                target_ids=retry_ids,
+                target_ids=batch,
             )
             accepted.update(repaired)
             section_errors.update(repair_errors)
-            retry_ids = required - set(accepted)
-            if retry_ids:
-                last_validation_error = "; ".join(
-                    f"{qid}: {section_errors.get(qid, 'invalid')}"
-                    for qid in sorted(retry_ids)
-                )
-        else:
-            last_validation_error = (
-                f"{details}; corrective retry failed: {meta_repair.error}"
+
+        if progress_callback:
+            progress_callback("validating response", 88)
+        retry_ids = required - set(accepted)
+        if retry_ids:
+            last_validation_error = "; ".join(
+                f"{qid}: {section_errors.get(qid, 'invalid')}"
+                for qid in sorted(retry_ids)
             )
 
     if retry_ids:
