@@ -1583,31 +1583,6 @@ if prepare_clicked:
             st.success("Reference prepared — review/edit claims, then Confirm.")
             st.rerun()
         except Exception as exc:
-            # #region agent log
-            try:
-                import json as _json
-                from pathlib import Path as _Path
-
-                _log = _Path(__file__).resolve().parent / ".cursor" / "debug-a76cc5.log"
-                _log.parent.mkdir(parents=True, exist_ok=True)
-                with _log.open("a", encoding="utf-8") as _fh:
-                    _fh.write(
-                        _json.dumps(
-                            {
-                                "sessionId": "a76cc5",
-                                "hypothesisId": "H6",
-                                "location": "app.py:prepare",
-                                "message": "prepare_failed_ui",
-                                "data": {"error": str(exc)[:400]},
-                                "timestamp": int(time.time() * 1000),
-                            },
-                            ensure_ascii=False,
-                        )
-                        + "\n"
-                    )
-            except Exception:
-                pass
-            # #endregion
             st.error(f"Prepare failed: {exc}")
 
 # Editable prepared sections

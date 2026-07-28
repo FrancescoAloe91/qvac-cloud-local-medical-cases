@@ -1,8 +1,7 @@
-"""Non-destructive OLD vs NEW offline rescore for one artifact + debug NDJSON."""
+"""Non-destructive OLD vs NEW offline rescore for one artifact."""
 from __future__ import annotations
 
 import json
-import time
 from pathlib import Path
 
 from benchmark.report import load_artifact, rescore_artifact_current_formula
@@ -13,24 +12,6 @@ ARTIFACT = ROOT / (
     "artifacts/owners/893e6a29cf690fbef4d6aee2/caseC-3f5bb3a7ef.json"
 )
 REPORT = ROOT / ".cursor" / "offline_rescore_caseC-3f5bb3a7ef.json"
-DEBUG_LOG = ROOT / ".cursor" / "debug-a76cc5.log"
-SESSION_ID = "a76cc5"
-
-
-def _log(hypothesis_id: str, location: str, message: str, data: dict) -> None:
-    # #region agent log
-    payload = {
-        "sessionId": SESSION_ID,
-        "hypothesisId": hypothesis_id,
-        "location": location,
-        "message": message,
-        "data": data,
-        "timestamp": int(time.time() * 1000),
-    }
-    DEBUG_LOG.parent.mkdir(parents=True, exist_ok=True)
-    with DEBUG_LOG.open("a", encoding="utf-8") as fh:
-        fh.write(json.dumps(payload, ensure_ascii=False) + "\n")
-    # #endregion
 
 
 def _rank_map(rows):
@@ -52,7 +33,7 @@ def _rank_map(rows):
 
 
 def _recompute_from_claims(art) -> dict:
-    """H2: recompute composite from stored claim fields per question, then mean."""
+    """Recompute composite from stored claim fields per question, then mean."""
     out = {}
     for j in art.judgments or []:
         secs = []
@@ -76,23 +57,7 @@ def main() -> None:
     art = load_artifact(ARTIFACT)
     old_map = _rank_map(art.ranking)
     old_version = str(art.scoring_version or "")
-    old_n_judgments = len(art.judgments or [])
     claim_composites = _recompute_from_claims(art)
-
-    _log(
-        "H1",
-        "scripts/_offline_rescore_compare_one.py:pre",
-        "Loaded artifact pre-rescore",
-        {
-            "path": str(ARTIFACT),
-            "run_id": art.run_id,
-            "run_status": art.run_status,
-            "scoring_version": old_version,
-            "n_candidates": len(art.candidates or []),
-            "n_judgments": old_n_judgments,
-            "old_composites": {k: v.get("accuracy") for k, v in old_map.items()},
-        },
-    )
 
     claim_deltas = {}
     for k, stored in ((k, old_map[k]["accuracy"]) for k in old_map):
@@ -101,16 +66,6 @@ def main() -> None:
             claim_deltas[k] = round(float(recomputed) - float(stored), 4)
         else:
             claim_deltas[k] = None
-    _log(
-        "H2",
-        "scripts/_offline_rescore_compare_one.py:claim_recompute",
-        "Stored composite vs claim-field graded_clinical_score mean",
-        {
-            "claim_composites": claim_composites,
-            "stored_composites": {k: v.get("accuracy") for k, v in old_map.items()},
-            "deltas_claim_minus_stored": claim_deltas,
-        },
-    )
 
     scored = rescore_artifact_current_formula(art)
     new_rows = scored.get("ranking") or []
@@ -118,31 +73,8 @@ def main() -> None:
     new_version = str(
         scored.get("scoring_version_stamp") or scored.get("formula") or ""
     )
-    new_judgments = scored.get("effective_judgments") or []
     recovered = list(scored.get("recovered_keys") or [])
     unrecovered = list(scored.get("unrecovered_na") or [])
-
-    _log(
-        "H3",
-        "scripts/_offline_rescore_compare_one.py:post",
-        "Rescore version/judgment integrity",
-        {
-            "scoring_version_before": old_version,
-            "scoring_version_after": new_version,
-            "preserved_stored_ranking": bool(scored.get("preserved_stored_ranking")),
-            "n_judgments_before": old_n_judgments,
-            "n_judgments_after": len(new_judgments),
-            "recovered_keys": recovered,
-            "unrecovered_na": unrecovered,
-            "status_changes": {
-                k: {
-                    "old": old_map.get(k, {}).get("status"),
-                    "new": new_map.get(k, {}).get("status"),
-                }
-                for k in sorted(set(old_map) | set(new_map))
-            },
-        },
-    )
 
     per_model = []
     for k in sorted(set(old_map) | set(new_map)):
@@ -182,35 +114,6 @@ def main() -> None:
         }
         per_model.append(row)
 
-    _log(
-        "H1",
-        "scripts/_offline_rescore_compare_one.py:deltas",
-        "Composite OLD vs NEW deltas",
-        {
-            "all_delta_zero": all(
-                (r["delta"] is None or abs(r["delta"]) < 1e-9) for r in per_model
-            ),
-            "per_model_deltas": {r["key"]: r["delta"] for r in per_model},
-        },
-    )
-    _log(
-        "H4",
-        "scripts/_offline_rescore_compare_one.py:components",
-        "Component-level deltas",
-        {
-            "per_model_component_deltas": {
-                r["key"]: r["component_deltas"] for r in per_model
-            },
-            "any_component_change": any(
-                any(
-                    (v is not None and abs(v) > 1e-9)
-                    for v in (r["component_deltas"] or {}).values()
-                )
-                for r in per_model
-            ),
-        },
-    )
-
     report = {
         "artifact": str(ARTIFACT),
         "run_id": art.run_id,
@@ -233,7 +136,6 @@ def main() -> None:
     REPORT.write_text(json.dumps(report, indent=2), encoding="utf-8")
     print(json.dumps(report, indent=2))
     print(f"\nWrote comparison report: {REPORT}")
-    print(f"Debug log: {DEBUG_LOG}")
 
 
 if __name__ == "__main__":

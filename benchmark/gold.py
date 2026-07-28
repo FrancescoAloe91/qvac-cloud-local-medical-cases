@@ -5,10 +5,8 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-import time
 import unicodedata
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple
 
 from benchmark.schema import ConfirmedGold, GoldClaim, GoldSection, ModelCallMeta
@@ -16,36 +14,6 @@ from benchmark.schema import ConfirmedGold, GoldClaim, GoldSection, ModelCallMet
 SECTION_IDS = ("diagnosis", "tests", "urgency", "safety", "plan")
 EXTRACTION_PROMPT_VERSION = "gold-extract-v2"
 SCORING_VERSION = "graded-clinical-v4"
-
-# #region agent log
-_AGENT_DEBUG_LOG = (
-    Path(__file__).resolve().parents[1] / ".cursor" / "debug-a76cc5.log"
-)
-
-
-def _agent_log(
-    hypothesis_id: str,
-    location: str,
-    message: str,
-    data: Optional[Mapping[str, Any]] = None,
-) -> None:
-    try:
-        payload = {
-            "sessionId": "a76cc5",
-            "hypothesisId": hypothesis_id,
-            "location": location,
-            "message": message,
-            "data": dict(data or {}),
-            "timestamp": int(time.time() * 1000),
-        }
-        _AGENT_DEBUG_LOG.parent.mkdir(parents=True, exist_ok=True)
-        with _AGENT_DEBUG_LOG.open("a", encoding="utf-8") as fh:
-            fh.write(json.dumps(payload, ensure_ascii=False) + "\n")
-    except Exception:
-        pass
-
-
-# #endregion
 
 
 def _normalized(text: str) -> str:
@@ -95,18 +63,6 @@ def _validate_source_quotes(
             if not quote:
                 raise ValueError(f"Claim {claim.id} has an empty source quote")
             if quote not in raw_norm:
-                # #region agent log
-                _agent_log(
-                    "H1",
-                    "gold.py:_validate_source_quotes",
-                    "non_verbatim_quote",
-                    {
-                        "claim_id": claim.id,
-                        "quote_preview": (claim.source_quote or "")[:160],
-                        "raw_len": len(raw_text or ""),
-                    },
-                )
-                # #endregion
                 raise ValueError(_quote_reject_message(claim.id, claim.source_quote))
             if quote in seen:
                 raise ValueError(
@@ -114,14 +70,6 @@ def _validate_source_quotes(
                 )
             for prior in seen:
                 if _quotes_overlap_substantially(quote, prior):
-                    # #region agent log
-                    _agent_log(
-                        "H2",
-                        "gold.py:_validate_source_quotes",
-                        "overlapping_quote",
-                        {"claim_id": claim.id, "quote_preview": (claim.source_quote or "")[:160]},
-                    )
-                    # #endregion
                     raise ValueError(
                         f"Overlapping source quote across scoring claims: {claim.source_quote}"
                     )
@@ -285,37 +233,10 @@ def parse_extraction(
             seen.add(claim.id)
             resolved = _resolve_claim_quote(raw_norm, claim)
             if resolved is None:
-                # #region agent log
-                _agent_log(
-                    "H1",
-                    "gold.py:parse_extraction",
-                    "claim_quote_rejected",
-                    {
-                        "claim_id": claim.id,
-                        "section": section_id,
-                        "quote_preview": (claim.source_quote or "")[:160],
-                        "text_preview": (claim.text or "")[:160],
-                        "drop_invalid_claims": drop_invalid_claims,
-                    },
-                )
-                # #endregion
                 if drop_invalid_claims:
                     dropped.append(claim.id)
                     continue
                 raise ValueError(_quote_reject_message(claim.id, claim.source_quote))
-            if resolved != (claim.source_quote or "").strip():
-                # #region agent log
-                _agent_log(
-                    "H4",
-                    "gold.py:parse_extraction",
-                    "salvaged_quote_from_text_or_normalize",
-                    {
-                        "claim_id": claim.id,
-                        "from_source_quote": (claim.source_quote or "")[:120],
-                        "resolved": resolved[:120],
-                    },
-                )
-                # #endregion
             claim.source_quote = resolved
             if not claim.text.strip():
                 if drop_invalid_claims:
@@ -327,14 +248,6 @@ def parse_extraction(
             claim.critical = False
             claims.append(claim)
         if drop_invalid_claims and not claims and claims_raw:
-            # #region agent log
-            _agent_log(
-                "H5",
-                "gold.py:parse_extraction",
-                "section_emptied_after_drop",
-                {"section": section_id, "dropped": dropped},
-            )
-            # #endregion
             raise ValueError(
                 f"Section {section_id} has no claims with verbatim source_quote after "
                 f"dropping invalid quotes ({', '.join(dropped) or 'none'}). "
@@ -344,15 +257,6 @@ def parse_extraction(
             summary=str(item.get("summary") or "").strip(),
             claims=claims,
         )
-    if dropped:
-        # #region agent log
-        _agent_log(
-            "H5",
-            "gold.py:parse_extraction",
-            "dropped_invalid_claims",
-            {"dropped": dropped},
-        )
-        # #endregion
     _validate_source_quotes(raw_text, sections)
     return sections
 
@@ -536,14 +440,6 @@ def extract_with_chat(
         return parse_extraction(raw_text, payload), meta
     except ValueError as first_exc:
         failures = collect_quote_failures(raw_text, payload) or [str(first_exc)]
-        # #region agent log
-        _agent_log(
-            "H5",
-            "gold.py:extract_with_chat",
-            "primary_extract_rejected_starting_repair",
-            {"failures": failures[:8], "failure_count": len(failures)},
-        )
-        # #endregion
         quote_related = any(
             "source quote" in f.casefold() or "verbatim" in f.casefold()
             for f in failures
@@ -570,40 +466,12 @@ def extract_with_chat(
         repair_payload = extract_json_object(repair_raw)
         try:
             sections = parse_extraction(raw_text, repair_payload)
-            # #region agent log
-            _agent_log(
-                "H5",
-                "gold.py:extract_with_chat",
-                "quote_repair_succeeded",
-                {"sections": list(sections.keys())},
-            )
-            # #endregion
             return sections, meta
         except ValueError as repair_exc:
-            # #region agent log
-            _agent_log(
-                "H5",
-                "gold.py:extract_with_chat",
-                "quote_repair_still_invalid_trying_drop",
-                {"error": str(repair_exc)[:300]},
-            )
-            # #endregion
             try:
                 sections = parse_extraction(
                     raw_text, repair_payload, drop_invalid_claims=True
                 )
-                # #region agent log
-                _agent_log(
-                    "H5",
-                    "gold.py:extract_with_chat",
-                    "drop_invalid_claims_succeeded",
-                    {
-                        "claim_counts": {
-                            sid: len(sec.claims) for sid, sec in sections.items()
-                        }
-                    },
-                )
-                # #endregion
                 return sections, meta
             except ValueError:
                 # Last resort: drop from primary payload
@@ -612,19 +480,7 @@ def extract_with_chat(
                         raw_text, payload, drop_invalid_claims=True
                     )
                     return sections, meta
-                except ValueError as drop_exc:
-                    # #region agent log
-                    _agent_log(
-                        "H6",
-                        "gold.py:extract_with_chat",
-                        "all_recovery_paths_failed",
-                        {
-                            "primary": str(first_exc)[:240],
-                            "repair": str(repair_exc)[:240],
-                            "drop": str(drop_exc)[:240],
-                        },
-                    )
-                    # #endregion
+                except ValueError:
                     raise ValueError(
                         f"{repair_exc} "
                         f"(after quote-repair; paraphrases are not allowed — copy "
