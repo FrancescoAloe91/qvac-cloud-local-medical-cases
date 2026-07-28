@@ -58,4 +58,4 @@ estimate:
   candidate_input_tokens: 1800  # legacy CLI hint only; UI estimate uses real text length
   candidate_output_tokens: 900
   judge_input_tokens_per_question: 2800
-  judge_output_tokens_per_question: 400
+  judge_output_tokens_per_question: 1600  # primary may use up to 16k; UI uses upper mid estimate

@@ -14,8 +14,20 @@ change claim meaning or score weight.
 The blind judge grades coverage of every frozen reference claim continuously
 from 0 to 1 and classifies additional content as helpful, neutral, unsupported,
 contradictory, or dangerous. Every nonzero coverage decision and every added
-claim needs verbatim candidate evidence. The host rejects invalid evidence
-rather than converting it to a low score.
+claim needs verbatim candidate evidence.
+
+Host evidence contract (not the same as technical N/A):
+
+- Unverifiable **coverage** quotes → that claim’s coverage is set to **0** locally
+  (section stays scorable; no paid retry for presentation alone).
+- Unverifiable **helpful / neutral / unsupported** additions → dropped (no
+  inventing text).
+- Unverifiable **contradictory / dangerous** additions → **fail-closed**: keep a
+  full-severity discipline penalty so paraphrased harm cannot erase the penalty.
+- Host clamps **quality ≤ verified coverage** so a polished but unanchored answer
+  cannot harvest the full 35% quality component.
+- Technical N/A remains reserved for empty/partial candidates, transport,
+  unusable schema after salvage/repair, timeout, and cancellation.
 
 Evidence validation is presentation-tolerant but text-strict. It normalizes
 Markdown/HTML, whitespace, letter case, Unicode presentation, list markers, and
@@ -23,8 +35,9 @@ styling punctuation, while preserving clinically meaningful numeric punctuation
 (decimals, ranges like `10–20`, `±`, slash ratios). Matching is token-sequence /
 word-boundary safe so short tokens like `renal` do not match inside `adrenal`.
 A judge quote assembled from multiple non-contiguous sentences is accepted only
-when every substantial sentence is textually present. No fuzzy or semantic quote
-matching is used, so changed or invented clinical words remain invalid.
+when every substantial sentence is textually present. Partial spans (for example
+“half of a long quote”) do **not** count. No fuzzy or semantic quote matching is
+used, so changed or invented clinical words remain invalid.
 
 For each section:
 
@@ -48,9 +61,9 @@ The final Clinical Composite Score is the predeclared weighted mean:
 - Urgency: 10%
 
 Coverage remains the largest component. Clinical quality rewards coherence,
-prioritization, usefulness, and appropriate caution. Discipline discourages
-speculation and harm without penalizing reasonable additions. Nothing is
-converted to a binary pass/fail merely for convenience.
+prioritization, usefulness, and appropriate caution, but the host never lets
+quality exceed verified coverage. Discipline discourages speculation and harm
+without penalizing reasonable additions.
 
 Artifact fields may still be named `accuracy` for schema compatibility. That
 number is the Clinical Composite Score relative to one user reference. It is
@@ -90,9 +103,10 @@ relax candidate completeness, evidence integrity, or the scoring formula.
 ## Failure semantics and ranking
 
 Collection errors, empty/partial output, timeout, judge transport failure,
-invalid schema, invalid evidence after salvage/repair, and cancellation are
-technical N/A observations. They are excluded from means and reported with
-reason counts. There is no synthetic zero.
+unusable schema after salvage/repair, and cancellation are technical N/A
+observations. Presentation-only evidence problems are handled locally (coverage
+zero / harm fail-closed), not as N/A. Technical N/A rows are excluded from means
+and reported with reason counts. There is no synthetic zero.
 
 ### Recovering the candidate's sections
 

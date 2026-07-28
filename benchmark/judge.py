@@ -475,17 +475,8 @@ def _evidence_quote_present(quote: str, answer_norm: str) -> bool:
         _token_sequence_present(chunk, answer_tokens) for chunk in chunks
     ):
         return True
-    # Presentation-only salvage: judge slightly trimmed/rewrapped a long quote
-    # from a Markdown-heavy cloud answer. Require a substantial contiguous span
-    # (≥8 tokens and ≥50% of the quote) — never a short token like "renal".
-    if needle and len(needle) >= 8:
-        min_width = max(8, (len(needle) + 1) // 2)
-        for width in range(len(needle) - 1, min_width - 1, -1):
-            for start in range(0, len(needle) - width + 1):
-                if _token_sequence_present(
-                    needle[start : start + width], answer_tokens
-                ):
-                    return True
+    # Partial contiguous spans (e.g. ≥50% of a long quote) are intentionally
+    # rejected: half a clinical sentence must not count as full evidence.
     return False
 
 
@@ -588,16 +579,36 @@ def _score_from_judge_item(
             "contradictory",
             "dangerous",
         }
+        harm_classes = {"contradictory", "dangerous"}
         for row in additions_raw:
             if not isinstance(row, dict):
                 continue
             quote = str(row.get("candidate_quote") or "").strip()
             classification = _normalize_classification(row.get("classification"))
-            # Unverifiable additions are dropped locally (no paid retry) — we do
-            # not invent a substitute quote and we do not score invisible text.
-            if not quote or not _evidence_quote_present(quote, answer_norm):
-                continue
             if classification not in allowed_classes:
+                continue
+            quote_ok = bool(quote) and _evidence_quote_present(quote, answer_norm)
+            # Helpful/neutral/unsupported without a presentable quote are dropped
+            # (no inventing text). Harmful classes fail closed: keep a full-severity
+            # penalty so paraphrased danger cannot erase discipline.
+            if not quote_ok:
+                if classification not in harm_classes:
+                    continue
+                severity = 1.0
+                additions.append(
+                    {
+                        "candidate_quote": quote or "[unverified harmful addition]",
+                        "classification": classification,
+                        "severity": severity,
+                        "rationale": (
+                            "Host fail-closed: judge labeled "
+                            f"{classification} but quote was not presentable; "
+                            "applied full severity penalty. "
+                            + str(row.get("rationale") or "")
+                        ).strip(),
+                        "unverified": True,
+                    }
+                )
                 continue
             severity = _as_unit_float(
                 row.get("severity"),
@@ -617,6 +628,9 @@ def _score_from_judge_item(
         coverage = sum(coverage_by_id[claim.id] for claim in reference_claims) / max(
             len(reference_claims), 1
         )
+        # Host clamp: clinical quality cannot exceed verified coverage. A polished
+        # but unanchored answer must not harvest the full 35% quality component.
+        quality = min(quality, coverage)
         discipline = evidence_discipline_score(
             additions,
             total_reference=len(reference_claims),
@@ -731,6 +745,8 @@ def _score_from_judge_item(
     unsupported, _ = _claim_objects("unsupported_claims")
     contradictions, _ = _claim_objects("contradictions")
     quality = _as_unit_float(item.get("quality"), field="quality")
+    recall_est = len(matched) / max(len(reference_ids), 1)
+    quality = min(quality, recall_est)
     score, precision, recall = claim_correctness_score(
         matched=len(matched),
         total_reference=len(reference_ids),
@@ -1521,14 +1537,9 @@ class PipelinedJudge:
         if remaining <= 0:
             # Do not launch a whole-run verifier with an exhausted wall-clock budget.
             return
-        recoverable_statuses = {
-            "judge_transport_failed",
-            "judge_schema_invalid",
-            "judge_evidence_invalid",
-            "timed_out",
-        }
-        # Only re-judge residual technical failures — never regress already-valid
-        # cloud/local scores into verifier theater.
+        # Methodological contract: once the verifier activates, it re-judges the
+        # entire fixed eligible set and becomes the sole effective judge. Keeping
+        # primary DeepSeek scores alongside Qwen would mix judge cohorts.
         eligible = [
             cand
             for cand in self._candidates
@@ -1536,8 +1547,6 @@ class PipelinedJudge:
             and _candidate_has_answer(cand)
             and not _candidate_missing_sections(self.case, cand)
             and (cand.meta.finish_reason or "").lower() != "content_filter"
-            and self._by_key.get(cand.candidate_key) is not None
-            and self._by_key[cand.candidate_key].status in recoverable_statuses
         ]
         if not eligible:
             return

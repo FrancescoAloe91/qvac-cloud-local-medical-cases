@@ -158,6 +158,83 @@ def test_combined_noncontiguous_verbatim_sentences_are_accepted():
     )
 
 
+def test_partial_quote_span_is_not_accepted_as_full_evidence():
+    """Half a long quote must not count — removes the old ≥50% span salvage."""
+    answer = _evidence_normalized(
+        "Start IV fluids now and recheck electrolytes in two hours carefully."
+    )
+    full = (
+        "Start IV fluids now and recheck electrolytes in two hours carefully "
+        "then call nephrology if potassium remains above six"
+    )
+    assert not _evidence_quote_present(full, answer)
+
+
+def test_unverifiable_dangerous_addition_applies_full_penalty():
+    case = load_case("caseC")
+    item = {
+        "question_id": "diagnosis",
+        "claim_assessments": [
+            {
+                "reference_claim_id": "diagnosis-1",
+                "coverage": 1.0,
+                "candidate_quotes": ["probable migraine"],
+                "rationale": "ok",
+            }
+        ],
+        "additional_claims": [
+            {
+                "candidate_quote": "Give high-dose potassium IV bolus now",
+                "classification": "dangerous",
+                "severity": 0.4,
+                "rationale": "Harmful advice paraphrased by judge.",
+            }
+        ],
+        "quality": 1.0,
+        "rationale": "",
+        "errors": [],
+    }
+    # Quote not in answer → fail-closed full severity (discipline 0).
+    score = _score_from_judge_item(
+        case,
+        item,
+        answer_text="Probable migraine without other advice.",
+        gold_reference=_contract(),
+    )
+    assert score.precision == 0.0
+    assert score.quality == 1.0
+    assert score.score == 85.0  # 50 + 35 + 0
+    assert any(row.get("unverified") for row in score.added_content)
+
+
+def test_quality_cannot_exceed_verified_coverage():
+    case = load_case("caseC")
+    item = {
+        "question_id": "diagnosis",
+        "claim_assessments": [
+            {
+                "reference_claim_id": "diagnosis-1",
+                "coverage": 0.0,
+                "candidate_quotes": [],
+                "rationale": "No support.",
+            }
+        ],
+        "additional_claims": [],
+        "quality": 1.0,
+        "rationale": "Polished but empty.",
+        "errors": [],
+    }
+    score = _score_from_judge_item(
+        case,
+        item,
+        answer_text="A long eloquent essay with no reference claim.",
+        gold_reference=_contract(),
+    )
+    assert score.recall == 0.0
+    assert score.quality == 0.0
+    assert score.score == 15.0  # only discipline remains
+
+
 def test_graded_judge_item_preserves_partial_coverage_and_neutral_additions():
     case = load_case("caseC")
     item = {
@@ -188,8 +265,10 @@ def test_graded_judge_item_preserves_partial_coverage_and_neutral_additions():
         answer_text="Probable migraine. Consider tension headache.",
         gold_reference=_contract(),
     )
-    assert score.score == 68.0
+    # quality is host-clamped to coverage (min(0.8, 0.5) = 0.5)
+    assert score.score == 57.5
     assert score.recall == 0.5
+    assert score.quality == 0.5
     assert score.precision == 1.0
     assert score.claim_coverage == {"diagnosis-1": 0.5}
 
@@ -225,7 +304,7 @@ def test_local_repair_accepts_unambiguous_schema_and_numeric_variants():
     )
 
     assert score.recall == 0.5
-    assert score.quality == 0.8
+    assert score.quality == 0.5  # host clamp: quality ≤ coverage
     assert score.precision == 1.0
 
 
@@ -441,7 +520,7 @@ def test_partial_candidate_is_na_without_spending_on_judge():
     assert result.weighted_accuracy == 0.0  # internal compatibility only
 
 
-def test_verifier_rejudges_only_residual_failures(monkeypatch):
+def test_verifier_rejudges_entire_fixed_eligible_set(monkeypatch):
     case = load_case("caseC")
     answers = {q.id: f"{q.id} answer" for q in case.questions}
     candidates = [
@@ -483,10 +562,11 @@ def test_verifier_rejudges_only_residual_failures(monkeypatch):
     pipe._verify_whole_run()
     pipe.close(cancel_pending=True)
 
-    # Already-valid scores must not be pulled back into verifier theater.
-    assert seen == ["b"]
-    assert pipe._by_key["a"].judge_model == "judge"
-    assert pipe._by_key["b"].judge_model == "independent-verifier"
+    # Sole effective judge: every eligible candidate is re-judged by the verifier.
+    assert set(seen) == {"a", "b"}
+    assert {result.judge_model for result in pipe._by_key.values()} == {
+        "independent-verifier"
+    }
 
 
 def test_verifier_requires_systemic_residual_failures():

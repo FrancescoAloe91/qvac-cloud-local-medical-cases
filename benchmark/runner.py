@@ -251,7 +251,12 @@ def estimate_cost_breakdown(
     judge_ctx = openrouter.estimate_tokens_from_text(case.stem, gold, sys_u)
     per_q_answer = max(200, cout // n_q)
     judge_in = judge_ctx + 350 + n_q * (per_q_answer + 220)
-    judge_out = int(est.get("judge_output_tokens_per_question", 400)) * n_q
+    # Primary judge budget is 16k; section repair may add up to 5×4k. Use a
+    # mid/upper estimate so the UI spend dialog is not grossly optimistic.
+    judge_out = int(
+        est.get("judge_output_tokens_per_question", 1600)
+    ) * n_q
+    judge_out = max(judge_out, min(16384, 2500 * n_q))
 
     if local_only:
         roster = local_only_roster()

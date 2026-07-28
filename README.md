@@ -83,9 +83,10 @@ The primary judge is `deepseek/deepseek-r1`. For each blinded candidate:
    Markdown/whitespace/case/punctuation normalization. Clinically meaningful
    numeric punctuation (decimals, ranges like `10–20`, `±`, slash ratios) is
    preserved. Matching is token-sequence / word-boundary safe. Combined quotes
-   are accepted only when every substantial sentence is present. No fuzzy or
-   semantic matching. Unverifiable quote rows are dropped or zeroed locally
-   rather than forcing a paid retry.
+   are accepted only when every substantial sentence is present; partial spans
+   do not count. No fuzzy or semantic matching. Unverifiable coverage quotes
+   zero that claim locally; unverifiable dangerous/contradictory additions keep
+   a full discipline penalty (fail-closed). Quality is host-clamped to coverage.
 3. **Section repair (not a doomed full redo)** — if some sections remain
    invalid after salvage, the host requests **only those sections**. When the
    primary hit the length cap (common on long Claude/OpenAI answers) or more
@@ -109,10 +110,11 @@ Each section score is:
 50% graded reference coverage + 35% clinical quality + 15% evidence discipline
 ```
 
-The final score is the weighted mean of sections (Diagnosis 30%, Safety 25%,
-Plan 20%, Tests 15%, Urgency 10%). Helpful and neutral additions are
-unpenalized; unsupported, contradictory, and dangerous content has a
-proportional discipline effect. Exact ties remain ties.
+The host clamps quality so it cannot exceed verified coverage. The final score
+is the weighted mean of sections (Diagnosis 30%, Safety 25%, Plan 20%, Tests
+15%, Urgency 10%). Helpful and neutral additions are unpenalized; unsupported,
+contradictory, and dangerous content has a proportional discipline effect.
+Exact ties remain ties.
 
 Artifact JSON may still label the field `accuracy` for compatibility; that
 value is the Clinical Composite Score relative to the user reference. It is
