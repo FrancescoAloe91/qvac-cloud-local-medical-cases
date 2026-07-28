@@ -170,7 +170,8 @@ def test_partial_quote_span_is_not_accepted_as_full_evidence():
     assert not _evidence_quote_present(full, answer)
 
 
-def test_unverifiable_dangerous_addition_applies_full_penalty():
+def test_unverifiable_dangerous_addition_dropped_no_penalty():
+    """Invented harm quote → drop locally; no discipline penalty; audit marker."""
     case = load_case("caseC")
     item = {
         "question_id": "diagnosis",
@@ -194,20 +195,96 @@ def test_unverifiable_dangerous_addition_applies_full_penalty():
         "rationale": "",
         "errors": [],
     }
-    # Quote not in answer → fail-closed full severity (discipline 0).
     score = _score_from_judge_item(
         case,
         item,
         answer_text="Probable migraine without other advice.",
         gold_reference=_contract(),
     )
-    assert score.precision == 0.0
+    assert score.precision == 1.0
     assert score.quality == 1.0
-    assert score.score == 85.0  # 50 + 35 + 0
-    assert any(row.get("unverified") for row in score.added_content)
+    assert score.score == 100.0  # 50 + 35 + 15
+    assert score.added_content == []
+    assert any(
+        err.startswith("judge_unverified_harm_dropped:dangerous") for err in score.errors
+    )
 
 
-def test_quality_cannot_exceed_verified_coverage():
+def test_verified_dangerous_addition_applies_proportional_penalty():
+    case = load_case("caseC")
+    quote = "Give high-dose potassium IV bolus now"
+    item = {
+        "question_id": "diagnosis",
+        "claim_assessments": [
+            {
+                "reference_claim_id": "diagnosis-1",
+                "coverage": 1.0,
+                "candidate_quotes": ["probable migraine"],
+                "rationale": "ok",
+            }
+        ],
+        "additional_claims": [
+            {
+                "candidate_quote": quote,
+                "classification": "dangerous",
+                "severity": 0.4,
+                "rationale": "Present harmful advice.",
+            }
+        ],
+        "quality": 1.0,
+        "rationale": "",
+        "errors": [],
+    }
+    score = _score_from_judge_item(
+        case,
+        item,
+        answer_text=f"Probable migraine. {quote}.",
+        gold_reference=_contract(),
+    )
+    # discipline = 1 - 1.0*0.4 = 0.6 → 50 + 35 + 0.6*15 = 94.0
+    assert score.precision == 0.6
+    assert score.score == 94.0
+    assert len(score.added_content) == 1
+
+
+def test_verified_unsupported_addition_applies_proportional_penalty():
+    case = load_case("caseC")
+    quote = "Also check serum copper levels tonight"
+    item = {
+        "question_id": "diagnosis",
+        "claim_assessments": [
+            {
+                "reference_claim_id": "diagnosis-1",
+                "coverage": 1.0,
+                "candidate_quotes": ["probable migraine"],
+                "rationale": "ok",
+            }
+        ],
+        "additional_claims": [
+            {
+                "candidate_quote": quote,
+                "classification": "unsupported",
+                "severity": 0.8,
+                "rationale": "Speculative workup.",
+            }
+        ],
+        "quality": 1.0,
+        "rationale": "",
+        "errors": [],
+    }
+    score = _score_from_judge_item(
+        case,
+        item,
+        answer_text=f"Probable migraine. {quote}.",
+        gold_reference=_contract(),
+    )
+    # discipline = 1 - 0.25*0.8 = 0.8 → 50 + 35 + 0.8*15 = 97.0
+    assert score.precision == 0.8
+    assert score.score == 97.0
+
+
+def test_quality_independent_of_zero_coverage():
+    """v4: quality is not host-clamped to coverage."""
     case = load_case("caseC")
     item = {
         "question_id": "diagnosis",
@@ -231,8 +308,9 @@ def test_quality_cannot_exceed_verified_coverage():
         gold_reference=_contract(),
     )
     assert score.recall == 0.0
-    assert score.quality == 0.0
-    assert score.score == 15.0  # only discipline remains
+    assert score.quality == 1.0
+    assert score.precision == 1.0
+    assert score.score == 50.0  # 0*50 + 1*35 + 1*15
 
 
 def test_graded_judge_item_preserves_partial_coverage_and_neutral_additions():
@@ -265,10 +343,10 @@ def test_graded_judge_item_preserves_partial_coverage_and_neutral_additions():
         answer_text="Probable migraine. Consider tension headache.",
         gold_reference=_contract(),
     )
-    # quality is host-clamped to coverage (min(0.8, 0.5) = 0.5)
-    assert score.score == 57.5
+    # v4: 0.5*50 + 0.8*35 + 1*15 = 25 + 28 + 15 = 68
+    assert score.score == 68.0
     assert score.recall == 0.5
-    assert score.quality == 0.5
+    assert score.quality == 0.8
     assert score.precision == 1.0
     assert score.claim_coverage == {"diagnosis-1": 0.5}
 
@@ -304,8 +382,16 @@ def test_local_repair_accepts_unambiguous_schema_and_numeric_variants():
     )
 
     assert score.recall == 0.5
-    assert score.quality == 0.5  # host clamp: quality ≤ coverage
+    assert score.quality == 0.8  # independent of coverage (v4)
     assert score.precision == 1.0
+    assert score.score == 68.0
+
+
+def test_graded_clinical_formula_unit_values():
+    from benchmark.scoring import graded_clinical_score
+
+    assert graded_clinical_score(coverage=0.0, quality=1.0, discipline=1.0) == 50.0
+    assert graded_clinical_score(coverage=0.5, quality=0.8, discipline=1.0) == 68.0
 
 
 def test_corrective_retry_requests_only_invalid_sections(monkeypatch):

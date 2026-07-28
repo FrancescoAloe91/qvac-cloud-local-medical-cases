@@ -170,6 +170,23 @@ def _meta_error(
     )
 
 
+def _provider_prefs(
+    *,
+    allowed_providers: Optional[List[str]] = None,
+    require_parameters: bool = False,
+) -> Optional[Dict[str, Any]]:
+    """OpenRouter provider routing prefs for controlled reproducibility."""
+    if not allowed_providers and not require_parameters:
+        return None
+    prefs: Dict[str, Any] = {}
+    if allowed_providers:
+        prefs["order"] = list(allowed_providers)
+        prefs["allow_fallbacks"] = False
+    if require_parameters:
+        prefs["require_parameters"] = True
+    return prefs
+
+
 def _parse_chat_payload(
     data: Any,
     *,
@@ -177,6 +194,7 @@ def _parse_chat_payload(
     display_label: str,
     t0: float,
     on_token: TokenCallback,
+    allowed_providers: Optional[List[str]] = None,
 ) -> Tuple[str, ModelCallMeta]:
     """Safe post-HTTP normalization — never raise after a paid call."""
     try:
@@ -198,6 +216,10 @@ def _parse_chat_payload(
         usage = data.get("usage") if isinstance(data.get("usage"), dict) else {}
         prompt_tokens = _as_int(usage.get("prompt_tokens"), 0)
         completion_tokens = _as_int(usage.get("completion_tokens"), 0)
+        details = usage.get("completion_tokens_details")
+        reasoning_tokens = _as_int(usage.get("reasoning_tokens"), 0)
+        if not reasoning_tokens and isinstance(details, dict):
+            reasoning_tokens = _as_int(details.get("reasoning_tokens"), 0)
         cost = _as_float(usage.get("cost"), None)
         if cost is None:
             cost = estimate_cost_usd(model, prompt_tokens, completion_tokens)
@@ -206,20 +228,30 @@ def _parse_chat_payload(
             if latency > 0 and completion_tokens
             else None
         )
+        routed_provider = str(data.get("provider") or "")
+        allowed = [str(p).strip().lower() for p in (allowed_providers or []) if str(p).strip()]
+        deviation = bool(
+            allowed
+            and routed_provider
+            and routed_provider.strip().lower() not in allowed
+        )
         return content.strip(), ModelCallMeta(
             model=str(data.get("model") or model),
             provider="openrouter",
             requested_model=model,
             routed_model=str(data.get("model") or ""),
-            routed_provider=str(data.get("provider") or ""),
+            routed_provider=routed_provider,
             finish_reason=str(first.get("finish_reason") or ""),
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
+            reasoning_tokens=reasoning_tokens,
             cost_usd=round(float(cost), 6),
             latency_s=latency,
             ttft_s=None,
             tps=tps,
             display_label=display_label,
+            configuration_deviation=deviation,
+            requested_providers=list(allowed_providers or []),
         )
     except Exception as exc:
         return _meta_error(
@@ -241,6 +273,8 @@ def _chat_once(
     on_token: TokenCallback,
     display_label: str,
     api_key: Optional[str] = None,
+    allowed_providers: Optional[List[str]] = None,
+    require_parameters: bool = False,
 ) -> Tuple[str, ModelCallMeta]:
     key = (api_key or "").strip() or openrouter_api_key()
     payload: Dict[str, Any] = {
@@ -252,6 +286,12 @@ def _chat_once(
     }
     if response_format:
         payload["response_format"] = response_format
+    prefs = _provider_prefs(
+        allowed_providers=allowed_providers,
+        require_parameters=require_parameters,
+    )
+    if prefs:
+        payload["provider"] = prefs
 
     body = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(
@@ -275,6 +315,7 @@ def _chat_once(
         display_label=display_label,
         t0=t0,
         on_token=on_token,
+        allowed_providers=allowed_providers,
     )
 
 
@@ -290,6 +331,8 @@ def chat(
     display_label: str = "",
     max_attempts: int = 3,
     api_key: Optional[str] = None,
+    allowed_providers: Optional[List[str]] = None,
+    require_parameters: bool = False,
 ) -> Tuple[str, ModelCallMeta]:
     """Non-streaming chat (used by judge). Retries truncated / empty transport."""
     last: Tuple[str, ModelCallMeta] = ("", ModelCallMeta(model=model, provider="openrouter"))
@@ -305,6 +348,8 @@ def chat(
             on_token=on_token,
             display_label=display_label,
             api_key=api_key,
+            allowed_providers=allowed_providers,
+            require_parameters=require_parameters,
         )
         last = (text, meta)
         ok_text = bool((text or "").strip())
@@ -332,6 +377,8 @@ def chat_stream(
     on_token: TokenCallback = None,
     display_label: str = "",
     api_key: Optional[str] = None,
+    allowed_providers: Optional[List[str]] = None,
+    require_parameters: bool = False,
 ) -> Tuple[str, ModelCallMeta]:
     """Streaming chat — measures TTFT and TPS from first token."""
     key = (api_key or "").strip() or openrouter_api_key()
@@ -343,6 +390,12 @@ def chat_stream(
     }
     if temperature is not None:
         payload["temperature"] = temperature
+    prefs = _provider_prefs(
+        allowed_providers=allowed_providers,
+        require_parameters=require_parameters,
+    )
+    if prefs:
+        payload["provider"] = prefs
     body = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(
         OPENROUTER_URL, data=body, method="POST", headers=_headers(key)
@@ -352,6 +405,7 @@ def chat_stream(
     chunks: List[str] = []
     prompt_tokens = 0
     completion_tokens = 0
+    reasoning_tokens = 0
     cost: Optional[float] = None
     routed_model = ""
     routed_provider = ""
@@ -387,6 +441,15 @@ def chat_stream(
                     completion_tokens = _as_int(
                         usage.get("completion_tokens"), completion_tokens
                     )
+                    details = usage.get("completion_tokens_details")
+                    if isinstance(details, dict) and details.get("reasoning_tokens") is not None:
+                        reasoning_tokens = _as_int(
+                            details.get("reasoning_tokens"), reasoning_tokens
+                        )
+                    elif usage.get("reasoning_tokens") is not None:
+                        reasoning_tokens = _as_int(
+                            usage.get("reasoning_tokens"), reasoning_tokens
+                        )
                     if usage.get("cost") is not None:
                         cost = _as_float(usage.get("cost"), cost)
                 choices = data.get("choices") or []
@@ -426,6 +489,14 @@ def chat_stream(
                 else None
             )
         )
+        allowed = [
+            str(p).strip().lower() for p in (allowed_providers or []) if str(p).strip()
+        ]
+        deviation = bool(
+            allowed
+            and routed_provider
+            and routed_provider.strip().lower() not in allowed
+        )
         return text, ModelCallMeta(
             model=routed_model or model,
             provider="openrouter",
@@ -435,11 +506,14 @@ def chat_stream(
             finish_reason=finish_reason,
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
+            reasoning_tokens=reasoning_tokens,
             cost_usd=round(float(cost or 0), 6),
             latency_s=latency,
             ttft_s=ttft_s,
             tps=tps,
             display_label=display_label,
+            configuration_deviation=deviation,
+            requested_providers=list(allowed_providers or []),
         )
     except Exception as exc:
         return _meta_error(

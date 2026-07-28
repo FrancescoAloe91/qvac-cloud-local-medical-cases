@@ -21,12 +21,14 @@ from benchmark import openrouter
 from benchmark.cases_loader import case_display_name, load_case
 from benchmark.gold import (
     SCORING_VERSION,
+    SECTION_IDS,
     cohort_id as build_cohort_id,
     confirmed_gold as build_confirmed_gold,
     extract_with_chat,
     gold_json,
     load_confirmed_gold,
 )
+from benchmark.schema import GoldSection
 from benchmark.workspace import (
     assert_path_in_workspace,
     maybe_claim_legacy_root_artifacts,
@@ -73,6 +75,7 @@ from benchmark.runner import (
     is_retryable_local_error,
     iter_collect_live,
     prepare_run,
+    _validate_judge_separation,
 )
 from benchmark.schema import CandidateAnswer, Case, ModelCallMeta, RunArtifact, utc_now_iso
 from lib.benchmark_multi_ui import (
@@ -270,7 +273,17 @@ has_key = is_usable_openrouter_key(_session_key)
 
 # Local fallback workspace is explicitly scoped from this session's key. Cloud
 # account-backed persistence replaces this filesystem in configured deployments.
-WORKSPACE_DIR = scoped_artifacts_dir(_session_key)
+_account_uid = (
+    _account_session.user_id
+    if isinstance(_account_session, AccountSession)
+    else None
+)
+WORKSPACE_DIR = scoped_artifacts_dir(_session_key, account_user_id=_account_uid)
+_HOSTED_NO_PLAINTEXT = bool(
+    is_streamlit_cloud()
+    and account_store_configured()
+    and isinstance(_account_session, AccountSession)
+)
 _moved_legacy = maybe_claim_legacy_root_artifacts()
 if _moved_legacy and not st.session_state.get("_legacy_artifacts_toast"):
     st.session_state["_legacy_artifacts_toast"] = True
@@ -283,18 +296,33 @@ if _moved_legacy and not st.session_state.get("_legacy_artifacts_toast"):
     except Exception:
         pass
 # Refresh workspace path after claim (same dir, now populated)
-WORKSPACE_DIR = scoped_artifacts_dir(_session_key)
+WORKSPACE_DIR = scoped_artifacts_dir(_session_key, account_user_id=_account_uid)
 if (
     account_store_configured()
     and isinstance(_account_session, AccountSession)
     and not st.session_state.get("_account_artifacts_synced")
 ):
     try:
+        _synced = []
         for _cloud_row in account_list_artifacts(_account_session, limit=200):
-            write_artifact(_cloud_row["artifact"], WORKSPACE_DIR)
+            _synced.append(_cloud_row["artifact"])
+            if not _HOSTED_NO_PLAINTEXT:
+                write_artifact(_cloud_row["artifact"], WORKSPACE_DIR)
+        st.session_state["_account_artifacts_memory"] = _synced
         st.session_state["_account_artifacts_synced"] = True
     except Exception as _sync_exc:
         st.session_state["_account_sync_error"] = str(_sync_exc)
+
+
+def _persist_run_artifact(artifact, workspace: Path):
+    """Write plaintext locally; on hosted+account keep memory/encrypted cloud only."""
+    mem = list(st.session_state.get("_account_artifacts_memory") or [])
+    mem.append(artifact)
+    st.session_state["_account_artifacts_memory"] = mem[-200:]
+    if _HOSTED_NO_PLAINTEXT:
+        return None
+    workspace.mkdir(parents=True, exist_ok=True)
+    return write_artifact(artifact, workspace)
 
 # --- Startup dialogs: every browser refresh starts a new session → show again ---
 # Within one session: API key popup first, then QVAC status (good for screen recordings).
@@ -370,7 +398,7 @@ def _hard_abort_run(*, flash: bool = True) -> None:
                     _snapshot.get("benchmark_track") or "controlled"
                 ),
             )
-            write_artifact(_artifact, WORKSPACE_DIR)
+            _persist_run_artifact(_artifact, WORKSPACE_DIR)
             if account_store_configured() and isinstance(
                 st.session_state.get("account_session"), AccountSession
             ):
@@ -591,7 +619,7 @@ def _render_spend_confirm_card() -> None:
     pr = st.session_state.get("pending_run") or {}
     n = int(pr.get("n") or 1)
     est = float(pr.get("est") or 0)
-    est_hi = est * 2
+    est_hi = float(pr.get("est_hi") or 0) or est
     mode = pr.get("mode") or "full"
     if mode == "local_only":
         spend_body = (
@@ -1282,8 +1310,9 @@ st.markdown(
     unsafe_allow_html=True,
 )
 st.caption(
-    "**Workflow:** anonymized case → free-form reference → automatic frozen gold · "
-    "cloud cards show exact OpenRouter API models, not consumer free-tier equivalents."
+    "**Workflow:** anonymized case → Prepare reference → review/edit → Confirm · "
+    "candidates run only after confirm · cloud cards show exact OpenRouter API models, "
+    "not consumer free-tier equivalents. Scores are reference-relative."
 )
 
 # Client-side guide overlays in main DOM (sidebar labels toggle via for=… — no run interrupt)
@@ -1441,7 +1470,8 @@ with col_gold:
         height=180,
         placeholder=(
             "Write the confirmed/reference diagnosis, tests, urgency, safety traps "
-            "and initial plan in any order. The extractor may reorganize but cannot add facts."
+            "and initial plan in any order. Prepare extracts source-linked claims; "
+            "Confirm freezes them before any candidate runs."
         ),
         key="demo_gold_ref",
         label_visibility="collapsed",
@@ -1453,15 +1483,177 @@ st.session_state["_persist_case_stem"] = case_stem or ""
 st.session_state["_persist_gold_ref"] = gold_reference or ""
 raw_gold_fingerprint = str(hash((gold_reference or "").strip()))
 if st.session_state.get("_gold_source_fingerprint") != raw_gold_fingerprint:
-    st.session_state.pop("_confirmed_gold_json", None)
-    st.session_state.pop("_gold_sections", None)
-st.caption(
-    "No extra setup: the reference is frozen and organized automatically before "
-    "model collection starts."
-)
+    # Invalidating raw reference clears prepared + confirmed.
+    for _gk in (
+        "_confirmed_gold_json",
+        "_gold_sections",
+        "_prepared_gold_sections",
+        "_prepared_extraction_meta",
+        "_prepared_extraction_cost",
+        "_gold_confirmed_at",
+    ):
+        st.session_state.pop(_gk, None)
+    st.session_state["_gold_source_fingerprint"] = raw_gold_fingerprint
+
+gold_reference = (gold_reference or "").strip()
+_prep_col, _conf_col = st.columns(2)
+with _prep_col:
+    prepare_clicked = st.button(
+        "Prepare reference",
+        use_container_width=True,
+        disabled=len(gold_reference) < 40
+        or bool(st.session_state.get("benchmark_running")),
+        help="Runs the pinned extractor once and caches editable sections.",
+    )
+with _conf_col:
+    confirm_clicked = st.button(
+        "Confirm reference",
+        type="primary",
+        use_container_width=True,
+        disabled=not st.session_state.get("_prepared_gold_sections")
+        or bool(st.session_state.get("benchmark_running")),
+        help="Freezes confirmed_at + gold JSON. Candidates unlock after this.",
+    )
+
+if prepare_clicked:
+    extractor_model = os.environ.get(
+        "BENCHMARK_GOLD_EXTRACTOR_MODEL", "openai/gpt-4o-mini"
+    )
+    if not is_usable_openrouter_key(st.session_state.get("or_key_session")):
+        st.error(
+            "An OpenRouter key is required to prepare the reference."
+        )
+    else:
+        try:
+            with st.spinner("Extracting source-linked claims (once)…"):
+                sections, extract_meta = extract_with_chat(
+                    gold_reference,
+                    model=extractor_model,
+                    chat=openrouter.chat,
+                    api_key=st.session_state.get("or_key_session"),
+                )
+            st.session_state["_prepared_gold_sections"] = {
+                sid: sections[sid].model_dump() for sid in SECTION_IDS
+            }
+            st.session_state["_prepared_extraction_meta"] = {
+                "model": extractor_model,
+                "cost_usd": float(getattr(extract_meta, "cost_usd", 0.0) or 0.0),
+                "prompt_tokens": int(getattr(extract_meta, "prompt_tokens", 0) or 0),
+                "completion_tokens": int(
+                    getattr(extract_meta, "completion_tokens", 0) or 0
+                ),
+            }
+            st.session_state["_prepared_extraction_cost"] = float(
+                getattr(extract_meta, "cost_usd", 0.0) or 0.0
+            )
+            st.session_state.pop("_confirmed_gold_json", None)
+            st.session_state.pop("_gold_confirmed_at", None)
+            st.success("Reference prepared — review/edit claims, then Confirm.")
+            st.rerun()
+        except Exception as exc:
+            st.error(f"Prepare failed: {exc}")
+
+# Editable prepared sections
+_prepared = st.session_state.get("_prepared_gold_sections")
+if isinstance(_prepared, dict) and _prepared:
+    st.markdown(
+        '<div class="sec-label">Prepared claims (edit · source_quote must stay a substring of the raw reference)</div>',
+        unsafe_allow_html=True,
+    )
+    raw_norm_check = (gold_reference or "").casefold()
+    edited_sections: dict = {}
+    quote_ok = True
+    for section_id in SECTION_IDS:
+        sec = _prepared.get(section_id) or {}
+        with st.expander(f"{section_id}", expanded=section_id == "diagnosis"):
+            summary = st.text_input(
+                f"{section_id} summary",
+                value=str(sec.get("summary") or ""),
+                key=f"prep_sum_{section_id}",
+            )
+            claims_in = list(sec.get("claims") or [])
+            claims_out = []
+            for ci, claim in enumerate(claims_in):
+                quote = st.text_area(
+                    f"{section_id} claim {ci + 1} source_quote",
+                    value=str(claim.get("source_quote") or ""),
+                    key=f"prep_q_{section_id}_{ci}",
+                    height=68,
+                )
+                if quote.strip() and quote.strip().casefold() not in raw_norm_check:
+                    st.error(
+                        f"{section_id}-{ci + 1}: source_quote must be a contiguous "
+                        "substring of the raw reference."
+                    )
+                    quote_ok = False
+                claims_out.append(
+                    {
+                        "id": str(claim.get("id") or f"{section_id}-{ci + 1}"),
+                        "text": quote.strip(),
+                        "source_quote": quote.strip(),
+                        "critical": False,
+                    }
+                )
+            edited_sections[section_id] = {
+                "summary": summary.strip(),
+                "claims": [c for c in claims_out if c["source_quote"]],
+            }
+    st.session_state["_prepared_gold_sections"] = edited_sections
+
+    if confirm_clicked:
+        if not quote_ok:
+            st.error("Fix source_quote errors before confirming.")
+        else:
+            try:
+                extractor_model = (
+                    (st.session_state.get("_prepared_extraction_meta") or {}).get(
+                        "model"
+                    )
+                    or os.environ.get(
+                        "BENCHMARK_GOLD_EXTRACTOR_MODEL", "openai/gpt-4o-mini"
+                    )
+                )
+                extract_cost = float(
+                    st.session_state.get("_prepared_extraction_cost") or 0.0
+                )
+                parsed = {
+                    sid: GoldSection.model_validate(edited_sections[sid])
+                    for sid in SECTION_IDS
+                }
+                contract = build_confirmed_gold(
+                    raw_text=gold_reference,
+                    sections=parsed,
+                    extraction_model=str(extractor_model),
+                    extraction_cost_usd=extract_cost,
+                )
+                effective = gold_json(contract)
+                st.session_state["_confirmed_gold_json"] = effective
+                st.session_state["_gold_confirmed_at"] = contract.confirmed_at
+                st.session_state["_gold_sections"] = edited_sections
+                st.success(
+                    f"Reference confirmed at {contract.confirmed_at} · "
+                    f"extractor cost ${extract_cost:.4f}"
+                )
+                st.rerun()
+            except Exception as exc:
+                st.error(f"Confirm failed: {exc}")
+
+if st.session_state.get("_confirmed_gold_json"):
+    st.caption(
+        "Confirmed reference ready"
+        + (
+            f" · {st.session_state.get('_gold_confirmed_at')}"
+            if st.session_state.get("_gold_confirmed_at")
+            else ""
+        )
+        + " · candidates unlocked."
+    )
+else:
+    st.caption(
+        "Prepare + Confirm the reference before Single / Multi / Only-local runs."
+    )
 
 live_case = preset.model_copy(update={"stem": (case_stem or "").strip()})
-gold_reference = (gold_reference or "").strip()
 effective_gold = st.session_state.get("_confirmed_gold_json", "")
 
 # --- Models roster: Band A cloud + Band B local peers + MedPsy ---
@@ -1534,6 +1726,12 @@ roster = merge_roster(
     triple_qvac=triple_qvac if include_cloud else True,
     include_qvac=include_qvac,
 )
+# Default local roster: only slots with a ready GGUF (missing peers disabled).
+roster = [
+    c
+    for c in roster
+    if c.get("provider") != "qvac" or c.get("gguf_ready", True)
+]
 n_models = len(roster)
 
 with st.expander(
@@ -1661,7 +1859,11 @@ selected_bd = bd if include_cloud else bd_local_only
 selected_bd_multi = bd_multi if include_cloud else bd_local_only_multi
 selected_mode = "full" if include_cloud else "local_only"
 selected_scope = f"{n_models} models" if include_cloud else f"{n_models} on-device"
-selected_unavailable = not has_key or (not include_cloud and not qvac_run_ok)
+selected_unavailable = (
+    not has_key
+    or (not include_cloud and not qvac_run_ok)
+    or not bool(effective_gold)
+)
 _run_r1 = st.columns(2, gap="small")
 with _run_r1[0]:
     single_clicked = st.button(
@@ -1723,6 +1925,7 @@ if single_clicked:
     st.session_state["pending_run"] = {
         "n": 1,
         "est": selected_bd["total_usd"],
+        "est_hi": selected_bd.get("total_usd_upper") or selected_bd["total_usd"],
         "mode": selected_mode,
     }
     st.rerun()
@@ -1732,6 +1935,8 @@ if multi_clicked:
     st.session_state["pending_run"] = {
         "n": int(n_multi),
         "est": selected_bd_multi["total_usd_for_n"],
+        "est_hi": selected_bd_multi.get("total_usd_upper_for_n")
+        or selected_bd_multi["total_usd_for_n"],
         "mode": selected_mode,
     }
     st.rerun()
@@ -2472,35 +2677,19 @@ if st.session_state.get("confirmed_run"):
         )
         st.stop()
     if not effective_gold:
-        extractor_model = os.environ.get(
-            "BENCHMARK_GOLD_EXTRACTOR_MODEL", "google/gemini-3.5-flash"
+        st.error(
+            "Prepare and Confirm the reference before starting candidates. "
+            "CLI still requires a pre-confirmed gold JSON."
         )
-        if not is_usable_openrouter_key(st.session_state.get("or_key_session")):
-            st.error(
-                "An OpenRouter key is required to organize the reference before scoring."
-            )
-            st.stop()
-        try:
-            with st.spinner("Freezing the reference before model collection…"):
-                sections, _extract_meta = extract_with_chat(
-                    gold_reference,
-                    model=extractor_model,
-                    chat=openrouter.chat,
-                    api_key=st.session_state.get("or_key_session"),
-                )
-                contract = build_confirmed_gold(
-                    raw_text=gold_reference,
-                    sections=sections,
-                    extraction_model=extractor_model,
-                )
-            effective_gold = gold_json(contract)
-            st.session_state["_confirmed_gold_json"] = effective_gold
-            st.session_state["_gold_source_fingerprint"] = raw_gold_fingerprint
-        except Exception as exc:
-            st.error(
-                f"Automatic reference setup failed: {exc}. No model was called; retry once."
-            )
-            st.stop()
+        st.stop()
+    try:
+        _confirmed = load_confirmed_gold(effective_gold)
+        st.session_state["_extract_cost_usd"] = float(
+            getattr(_confirmed, "extraction_cost_usd", 0.0) or 0.0
+        )
+    except Exception as exc:
+        st.error(f"Confirmed gold JSON is invalid: {exc}")
+        st.stop()
     _active_run_token = start_run(st.session_state["_run_scope"])
     st.session_state["_active_run_id"] = _active_run_token.run_id
     st.session_state["benchmark_running"] = True
@@ -2896,6 +3085,14 @@ if st.session_state.get("confirmed_run"):
                         )
 
                 if _pipe_on:
+                    try:
+                        _validate_judge_separation(
+                            cfg if isinstance(cfg, dict) else {},
+                            local_slots,
+                        )
+                    except ValueError as exc:
+                        st.error(f"Judge separation check failed: {exc}")
+                        st.stop()
                     pipe = PipelinedJudge(
                         live_case,
                         judge_model,
@@ -2913,6 +3110,12 @@ if st.session_state.get("confirmed_run"):
                         ),
                         run_scope=st.session_state["_run_scope"],
                         benchmark_track=benchmark_track,
+                        judge_allowed_providers=list(
+                            ((cfg.get("judge") or {}) if isinstance(cfg, dict) else {}).get(
+                                "allowed_providers"
+                            )
+                            or []
+                        ),
                     )
                     judge_status_ctx = st.status(
                         "DeepSeek R1 · pipelined with collect · "
@@ -3536,7 +3739,7 @@ if st.session_state.get("confirmed_run"):
                     )
 
                     WORKSPACE_DIR.mkdir(parents=True, exist_ok=True)
-                    art_path = write_artifact(artifact, WORKSPACE_DIR)
+                    art_path = _persist_run_artifact(artifact, WORKSPACE_DIR)
                     _account = st.session_state.get("account_session")
                     if account_store_configured() and isinstance(_account, AccountSession):
                         try:
@@ -3544,7 +3747,7 @@ if st.session_state.get("confirmed_run"):
                         except Exception as exc:
                             st.warning(f"Encrypted cloud persistence failed: {exc}")
                     all_artifacts.append(artifact)
-                    artifact_paths.append(str(art_path))
+                    artifact_paths.append(str(art_path) if art_path else artifact.run_id)
 
                     if n_local > 1:
                         snap = snapshot_from_artifact(artifact)
@@ -4072,6 +4275,14 @@ if st.session_state.get("confirmed_run"):
                 )
 
             # Start DeepSeek as each model finishes (esp. while QVAC GGUFs still load).
+            try:
+                _validate_judge_separation(
+                    prep["cfg"] if isinstance(prep.get("cfg"), dict) else {},
+                    candidates_cfg,
+                )
+            except ValueError as exc:
+                st.error(f"Judge separation check failed: {exc}")
+                st.stop()
             full_pipe = PipelinedJudge(
                 case_obj,
                 judge_model,
@@ -4086,6 +4297,9 @@ if st.session_state.get("confirmed_run"):
                 ),
                 run_scope=st.session_state["_run_scope"],
                 benchmark_track=benchmark_track,
+                judge_allowed_providers=list(
+                    (prep["cfg"].get("judge") or {}).get("allowed_providers") or []
+                ),
             )
             full_started: set[str] = set()
             full_progress_slot = None
@@ -4533,7 +4747,7 @@ if st.session_state.get("confirmed_run"):
                 },
             )
             WORKSPACE_DIR.mkdir(parents=True, exist_ok=True)
-            art_path = write_artifact(artifact, WORKSPACE_DIR)
+            art_path = _persist_run_artifact(artifact, WORKSPACE_DIR)
             _account = st.session_state.get("account_session")
             if account_store_configured() and isinstance(_account, AccountSession):
                 try:
@@ -4541,7 +4755,7 @@ if st.session_state.get("confirmed_run"):
                 except Exception as exc:
                     st.warning(f"Encrypted cloud persistence failed: {exc}")
             all_artifacts.append(artifact)
-            artifact_paths.append(str(art_path))
+            artifact_paths.append(str(art_path) if art_path else artifact.run_id)
             last_ranking = ranking
             last_judgments = judgments
             last_collected = collected

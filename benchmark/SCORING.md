@@ -22,10 +22,15 @@ Host evidence contract (not the same as technical N/A):
   (section stays scorable; no paid retry for presentation alone).
 - Unverifiable **helpful / neutral / unsupported** additions → dropped (no
   inventing text).
-- Unverifiable **contradictory / dangerous** additions → **fail-closed**: keep a
-  full-severity discipline penalty so paraphrased harm cannot erase the penalty.
-- Host clamps **quality ≤ verified coverage** so a polished but unanchored answer
-  cannot harvest the full 35% quality component.
+- Unverifiable **contradictory / dangerous** additions → **dropped** with an
+  audit marker (`judge_unverified_harm_dropped:*`); no invented quote and no
+  automatic discipline penalty. Verified harmful quotes still apply proportional
+  discipline.
+- Clinical **quality is independent of coverage** (`graded-clinical-v4`). The
+  judge remains responsible for low quality on clinically bad answers; the host
+  does not clamp quality to coverage.
+- Candidate parsing never photocopies an unstructured full response into all
+  five sections. Missing sections stay missing / N/A.
 - Technical N/A remains reserved for empty/partial candidates, transport,
   unusable schema after salvage/repair, timeout, and cancellation.
 
@@ -61,9 +66,9 @@ The final Clinical Composite Score is the predeclared weighted mean:
 - Urgency: 10%
 
 Coverage remains the largest component. Clinical quality rewards coherence,
-prioritization, usefulness, and appropriate caution, but the host never lets
-quality exceed verified coverage. Discipline discourages speculation and harm
-without penalizing reasonable additions.
+prioritization, usefulness, and appropriate caution independently of coverage
+(v4). Discipline discourages speculation and harm without penalizing reasonable
+additions, and only when the cited candidate quote is present.
 
 Artifact fields may still be named `accuracy` for schema compatibility. That
 number is the Clinical Composite Score relative to one user reference. It is
@@ -181,7 +186,11 @@ retained observations.
 Saved artifacts can be rescored without API calls:
 
 - Recompute section Clinical Composite Scores from stored claim assessments with
-  the current host formula (`graded-clinical-v3`).
+  the current host formula (`graded-clinical-v4`) when the artifact already
+  carries independent (unclamped) quality.
+- Older `graded-clinical-v3` artifacts keep their **stored ranking** when the
+  original unclamped quality cannot be recovered; offline metadata records the
+  formula used and never silently stamps v3 runs as v4.
 - Re-validate stored judge JSON with current local salvage; N/A rows that were
   only presentation/schema failures may recover offline.
 - History “rebuild last N” builds exploratory or official means from the newest
@@ -190,4 +199,12 @@ Saved artifacts can be rescored without API calls:
   so old vs new comparisons remain possible.
 
 `scripts/_offline_rescore_all.py` batch-applies the same offline path over an
-owner artifact directory. It does not call OpenRouter.
+owner artifact directory. New rescores label `graded-clinical-v4`; it does not
+rewrite old artifacts as v4 silently. It does not call OpenRouter.
+
+## Calibration
+
+The LLM judge is **calibrated** only when human-reviewed fixtures under
+`fixtures/calibration/` have been checked and the offline comparison helper
+passes. The whole-run verifier is an independent re-judge for systemic primary
+failure — it is **not** calibration.

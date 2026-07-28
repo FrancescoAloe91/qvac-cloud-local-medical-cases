@@ -572,6 +572,7 @@ def _score_from_judge_item(
         if not isinstance(additions_raw, list):
             raise ValueError("additional_claims must be a list")
         additions: List[Dict[str, Any]] = []
+        unverified_harm_dropped: List[Dict[str, Any]] = []
         allowed_classes = {
             "helpful",
             "neutral",
@@ -588,27 +589,19 @@ def _score_from_judge_item(
             if classification not in allowed_classes:
                 continue
             quote_ok = bool(quote) and _evidence_quote_present(quote, answer_norm)
-            # Helpful/neutral/unsupported without a presentable quote are dropped
-            # (no inventing text). Harmful classes fail closed: keep a full-severity
-            # penalty so paraphrased danger cannot erase discipline.
+            # Every penalized addition needs a quote present in the candidate
+            # answer. Unverifiable labels (including dangerous/contradictory) are
+            # dropped with an audit marker — never invent evidence or presume guilt.
             if not quote_ok:
-                if classification not in harm_classes:
-                    continue
-                severity = 1.0
-                additions.append(
-                    {
-                        "candidate_quote": quote or "[unverified harmful addition]",
-                        "classification": classification,
-                        "severity": severity,
-                        "rationale": (
-                            "Host fail-closed: judge labeled "
-                            f"{classification} but quote was not presentable; "
-                            "applied full severity penalty. "
-                            + str(row.get("rationale") or "")
-                        ).strip(),
-                        "unverified": True,
-                    }
-                )
+                if classification in harm_classes:
+                    unverified_harm_dropped.append(
+                        {
+                            "classification": classification,
+                            "candidate_quote": quote,
+                            "rationale": str(row.get("rationale") or ""),
+                            "audit": "judge_unverified_harm_dropped",
+                        }
+                    )
                 continue
             severity = _as_unit_float(
                 row.get("severity"),
@@ -628,9 +621,8 @@ def _score_from_judge_item(
         coverage = sum(coverage_by_id[claim.id] for claim in reference_claims) / max(
             len(reference_claims), 1
         )
-        # Host clamp: clinical quality cannot exceed verified coverage. A polished
-        # but unanchored answer must not harvest the full 35% quality component.
-        quality = min(quality, coverage)
+        # Quality is independent of coverage (graded-clinical-v4). The judge
+        # remains responsible for low quality on clinically bad answers.
         discipline = evidence_discipline_score(
             additions,
             total_reference=len(reference_claims),
@@ -652,6 +644,11 @@ def _score_from_judge_item(
         ]
         err_raw = item.get("errors")
         raw_errors = [str(value) for value in err_raw] if isinstance(err_raw, list) else []
+        for dropped in unverified_harm_dropped:
+            raw_errors.append(
+                "judge_unverified_harm_dropped:"
+                f"{dropped.get('classification') or 'unknown'}"
+            )
         rationale = str(item.get("rationale") or "")
         matched = [
             claim_id for claim_id, value in coverage_by_id.items() if value >= 0.75
@@ -1092,6 +1089,8 @@ def judge_candidate(
     verifier_model: str = "",
     allow_verifier: bool = True,
     progress_callback: Optional[Callable[[str, int], None]] = None,
+    allowed_providers: Optional[List[str]] = None,
+    require_parameters: bool = False,
 ) -> JudgeResult:
     load_confirmed_gold(gold_reference)  # validate before any paid request
     messages = [
@@ -1120,6 +1119,8 @@ def judge_candidate(
         max_attempts=3,
         timeout=300.0,
         api_key=api_key,
+        allowed_providers=allowed_providers,
+        require_parameters=require_parameters,
     )
     accumulated_meta = _append_paid_attempt(meta, role="primary", prior=None)
     meta = accumulated_meta
@@ -1188,6 +1189,8 @@ def judge_candidate(
                 max_attempts=2,
                 timeout=180.0,
                 api_key=api_key,
+                allowed_providers=allowed_providers,
+                require_parameters=require_parameters,
             )
             accumulated_meta = _append_paid_attempt(
                 meta_repair, role="corrective_retry", prior=accumulated_meta
@@ -1276,6 +1279,7 @@ class PipelinedJudge:
         max_wall_s: float = 900.0,
         benchmark_track: str = "controlled",
         max_retries: Optional[int] = None,
+        judge_allowed_providers: Optional[List[str]] = None,
     ) -> None:
         self.case = case
         self.judge_model = judge_model
@@ -1287,6 +1291,7 @@ class PipelinedJudge:
         self.verifier_model = verifier_model
         self.run_scope = run_scope or f"pipe-{id(self)}"
         self.benchmark_track = benchmark_track
+        self.judge_allowed_providers = list(judge_allowed_providers or [])
         self.max_wall_s = max(30.0, float(max_wall_s))
         # Wall-clock starts at the first submit(), not at pipeline construction.
         self._pipeline_started: Optional[float] = None
@@ -1446,6 +1451,12 @@ class PipelinedJudge:
             gold_reference=self.gold_reference,
             api_key=self.api_key,
             verifier_model="",
+            allowed_providers=(
+                self.judge_allowed_providers
+                if self.benchmark_track == "controlled"
+                else None
+            ),
+            require_parameters=self.benchmark_track == "controlled",
             progress_callback=lambda stage, percent: self._worker_progress.put(
                 {
                     "key": cand.candidate_key,
@@ -1607,13 +1618,37 @@ class PipelinedJudge:
             result.primary_judge_model = self.judge_model
             result.judge_model = self.verifier_model
             if result.judge_meta and isinstance(result.judge_meta, ModelCallMeta):
-                # Tag verifier attempts for append-only cost accounting.
-                attempts = list(result.judge_meta.paid_attempts or [])
-                for attempt in attempts:
+                # Merge prior primary/repair paid_attempts with verifier attempts
+                # (same append-only pattern as corrective retry).
+                prior = self._by_key.get(cand.candidate_key)
+                prior_meta = (
+                    prior.judge_meta
+                    if prior is not None and isinstance(prior.judge_meta, ModelCallMeta)
+                    else None
+                )
+                verifier_attempts = list(result.judge_meta.paid_attempts or [])
+                for attempt in verifier_attempts:
                     if attempt.get("role") == "primary":
                         attempt["role"] = "verifier"
+                prior_attempts = list((prior_meta.paid_attempts if prior_meta else None) or [])
+                merged_attempts = prior_attempts + verifier_attempts
+                prior_cost = float(prior_meta.cost_usd or 0.0) if prior_meta else 0.0
                 result.judge_meta = result.judge_meta.model_copy(
-                    update={"paid_attempts": attempts}
+                    update={
+                        "cost_usd": round(
+                            prior_cost + float(result.judge_meta.cost_usd or 0.0),
+                            8,
+                        ),
+                        "prompt_tokens": int(
+                            (prior_meta.prompt_tokens if prior_meta else 0) or 0
+                        )
+                        + int(result.judge_meta.prompt_tokens or 0),
+                        "completion_tokens": int(
+                            (prior_meta.completion_tokens if prior_meta else 0) or 0
+                        )
+                        + int(result.judge_meta.completion_tokens or 0),
+                        "paid_attempts": merged_attempts,
+                    }
                 )
             result.failure_reason = (
                 f"Whole-run verifier activated after primary judge failure; "
@@ -1915,6 +1950,12 @@ class PipelinedJudge:
                 gold_reference=self.gold_reference,
                 api_key=self.api_key,
                 verifier_model="",
+                allowed_providers=(
+                    self.judge_allowed_providers
+                    if self.benchmark_track == "controlled"
+                    else None
+                ),
+                require_parameters=self.benchmark_track == "controlled",
                 progress_callback=lambda stage, percent: self._worker_progress.put(
                     {
                         "key": cand.candidate_key,

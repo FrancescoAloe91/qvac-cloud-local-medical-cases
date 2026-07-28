@@ -94,12 +94,17 @@ def main() -> None:
             clone.judgments = list(scored["effective_judgments"])
         repro = dict(clone.reproducibility or {})
         repro["offline_rescore"] = {
-            "formula": "graded-clinical-v3",
+            "formula": scored.get("formula") or "graded-clinical-v4",
+            "preserved_stored_ranking": bool(scored.get("preserved_stored_ranking")),
             "recovered_keys": list(scored.get("recovered_keys") or []),
             "unrecovered_na": list(scored.get("unrecovered_na") or []),
             "stored_ranking": old,
         }
         clone.reproducibility = repro
+        if scored.get("scoring_version_stamp") and not scored.get(
+            "preserved_stored_ranking"
+        ):
+            clone.scoring_version = str(scored["scoring_version_stamp"])
         if scored.get("recovered_keys"):
             note = (clone.notes or "").strip()
             tag = "offline-recovered: " + ", ".join(scored["recovered_keys"])
@@ -382,7 +387,8 @@ def main() -> None:
 
     out = {
         "formula_new": (
-            "graded-clinical-v3 (50% coverage + 35% quality + 15% discipline)"
+            "graded-clinical-v4 (50% coverage + 35% quality + 15% discipline); "
+            "v3 artifacts keep stored ranking when unclamped quality is unavailable"
         ),
         "formula_change_commits": [
             "0214d4c Replace demo scoring with graded clinical benchmark",

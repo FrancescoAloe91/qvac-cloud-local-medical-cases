@@ -246,6 +246,49 @@ def test_prose_dash_is_not_mistaken_for_an_answer_heading():
     ]
 
 
+def test_long_diagnosis_only_prose_does_not_fill_other_sections():
+    """No unstructured photocopy: one attributed section must not invent the rest."""
+    prose = (
+        "A1: Acute kidney injury with critical hyperkalemia secondary to ACE "
+        "inhibitor use in the setting of volume depletion. The presentation is "
+        "consistent with ischemic ATN versus acute interstitial nephritis; "
+        "however the ECG changes and potassium above 6.5 dominate triage. "
+        "This remains a single diagnosis block without separate markers for "
+        "tests, urgency, safety, or plan despite discussing related ideas."
+    )
+    parsed = _parse(prose)
+    assert "diagnosis" in parsed
+    assert set(parsed) == {"diagnosis"}
+    assert missing_section_ids(load_case("caseC"), parsed) == [
+        "tests",
+        "urgency",
+        "safety",
+        "plan",
+    ]
+
+
+def test_unstructured_wall_of_text_does_not_become_five_sections():
+    wall = (
+        "The patient most likely has acute coronary syndrome. Order troponin "
+        "and ECG. This is urgent. Avoid NSAIDs. Give aspirin and heparin. "
+        "Additional discussion of differentials and disposition without any "
+        "section markers or numbered answer headings at all."
+    )
+    parsed = _parse(wall)
+    assert parsed == {}
+    assert missing_section_ids(load_case("caseC"), parsed) == list(SECTIONS)
+
+
+def test_missing_after_parse_triggers_missing_section_ids():
+    parsed = _parse("A1: Migraine.\nA3: Moderate.\n")
+    assert set(parsed) == {"diagnosis", "urgency"}
+    assert missing_section_ids(load_case("caseC"), parsed) == [
+        "tests",
+        "safety",
+        "plan",
+    ]
+
+
 def test_unterminated_reasoning_block_is_kept_as_the_only_output():
     raw = "<think>\nThe likely diagnosis is acute kidney injury with hyperkalemia."
     assert "acute kidney injury" in strip_reasoning_blocks(raw)

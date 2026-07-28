@@ -11,7 +11,7 @@ from benchmark.schema import Case, QuestionScore
 # Hard ceilings: a true 100% is not used in this benchmark.
 ITEM_SCORE_CAP = 96.5
 WEIGHTED_CAP = 100.0
-SCORING_VERSION = "graded-clinical-v3"
+SCORING_VERSION = "graded-clinical-v4"
 
 # Rubric mode (no gold): checklist still exists, but quality dominates.
 W_MUST = 0.30

@@ -11,6 +11,7 @@ from benchmark.runner import estimate_cost_breakdown
 def test_fallback_prices_include_verifier_and_extractor_models():
     assert "qwen/qwen3.5-397b-a17b" in openrouter._FALLBACK_PRICES
     assert "google/gemini-3.5-flash" in openrouter._FALLBACK_PRICES
+    assert "openai/gpt-4o-mini" in openrouter._FALLBACK_PRICES
     assert "deepseek/deepseek-r1" in openrouter._FALLBACK_PRICES
     pin, pout = openrouter.model_prices_per_mtok("qwen/qwen3.5-397b-a17b")
     assert pin > 0 and pout > 0
@@ -41,6 +42,7 @@ def test_estimate_cost_breakdown_includes_extractor_repair_verifier():
     )
 
     assert "extractor" in bd
+    assert bd["extractor"]["model"] == "openai/gpt-4o-mini"
     assert "section_repair" in bd
     assert "verifier" in bd
     assert bd["extractor"]["estimated_usd"] > 0
@@ -80,3 +82,68 @@ def test_estimate_multi_run_extractor_once():
     expected = extract + (float(one["total_usd"]) - extract) * 5
     assert abs(float(five["total_usd_for_n"]) - expected) < 1e-4
     assert float(five["total_usd_upper_for_n"]) > float(five["total_usd_for_n"])
+
+
+def test_confirmed_gold_extraction_cost_persists():
+    from benchmark.gold import confirmed_gold, gold_json, load_confirmed_gold
+    from benchmark.schema import GoldClaim, GoldSection
+
+    sections = {
+        sid: GoldSection(
+            summary=f"{sid} ref",
+            claims=[
+                GoldClaim(
+                    id=f"{sid}-1",
+                    text=f"{sid} ref",
+                    source_quote=f"{sid} ref",
+                )
+            ],
+        )
+        for sid in (
+            "diagnosis",
+            "tests",
+            "urgency",
+            "safety",
+            "plan",
+        )
+    }
+    raw = " ".join(s.summary for s in sections.values())
+    gold = confirmed_gold(
+        raw_text=raw,
+        sections=sections,
+        extraction_model="openai/gpt-4o-mini",
+        extraction_cost_usd=0.0123,
+    )
+    loaded = load_confirmed_gold(gold_json(gold))
+    assert loaded.extraction_cost_usd == 0.0123
+
+
+def test_verifier_cost_merge_keeps_prior_attempts():
+    """Whole-run verifier must append paid_attempts, not overwrite primary spend."""
+    from benchmark.schema import ModelCallMeta
+
+    prior = ModelCallMeta(
+        model="deepseek/deepseek-r1",
+        provider="openrouter",
+        cost_usd=0.05,
+        prompt_tokens=100,
+        completion_tokens=200,
+        paid_attempts=[{"role": "primary", "cost_usd": 0.05}],
+    )
+    verifier = ModelCallMeta(
+        model="qwen/qwen3.5-397b-a17b",
+        provider="openrouter",
+        cost_usd=0.02,
+        prompt_tokens=50,
+        completion_tokens=80,
+        paid_attempts=[{"role": "primary", "cost_usd": 0.02}],
+    )
+    attempts = list(verifier.paid_attempts or [])
+    for attempt in attempts:
+        if attempt.get("role") == "primary":
+            attempt["role"] = "verifier"
+    merged = list(prior.paid_attempts or []) + attempts
+    total = round(float(prior.cost_usd or 0) + float(verifier.cost_usd or 0), 8)
+    assert total == 0.07
+    assert [a["role"] for a in merged] == ["primary", "verifier"]
+    assert len(merged) == 2

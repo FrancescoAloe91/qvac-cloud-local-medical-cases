@@ -72,6 +72,18 @@ def space_free_gguf_path(gguf: Path | str) -> Path:
         return src
 
 
+def file_sha256(path: Path | str) -> str:
+    """Hex digest of a local file (GGUF pin / reproducibility)."""
+    import hashlib
+
+    p = Path(path)
+    h = hashlib.sha256()
+    with p.open("rb") as fh:
+        for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
 def load_model(
     gguf_path: str | Path,
     timeout: float = 360.0,
@@ -83,6 +95,11 @@ def load_model(
     if not src.is_file():
         return {"ok": False, "error": f"GGUF not found: {src}"}
     safe = space_free_gguf_path(src)
+    digest = ""
+    try:
+        digest = file_sha256(safe)
+    except OSError:
+        digest = ""
     url = f"{qvac_sidecar_url()}/load"
     body = json.dumps(
         {"model_path": str(safe), "sampling": sampling or {}}
@@ -99,6 +116,9 @@ def load_model(
             if not isinstance(data, dict):
                 return {"ok": False, "error": "Invalid /load response"}
             data.setdefault("ok", True)
+            data["gguf_sha256"] = digest
+            data["gguf_path"] = str(safe)
+            data["sampling"] = sampling or {}
             return data
     except urllib.error.HTTPError as exc:
         detail = ""
@@ -108,9 +128,9 @@ def load_model(
             detail = str(parsed.get("error") or detail)
         except Exception:
             detail = detail or f"HTTP {exc.code}"
-        return {"ok": False, "error": detail}
+        return {"ok": False, "error": detail, "gguf_sha256": digest}
     except Exception as exc:
-        return {"ok": False, "error": str(exc)}
+        return {"ok": False, "error": str(exc), "gguf_sha256": digest}
 
 
 def _spawn_sidecar() -> None:

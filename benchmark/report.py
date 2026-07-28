@@ -472,7 +472,37 @@ def rescore_artifact_current_formula(art: RunArtifact) -> Dict[str, Any]:
     Legacy artifacts fall back to metrics embedded in their rationales.
     N/A judgments with stored judge JSON may be recovered offline when the
     failure was presentation/schema salvageable under current rules.
+
+    graded-clinical-v3 stored quality may already be host-clamped; when the
+    original unclamped quality cannot be recovered, preserve the stored ranking
+    and never silently stamp the artifact as v4.
     """
+    from benchmark.scoring import SCORING_VERSION
+
+    stored_version = str(art.scoring_version or "").strip()
+    can_apply_v4 = stored_version == SCORING_VERSION or stored_version.endswith("-v4")
+    # Pre-v4 graded artifacts: quality may be clamped; preserve ranking.
+    if stored_version.startswith("graded-clinical-v3") or (
+        stored_version.startswith("graded-clinical") and not can_apply_v4
+    ):
+        return {
+            "run_id": art.run_id,
+            "case_id": art.case_id,
+            "n_index": art.n_index,
+            "gold_mode": use_gold_ground_truth(
+                str((art.models_config or {}).get("gold_reference") or "")
+            ),
+            "ranking": list(art.ranking or []),
+            "sections": {},
+            "stored_ranking": list(art.ranking or []),
+            "recovered_keys": [],
+            "unrecovered_na": [],
+            "effective_judgments": list(art.judgments or []),
+            "formula": stored_version or "graded-clinical-v3",
+            "preserved_stored_ranking": True,
+            "scoring_version_stamp": stored_version or "graded-clinical-v3",
+        }
+
     cfg = art.models_config or {}
     gold_ref = str(cfg.get("gold_reference") or "")
     gold_mode = use_gold_ground_truth(gold_ref)
@@ -629,6 +659,9 @@ def rescore_artifact_current_formula(art: RunArtifact) -> Dict[str, Any]:
         "recovered_keys": recovered_keys,
         "unrecovered_na": unrecovered_na,
         "effective_judgments": effective_judgments,
+        "formula": SCORING_VERSION,
+        "preserved_stored_ranking": False,
+        "scoring_version_stamp": SCORING_VERSION,
     }
 
 
@@ -729,12 +762,17 @@ def rebuild_multi_from_history(
             clone.notes = (note + " | " + recovery_note).strip(" |")
         reproducibility = dict(clone.reproducibility or {})
         reproducibility["offline_rescore"] = {
-            "formula": "graded-clinical-v3",
+            "formula": scored.get("formula") or "graded-clinical-v4",
+            "preserved_stored_ranking": bool(scored.get("preserved_stored_ranking")),
             "recovered_keys": list(scored.get("recovered_keys") or []),
             "unrecovered_na": list(scored.get("unrecovered_na") or []),
             "stored_ranking": list(scored.get("stored_ranking") or []),
         }
         clone.reproducibility = reproducibility
+        # Never silently rewrite an older scoring_version to v4.
+        stamp = scored.get("scoring_version_stamp")
+        if stamp and not scored.get("preserved_stored_ranking"):
+            clone.scoring_version = str(stamp)
         rescored_arts.append(clone)
         per_run.append(
             {
@@ -795,12 +833,16 @@ def persist_rescored_artifacts(
             clone.judgments = list(scored["effective_judgments"])
         reproducibility = dict(clone.reproducibility or {})
         reproducibility["offline_rescore"] = {
-            "formula": "graded-clinical-v3",
+            "formula": scored.get("formula") or "graded-clinical-v4",
+            "preserved_stored_ranking": bool(scored.get("preserved_stored_ranking")),
             "recovered_keys": list(scored.get("recovered_keys") or []),
             "unrecovered_na": list(scored.get("unrecovered_na") or []),
             "stored_ranking": old_rank,
         }
         clone.reproducibility = reproducibility
+        stamp = scored.get("scoring_version_stamp")
+        if stamp and not scored.get("preserved_stored_ranking"):
+            clone.scoring_version = str(stamp)
         if scored.get("recovered_keys"):
             note = (clone.notes or "").strip()
             tag = "offline-recovered: " + ", ".join(scored["recovered_keys"])

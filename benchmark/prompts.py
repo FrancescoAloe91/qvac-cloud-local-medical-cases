@@ -323,19 +323,9 @@ def parse_candidate_answers(case: Case, raw: str) -> Dict[str, str]:
         if body:
             chunks.setdefault(marker.question_id, []).append(body)
 
-    answers = {qid: "\n\n".join(parts) for qid, parts in chunks.items() if parts}
-
-    # Fewer than two sections recovered → unstructured prose. Hand the judge the
-    # whole body per question, flagged, so real content is graded on relevance
-    # instead of being discarded as a formatting failure.
-    body = text.strip()
-    if body and len(answers) < 2 and len(body) > 80:
-        for qid in order:
-            answers[qid] = (
-                "[UNSTRUCTURED FULL RESPONSE — score only content relevant to "
-                f"{qid}; apply linear formula on relevant parts only]\n" + body
-            )
-    return answers
+    # Only sections with deterministically attributed markers. Never photocopy
+    # the whole response into missing sections — that bypassed missing=N/A.
+    return {qid: "\n\n".join(parts) for qid, parts in chunks.items() if parts}
 
 
 def missing_section_ids(case: Case, answers: Dict[str, str]) -> List[str]:

@@ -12,7 +12,7 @@ from benchmark.schema import ConfirmedGold, GoldClaim, GoldSection
 
 SECTION_IDS = ("diagnosis", "tests", "urgency", "safety", "plan")
 EXTRACTION_PROMPT_VERSION = "gold-extract-v1"
-SCORING_VERSION = "graded-clinical-v3"
+SCORING_VERSION = "graded-clinical-v4"
 
 
 def _normalized(text: str) -> str:
@@ -180,6 +180,7 @@ def confirmed_gold(
     raw_text: str,
     sections: Mapping[str, GoldSection | Mapping[str, Any]],
     extraction_model: str,
+    extraction_cost_usd: float = 0.0,
 ) -> ConfirmedGold:
     """Create the frozen contract; all five sections must be assessable."""
     parsed: Dict[str, GoldSection] = {}
@@ -201,6 +202,7 @@ def confirmed_gold(
         confirmed_at=datetime.now(timezone.utc).isoformat(),
         extraction_model=extraction_model,
         extraction_prompt_version=EXTRACTION_PROMPT_VERSION,
+        extraction_cost_usd=round(float(extraction_cost_usd or 0.0), 8),
     )
 
 

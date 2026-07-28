@@ -1,0 +1,26 @@
+{
+  "fixture_id": "example-partial-diagnosis",
+  "case_id": "caseC",
+  "reviewed_by": "",
+  "reviewed_at": "",
+  "notes": "Example only — not human-reviewed. Replace ranges after review.",
+  "candidate_answers": {
+    "diagnosis": "Probable migraine.",
+    "tests": "",
+    "urgency": "",
+    "safety": "",
+    "plan": ""
+  },
+  "expected": {
+    "diagnosis": {
+      "coverage_min": 0.0,
+      "coverage_max": 1.0,
+      "quality_min": 0.0,
+      "quality_max": 1.0,
+      "discipline_min": 0.0,
+      "discipline_max": 1.0,
+      "score_min": 0,
+      "score_max": 100
+    }
+  }
+}

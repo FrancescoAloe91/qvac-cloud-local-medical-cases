@@ -51,6 +51,7 @@ class ConfirmedGold(BaseModel):
     confirmed_at: str
     extraction_model: str = ""
     extraction_prompt_version: str = "gold-extract-v1"
+    extraction_cost_usd: float = 0.0
 
 
 class Case(BaseModel):
@@ -75,6 +76,7 @@ class ModelCallMeta(BaseModel):
     finish_reason: str = ""
     prompt_tokens: int = 0
     completion_tokens: int = 0
+    reasoning_tokens: int = 0
     cost_usd: Optional[float] = None
     latency_s: Optional[float] = None
     ttft_s: Optional[float] = None
@@ -82,11 +84,14 @@ class ModelCallMeta(BaseModel):
     # On-device QVAC: process-tree RSS (sidecar + llama worker), megabytes
     ram_mb: Optional[float] = None
     gguf_mb: Optional[float] = None
+    gguf_sha256: str = ""
     display_label: str = ""
     retry_count: int = 0
     error: Optional[str] = None
     # Append-only paid OpenRouter attempts (primary / corrective / verifier).
     paid_attempts: List[Dict[str, Any]] = Field(default_factory=list)
+    configuration_deviation: bool = False
+    requested_providers: List[str] = Field(default_factory=list)
 
 
 class CandidateAnswer(BaseModel):
@@ -158,9 +163,10 @@ class RunArtifact(BaseModel):
     judgments: List[JudgeResult] = Field(default_factory=list)
     ranking: List[Dict[str, Any]] = Field(default_factory=list)
     total_cost_usd: float = 0.0
+    cost_breakdown: Dict[str, Any] = Field(default_factory=dict)
     notes: str = ""
     cohort_id: str = ""
-    scoring_version: str = "graded-clinical-v3"
+    scoring_version: str = "graded-clinical-v4"
     prompt_version: str = "gold-only-v1"
     benchmark_track: Literal["controlled", "native_defaults", "legacy"] = "controlled"
     run_status: Literal["complete", "partial", "cancelled", "failed"] = "complete"

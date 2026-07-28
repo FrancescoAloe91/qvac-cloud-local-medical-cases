@@ -167,6 +167,11 @@ def build_run_artifact(
                 ).get("sampling"),
                 "ram_mb": candidate.meta.ram_mb,
                 "gguf_mb": candidate.meta.gguf_mb,
+                "gguf_sha256": getattr(candidate.meta, "gguf_sha256", "") or "",
+                "configuration_deviation": bool(
+                    getattr(candidate.meta, "configuration_deviation", False)
+                ),
+                "device": platform.platform(),
             }
             for candidate in candidates
         ],
@@ -193,7 +198,7 @@ def _validate_judge_separation(
         str(candidate.get("model") or "").strip() for candidate in candidates_cfg
     }
     extractor = os.environ.get(
-        "BENCHMARK_GOLD_EXTRACTOR_MODEL", "google/gemini-3.5-flash"
+        "BENCHMARK_GOLD_EXTRACTOR_MODEL", "openai/gpt-4o-mini"
     ).strip()
     if verifier == primary or verifier in candidate_models:
         raise ValueError(
@@ -237,7 +242,7 @@ def estimate_cost_breakdown(
 
     Scales with clinical case + gold text length.
     ``local_only`` = on-device GGUFs ($0 collect) + paid extractor/judge path.
-    Extractor is charged once per batch (gold freezes at Run); candidates and
+    Extractor is charged once per batch (gold confirmed once); candidates and
     judge scale with ``n``.
     """
     from benchmark.gold import extraction_messages
@@ -316,9 +321,9 @@ def estimate_cost_breakdown(
             }
         )
 
-    # Gold extractor: one paid call when Run freezes the reference (max 4k out).
+    # Gold extractor: one paid call when reference is confirmed (max 4k out).
     extractor_model = os.environ.get(
-        "BENCHMARK_GOLD_EXTRACTOR_MODEL", "google/gemini-3.5-flash"
+        "BENCHMARK_GOLD_EXTRACTOR_MODEL", "openai/gpt-4o-mini"
     )
     extract_msgs = extraction_messages(gold if gold.strip() else "(empty reference)")
     extract_in = openrouter.estimate_tokens_from_text(
@@ -338,7 +343,7 @@ def estimate_cost_breakdown(
         "completion_tokens": extract_out,
         "price_in_per_mtok": epin,
         "price_out_per_mtok": epout,
-        "note": "once per batch (gold freeze at Run)",
+        "note": "once per prepared/confirmed reference batch",
     }
 
     judge_cfg = cfg.get("judge") or {}
@@ -558,6 +563,11 @@ def _collect_candidate_once(
 
     if provider == "openrouter":
         temperature = 0.2 if benchmark_track == "controlled" else None
+        allowed = (
+            list(cand_cfg.get("allowed_providers") or [])
+            if benchmark_track == "controlled"
+            else None
+        )
         raw, meta = openrouter.chat_stream(
             model_id,
             messages,
@@ -566,6 +576,8 @@ def _collect_candidate_once(
             on_token=on_token,
             display_label=display,
             api_key=api_key,
+            allowed_providers=allowed,
+            require_parameters=benchmark_track == "controlled",
         )
     elif provider == "qvac":
         gguf = cand_cfg.get("gguf_path")
@@ -623,6 +635,9 @@ def _collect_candidate_once(
                 {"role": "user", "content": user_p},
             ],
         )
+        digest = str(loaded.get("gguf_sha256") or "")
+        if digest:
+            meta = meta.model_copy(update={"gguf_sha256": digest})
     else:
         raw, meta = "", ModelCallMeta(
             model=model_id,
@@ -1208,6 +1223,24 @@ def run_once(
     for j in judgments:
         if j.judge_meta.cost_usd:
             total_cost += j.judge_meta.cost_usd
+    extraction_cost = 0.0
+    try:
+        if gold_reference and gold_reference.strip().startswith("{"):
+            gold_obj = load_confirmed_gold(gold_reference)
+            extraction_cost = float(getattr(gold_obj, "extraction_cost_usd", 0.0) or 0.0)
+    except Exception:
+        extraction_cost = 0.0
+    total_cost += extraction_cost
+    cost_breakdown = {
+        "candidates_usd": round(
+            sum(float(c.meta.cost_usd or 0.0) for c in collected), 6
+        ),
+        "judge_usd": round(
+            sum(float(j.judge_meta.cost_usd or 0.0) for j in judgments), 6
+        ),
+        "extractor_usd": round(extraction_cost, 6),
+        "total_usd": round(total_cost, 6),
+    }
 
     notes = ""
     if has_qvac_cfg and not any(is_qvac_key(c.candidate_key) for c in collected):
@@ -1230,11 +1263,13 @@ def run_once(
             "blind_map": blind_map,
             "gold_reference": gold_reference.strip() if gold_reference else "",
             "case_stem": case.stem,
+            "extraction_cost_usd": extraction_cost,
         },
         candidates=collected,
         judgments=judgments,
         ranking=ranking,
         total_cost_usd=round(total_cost, 6),
+        cost_breakdown=cost_breakdown,
         notes=notes,
         cohort_id=cohort,
         scoring_version=SCORING_VERSION,

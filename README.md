@@ -20,9 +20,10 @@ Repository: https://github.com/FrancescoAloe91/qvac-vs-cloud-llms-health-test
 1. Paste one anonymized real/custom clinical case.
 2. Paste a free-form reference covering diagnosis, tests, urgency, safety, and
    initial plan.
-3. When Run is clicked, the reference is frozen. A pinned cloud extractor
-   reorganizes only source-supported claims into five sections before any
-   candidate is called. There is no separate extraction/review step.
+3. **Prepare reference** runs a pinned cloud extractor once and shows editable
+   five-section claims. **Confirm reference** freezes `confirmed_at` and the
+   gold JSON; candidates start only after confirm. Changing the raw reference
+   clears prepared/confirmed state. CLI still requires a pre-confirmed gold JSON.
 4. The exact user `source_quote` is the canonical scored claim. Extractor
    summaries, rewrites, or weights cannot change claim meaning or score weight.
 5. Run either the `controlled` or `native_defaults` track. They are separate
@@ -85,8 +86,9 @@ The primary judge is `deepseek/deepseek-r1`. For each blinded candidate:
    preserved. Matching is token-sequence / word-boundary safe. Combined quotes
    are accepted only when every substantial sentence is present; partial spans
    do not count. No fuzzy or semantic matching. Unverifiable coverage quotes
-   zero that claim locally; unverifiable dangerous/contradictory additions keep
-   a full discipline penalty (fail-closed). Quality is host-clamped to coverage.
+   zero that claim locally; unverifiable dangerous/contradictory additions are
+   dropped with an audit marker (no invented quote, no automatic penalty).
+   Clinical quality is independent of coverage (`graded-clinical-v4`).
 3. **Section repair (not a doomed full redo)** — if some sections remain
    invalid after salvage, the host requests **only those sections**. When the
    primary hit the length cap (common on long Claude/OpenAI answers) or more
@@ -110,11 +112,13 @@ Each section score is:
 50% graded reference coverage + 35% clinical quality + 15% evidence discipline
 ```
 
-The host clamps quality so it cannot exceed verified coverage. The final score
-is the weighted mean of sections (Diagnosis 30%, Safety 25%, Plan 20%, Tests
-15%, Urgency 10%). Helpful and neutral additions are unpenalized; unsupported,
-contradictory, and dangerous content has a proportional discipline effect.
-Exact ties remain ties.
+Clinical quality is scored independently of coverage (v4). The final score is
+the weighted mean of sections (Diagnosis 30%, Safety 25%, Plan 20%, Tests 15%,
+Urgency 10%). Helpful and neutral additions are unpenalized; unsupported,
+contradictory, and dangerous content has a proportional discipline effect when
+the judge quote is present in the candidate answer. Exact ties remain ties.
+Candidate answers are never photocopied into missing sections — genuinely
+absent sections stay missing / N/A.
 
 Artifact JSON may still label the field `accuracy` for compatibility; that
 value is the Clinical Composite Score relative to the user reference. It is
@@ -205,21 +209,27 @@ valid score; it never imputes missing scores.
 The app no longer stores raw keys in an IP-address vault and never copies a
 visitor key into process-global environment state.
 
-- Local mode: key and data are scoped to the current session/local workspace.
-- Hosted mode: configure Supabase Auth, apply
+- Local mode: key and data are scoped to the current session/local workspace
+  under `artifacts/owners/<key-fingerprint>/`.
+- Hosted mode (Streamlit Cloud + Supabase Auth): configure Supabase Auth, apply
   `supabase/migrations/202607270001_secure_benchmark.sql`, and provide a Fernet
-  `APP_ENCRYPTION_KEY`.
+  `APP_ENCRYPTION_KEY`. Workspace directories use the Supabase user id. After
+  decrypt, artifacts stay in session memory — plaintext is **not** written to
+  disk on the host.
 - Supabase Row Level Security restricts rows to `auth.uid()`.
 - API keys and full artifacts (case, reference, answers, judgments) are encrypted
-  before storage.
+  before cloud storage.
 - Files under `artifacts/`, `.env`, secrets, and GGUF weights are gitignored.
+
+Scores are **reference-relative** (Clinical Composite vs the user-confirmed
+gold), not external clinical accuracy.
 
 See [.env.example](.env.example) for deployment variables. Keep the encryption
 key in the hosting secret manager, never in git.
 
 ## Install and run
 
-Requirements: Python 3.9+, Node.js 22.17+, and OpenSSL 3 on macOS for the local
+Requirements: Python 3.10+, Node.js 22.17+, and OpenSSL 3 on macOS for the local
 sidecar.
 
 ```bash

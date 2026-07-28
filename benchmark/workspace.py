@@ -44,16 +44,23 @@ def owner_id_for_current_key(key: str | None = None) -> str:
     return fp or LOCAL_NO_KEY_ID
 
 
-def scoped_artifacts_dir(key: str | None = None) -> Path:
+def scoped_artifacts_dir(
+    key: str | None = None, *, account_user_id: str | None = None
+) -> Path:
     """
     Directory for this visitor's run JSON.
 
+    With Supabase account auth → artifacts/owners/user_<user_id>/
     With a usable key → artifacts/owners/<sha256[:24]>/
     Without → artifacts/owners/_local_no_key/ (local QVAC rehearsal only)
     """
-    k = normalize_api_key(key) if key is not None else current_api_key()
-    fp = owner_fingerprint(k)
-    oid = fp or LOCAL_NO_KEY_ID
+    uid = (account_user_id or "").strip()
+    if uid:
+        oid = f"user_{uid}"
+    else:
+        k = normalize_api_key(key) if key is not None else current_api_key()
+        fp = owner_fingerprint(k)
+        oid = fp or LOCAL_NO_KEY_ID
     path = ARTIFACTS_DIR / OWNERS_DIRNAME / oid
     path.mkdir(parents=True, exist_ok=True)
     return path

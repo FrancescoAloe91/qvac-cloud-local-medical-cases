@@ -14,7 +14,7 @@ A **gold-only clinical LLM benchmark**: the same anonymized case and user-suppli
 | | Cloud (OpenRouter BYOK) | QVAC / local GGUFs |
 |---|---|---|
 | Cost per run | OpenRouter usage (candidates + extractor + judge) | $0 collect; judge still billed if used |
-| Clinical data | Leaves via API | Stays on-device (sidecar) |
+| Clinical data | Leaves via API (BYOK) | Collect stays on-device; cloud judge/extractor still leave if used |
 | TTFT / TPS | Measured from API stream | Measured from local sidecar |
 | Models | Pinned API routes (GPT / Claude / Gemini) | MedPsy + open peer GGUFs |
 
@@ -23,17 +23,17 @@ This is a **research/demo tool**. Artifact “accuracy” is a **Clinical Compos
 ## How it works (60 seconds)
 
 1. Paste **one** anonymized case (`caseC`) + a free-form reference (diagnosis, tests, urgency, safety, plan)
-2. **Run** → pinned extractor freezes gold; exact user `source_quote` is the scored claim
+2. **Prepare → review/edit → Confirm** freezes gold; exact user `source_quote` is the scored claim
 3. Same five questions to cloud (OpenRouter) and local (QVAC sidecar) under the same prompt
-4. Blind **DeepSeek R1** judge → Clinical Composite Score; optional whole-run verifier only if systemic judge failure
+4. Blind **DeepSeek R1** judge → reference-relative Clinical Composite Score; optional whole-run verifier only if systemic judge failure
 5. Dashboard ranking for that cohort; **Multi ×5** for exploratory means (sample SD / median / IQR)
 
-### Scoring (current protocol)
+### Scoring (current protocol · graded-clinical-v4)
 
 **Per section:** 50% graded reference coverage · 35% clinical quality · 15% evidence discipline  
 **Section weights:** Diagnosis 30% · Safety 25% · Plan 20% · Tests 15% · Urgency 10%  
 
-Coverage is claim-level vs frozen quotes; quality is host-clamped ≤ verified coverage; unsupported / contradictory / dangerous additions hit discipline. Exact ties remain ties. Technical N/A is not a synthetic zero.
+Coverage is claim-level vs frozen quotes; quality is independent of coverage; unsupported / contradictory / dangerous additions hit discipline only when the quote is verified in the answer. Exact ties remain ties. Technical N/A is not a synthetic zero.
 
 ## What it proves (and what it does not)
 
