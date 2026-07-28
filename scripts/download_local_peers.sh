@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Download 3 open Q4 GGUFs into models/ for on-device Band B (real local privacy).
 # Same QVAC sidecar hot-swaps them via POST /load — not OpenRouter, not Ollama.
+# SHA pin is optional via env (like MedPsy): set LOCAL_PEER_GGUF_SHA256_<name>
+# or skip — no baked digest by default.
 set -euo pipefail
 
 PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"

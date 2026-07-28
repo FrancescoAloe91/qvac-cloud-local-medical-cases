@@ -29,7 +29,7 @@ echo "╚═══════════════════════�
 echo ""
 
 if ! command -v python3 >/dev/null 2>&1; then
-  echo "❌ Python 3.10+ required (python.org or: brew install python3)"
+  echo "❌ Python 3.9+ required (hashed locks/CI use 3.9; 3.10+ preferred locally — python.org or: brew install python3)"
   exit 1
 fi
 

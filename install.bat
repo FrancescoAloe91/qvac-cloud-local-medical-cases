@@ -11,7 +11,7 @@ echo.
 
 where python >nul 2>&1
 if errorlevel 1 (
-  echo Python 3 not found. Install from https://www.python.org/downloads/
+  echo Python 3.9+ required ^(hashed locks/CI use 3.9; 3.10+ preferred locally^). Install from https://www.python.org/downloads/
   exit /b 1
 )
 

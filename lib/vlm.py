@@ -11,7 +11,7 @@ Main findings:
 - No gross focal lesions in the explored field
 Image quality: adequate for preliminary assessment.
 
-NOTE: extraction performed entirely on-device. The file never left this device.""",
+NOTE: simulated local extraction placeholder — live extract/judge may still use OpenRouter.""",
     "it": """[ESTRAZIONE VLM SIMULATA]
 Tipologia documento: referto di imaging medico
 Reperti principali rilevati:
@@ -20,8 +20,8 @@ Reperti principali rilevati:
 - Non evidenti lesioni focali grossolane nel campo esplorato
 Qualita' immagine: adeguata per valutazione preliminare.
 
-NOTA: estrazione eseguita interamente in locale. Il file non ha
-lasciato questo dispositivo.""",
+NOTA: placeholder di estrazione locale simulata — extract/judge live
+possono comunque usare OpenRouter.""",
 }
 
 

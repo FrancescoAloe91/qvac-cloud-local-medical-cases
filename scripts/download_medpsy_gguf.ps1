@@ -1,5 +1,6 @@
 # Download MedPsy 4B GGUF from Hugging Face into models/ (~2.5 GB).
 # Pins revision + verifies sha256 when MEDPSY_GGUF_SHA256 is set.
+# Default: no baked digest (empty Expected) — set MEDPSY_GGUF_SHA256 in env for bit-pin.
 $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent $PSScriptRoot
 Set-Location $Root

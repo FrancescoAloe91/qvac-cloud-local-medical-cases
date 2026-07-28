@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Download MedPsy 4B GGUF from Hugging Face into models/ (~2.5 GB).
-# Pins revision + verifies sha256 when MEDPSY_GGUF_SHA256 is set (or default pin).
+# Pins revision + verifies sha256 when MEDPSY_GGUF_SHA256 is set.
+# Default: no baked digest (empty EXPECTED_SHA256) — set MEDPSY_GGUF_SHA256 in env for bit-pin.
 # The weights are NOT in git (GitHub file-size limit); this is the local install path.
 set -euo pipefail
 

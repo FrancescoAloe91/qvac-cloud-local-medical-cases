@@ -2,6 +2,8 @@
 # Full on-device GGUF pack for the live 9-model grid (~14 GB total).
 #
 # Downloads from Hugging Face into models/ (skipped if already present).
+# SHA pin is optional via env on child scripts (MEDPSY_GGUF_SHA256 / peers) —
+# no baked digest by default (same pattern as download_medpsy_gguf.sh).
 # Weights are NEVER stored in git — GitHub only ships this script + docs.
 #
 # Private run history (prompts, answers, judge scores, means) lives under

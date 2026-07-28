@@ -110,7 +110,8 @@ relax candidate completeness, evidence integrity, or the scoring formula.
 Collection errors, empty/partial output, timeout, judge transport failure,
 unusable schema after salvage/repair, and cancellation are technical N/A
 observations. Presentation-only evidence problems are handled locally (coverage
-zero / harm fail-closed), not as N/A. Technical N/A rows are excluded from means
+zero; unverifiable harmful additions are dropped with an audit marker, never
+invented as fail-closed penalties), not as N/A. Technical N/A rows are excluded from means
 and reported with reason counts. There is no synthetic zero.
 
 ### Recovering the candidate's sections
