@@ -210,6 +210,10 @@ Saved artifacts can be rescored without API calls:
   changes claim splits creates a new cohort. History resume restores the exact
   prior confirmed gold (case-family key = normalized stem + raw reference);
   different Confirm contracts stay separate and are never auto-merged.
+- Optional **Portfolio** scope averages the last N complete runs across cases
+  (same roster + track + `scoring_version` only). Scores remain
+  reference-relative per case; the cross-case mean is exploratory, not
+  clinical validation, and never auto-merges incompatible scoring versions.
 - Prior rankings are stamped under `reproducibility.offline_rescore.stored_ranking`
   so old vs new comparisons remain possible.
 

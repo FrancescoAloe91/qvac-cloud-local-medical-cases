@@ -7,7 +7,7 @@ import statistics
 import os
 import tempfile
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from benchmark.cases_loader import load_case
 from benchmark.gold import case_family_key, load_confirmed_gold
@@ -20,7 +20,7 @@ from benchmark.scoring import (
     semantic_item_score,
     soft_alignment_from_checklist,
 )
-from lib.model_labels import is_current_roster_key
+from lib.model_labels import CURRENT_ROSTER_KEYS, is_current_roster_key
 
 # Multi-run mean reliability from CV% = 100 × std / mean
 # Five bands (ceilings): Super High ≤3 · High ≤10 · Medium ≤20 · Low ≤30 · else Very Low
@@ -73,15 +73,23 @@ def _atomic_write(path: Path, text: str) -> None:
             pass
 
 
-def summarize_runs(artifacts: List[RunArtifact]) -> MultiRunSummary:
+def summarize_runs(
+    artifacts: List[RunArtifact],
+    *,
+    allow_mixed_cohorts: bool = False,
+) -> MultiRunSummary:
     if not artifacts:
         return MultiRunSummary(case_id="", n=0)
-    case_id = artifacts[0].case_id
     cohort_ids = {(a.cohort_id or "") for a in artifacts}
     if "" in cohort_ids:
         raise ValueError("Cannot summarize runs with empty cohort_id")
-    if len(cohort_ids) > 1:
+    if len(cohort_ids) > 1 and not allow_mixed_cohorts:
         raise ValueError("Cannot summarize mixed cohorts")
+    case_ids = {a.case_id for a in artifacts}
+    if allow_mixed_cohorts and (len(cohort_ids) > 1 or len(case_ids) > 1):
+        case_id = "portfolio"
+    else:
+        case_id = artifacts[0].case_id
     batch_ids = {(a.batch_id or "") for a in artifacts}
     non_empty_batches = {b for b in batch_ids if b}
     paired_batch_id = next(iter(non_empty_batches)) if len(non_empty_batches) == 1 else None
@@ -508,6 +516,24 @@ def rescore_artifact_current_formula(art: RunArtifact) -> Dict[str, Any]:
     cfg = art.models_config or {}
     gold_ref = str(cfg.get("gold_reference") or "")
     gold_mode = use_gold_ground_truth(gold_ref)
+    # Ranking-only fixtures / incomplete offline payloads: keep stored ranks
+    # rather than wiping the mean (rebuild still needs ≥5 valid observations).
+    if not art.judgments and art.ranking:
+        return {
+            "run_id": art.run_id,
+            "case_id": art.case_id,
+            "n_index": art.n_index,
+            "gold_mode": gold_mode,
+            "ranking": list(art.ranking or []),
+            "sections": {},
+            "stored_ranking": list(art.ranking or []),
+            "recovered_keys": [],
+            "unrecovered_na": [],
+            "effective_judgments": [],
+            "formula": stored_version or SCORING_VERSION,
+            "preserved_stored_ranking": True,
+            "scoring_version_stamp": stored_version or SCORING_VERSION,
+        }
     try:
         case = load_case(art.case_id)
         section_w = {q.id: q.weight for q in case.questions}
@@ -758,6 +784,137 @@ def find_case_family_cohorts(
     return rows
 
 
+def artifact_roster_keys(art: RunArtifact) -> frozenset:
+    """Candidate keys from models_config (fallback: collected candidates)."""
+    keys: List[str] = []
+    for c in (art.models_config or {}).get("candidates") or []:
+        if isinstance(c, dict) and c.get("key"):
+            keys.append(str(c["key"]))
+    if not keys:
+        keys = [str(c.candidate_key) for c in (art.candidates or []) if c.candidate_key]
+    return frozenset(keys)
+
+
+def _has_valid_judged_scores(art: RunArtifact) -> bool:
+    if any(getattr(j, "status", None) == "valid" for j in (art.judgments or [])):
+        return True
+    return any(
+        str(r.get("status") or "ok") == "ok" and r.get("accuracy") is not None
+        for r in (art.ranking or [])
+    )
+
+
+def list_portfolio_runs(
+    out_dir: Path,
+    *,
+    n: int = 5,
+    scoring_version: str = "graded-clinical-v4",
+    track: str = "controlled",
+    model_ids: Optional[Sequence[str]] = None,
+) -> List[Tuple[Path, RunArtifact]]:
+    """Newest-first complete runs across all cases matching protocol filters.
+
+    Filters: same scoring_version, track, model roster keys, complete + valid
+    judgments. Does **not** require the same gold/cohort. Chronological by
+    finished_at (then started_at), newest first. Cap at ``n`` (1–30).
+    """
+    n = max(1, min(int(n), 30))
+    want_keys = frozenset(model_ids) if model_ids is not None else frozenset(
+        CURRENT_ROSTER_KEYS
+    )
+    want_sv = str(scoring_version or "").strip()
+    want_track = str(track or "").strip()
+    matched: List[Tuple[Path, RunArtifact, str]] = []
+    for path in list_run_artifacts(out_dir):
+        try:
+            art = load_artifact(path)
+        except Exception:
+            continue
+        if str(art.run_status or "") != "complete":
+            continue
+        if str(art.scoring_version or "").strip() != want_sv:
+            continue
+        if str(art.benchmark_track or "").strip() != want_track:
+            continue
+        if not art.cohort_id:
+            continue
+        if artifact_roster_keys(art) != want_keys:
+            continue
+        if not _has_valid_judged_scores(art):
+            continue
+        when = art.finished_at or art.started_at or ""
+        matched.append((path, art, when))
+    matched.sort(key=lambda t: t[2], reverse=True)
+    return [(p, a) for p, a, _ in matched[:n]]
+
+
+def _offline_rescore_pair(
+    path: Path, art: RunArtifact
+) -> Tuple[RunArtifact, Dict[str, Any]]:
+    """Rescore one artifact offline; return clone + per-run row dict."""
+    scored = rescore_artifact_current_formula(art)
+    clone = art.model_copy(deep=True)
+    clone.ranking = scored["ranking"]
+    if scored.get("effective_judgments"):
+        clone.judgments = list(scored["effective_judgments"])
+    else:
+        by_key = {
+            r["key"]: r["accuracy"]
+            for r in scored["ranking"]
+            if r.get("accuracy") is not None
+        }
+        for j in clone.judgments:
+            if j.candidate_key in by_key:
+                j.weighted_accuracy = float(by_key[j.candidate_key])
+    note = (clone.notes or "").strip()
+    recovery_note = ""
+    if scored.get("recovered_keys"):
+        recovery_note = "offline-recovered: " + ", ".join(scored["recovered_keys"])
+    if recovery_note and recovery_note not in note:
+        clone.notes = (note + " | " + recovery_note).strip(" |")
+    reproducibility = dict(clone.reproducibility or {})
+    reproducibility["offline_rescore"] = {
+        "formula": scored.get("formula") or "graded-clinical-v4",
+        "preserved_stored_ranking": bool(scored.get("preserved_stored_ranking")),
+        "recovered_keys": list(scored.get("recovered_keys") or []),
+        "unrecovered_na": list(scored.get("unrecovered_na") or []),
+        "stored_ranking": list(scored.get("stored_ranking") or []),
+    }
+    clone.reproducibility = reproducibility
+    # Never silently rewrite an older scoring_version to v4.
+    stamp = scored.get("scoring_version_stamp")
+    if stamp and not scored.get("preserved_stored_ranking"):
+        clone.scoring_version = str(stamp)
+    per_run = {
+        "path": str(path),
+        "run_id": art.run_id,
+        "case_id": art.case_id,
+        "finished_at": art.finished_at,
+        "ranking": scored["ranking"],
+        "gold_mode": scored["gold_mode"],
+        "recovered_keys": scored.get("recovered_keys") or [],
+        "unrecovered_na": scored.get("unrecovered_na") or [],
+    }
+    return clone, per_run
+
+
+def _mean_ranks_from_per_run(per_run: List[Dict[str, Any]]) -> Dict[str, float]:
+    buckets: Dict[str, List[float]] = {}
+    for pr in per_run:
+        for row in pr.get("ranking") or []:
+            key = str(row.get("key") or "")
+            if not is_current_roster_key(key):
+                continue
+            if str(row.get("status") or "ok") != "ok" or row.get("rank") is None:
+                continue
+            buckets.setdefault(key, []).append(float(row["rank"]))
+    return {
+        key: round(statistics.fmean(vals), 2)
+        for key, vals in buckets.items()
+        if vals
+    }
+
+
 def rebuild_multi_from_history(
     out_dir: Path,
     case_id: str,
@@ -780,6 +937,7 @@ def rebuild_multi_from_history(
             "ok": False,
             "reason": f"No saved runs for {case_id}.",
             "available": 0,
+            "scope": "same_case",
         }
     if cohort_id:
         target_cohort = cohort_id
@@ -796,6 +954,7 @@ def rebuild_multi_from_history(
             ),
             "available": len(legacy_pairs),
             "legacy_auto_rescore": True,
+            "scope": "same_case",
             "per_run": [
                 rescore_artifact_current_formula(artifact)
                 for _, artifact in legacy_pairs
@@ -813,58 +972,15 @@ def rebuild_multi_from_history(
             ),
             "available": len(pairs),
             "cohort_id": target_cohort,
+            "scope": "same_case",
         }
 
     rescored_arts: List[RunArtifact] = []
     per_run: List[Dict[str, Any]] = []
     for path, art in pairs:
-        scored = rescore_artifact_current_formula(art)
-        clone = art.model_copy(deep=True)
-        clone.ranking = scored["ranking"]
-        if scored.get("effective_judgments"):
-            clone.judgments = list(scored["effective_judgments"])
-        else:
-            by_key = {
-                r["key"]: r["accuracy"]
-                for r in scored["ranking"]
-                if r.get("accuracy") is not None
-            }
-            for j in clone.judgments:
-                if j.candidate_key in by_key:
-                    j.weighted_accuracy = float(by_key[j.candidate_key])
-        note = (clone.notes or "").strip()
-        recovery_note = ""
-        if scored.get("recovered_keys"):
-            recovery_note = (
-                "offline-recovered: " + ", ".join(scored["recovered_keys"])
-            )
-        if recovery_note and recovery_note not in note:
-            clone.notes = (note + " | " + recovery_note).strip(" |")
-        reproducibility = dict(clone.reproducibility or {})
-        reproducibility["offline_rescore"] = {
-            "formula": scored.get("formula") or "graded-clinical-v4",
-            "preserved_stored_ranking": bool(scored.get("preserved_stored_ranking")),
-            "recovered_keys": list(scored.get("recovered_keys") or []),
-            "unrecovered_na": list(scored.get("unrecovered_na") or []),
-            "stored_ranking": list(scored.get("stored_ranking") or []),
-        }
-        clone.reproducibility = reproducibility
-        # Never silently rewrite an older scoring_version to v4.
-        stamp = scored.get("scoring_version_stamp")
-        if stamp and not scored.get("preserved_stored_ranking"):
-            clone.scoring_version = str(stamp)
+        clone, row = _offline_rescore_pair(path, art)
         rescored_arts.append(clone)
-        per_run.append(
-            {
-                "path": str(path),
-                "run_id": art.run_id,
-                "finished_at": art.finished_at,
-                "ranking": scored["ranking"],
-                "gold_mode": scored["gold_mode"],
-                "recovered_keys": scored.get("recovered_keys") or [],
-                "unrecovered_na": scored.get("unrecovered_na") or [],
-            }
-        )
+        per_run.append(row)
 
     summary = summarize_runs(rescored_arts)
     return {
@@ -877,6 +993,86 @@ def rebuild_multi_from_history(
         "api_cost_usd": 0.0,
         "cohort_id": target_cohort,
         "official": True,
+        "scope": "same_case",
+        "n_cases": 1,
+        "mean_rank": _mean_ranks_from_per_run(per_run),
+    }
+
+
+def rebuild_portfolio_from_history(
+    out_dir: Path,
+    *,
+    n: int = 5,
+    scoring_version: str = "graded-clinical-v4",
+    track: str = "controlled",
+    model_ids: Optional[Sequence[str]] = None,
+) -> Dict[str, Any]:
+    """Offline exploratory mean across last N complete runs (all cases).
+
+    Same roster / track / scoring_version only. Never merges incompatible
+    scoring versions. Zero API cost. Not clinical validation.
+    """
+    n = max(5, min(int(n), 30))
+    want_keys = list(model_ids) if model_ids is not None else list(CURRENT_ROSTER_KEYS)
+    # Probe availability beyond n for UI messaging.
+    all_eligible = list_portfolio_runs(
+        out_dir,
+        n=30,
+        scoring_version=scoring_version,
+        track=track,
+        model_ids=want_keys,
+    )
+    pairs = all_eligible[:n]
+    n_cases = len({a.case_id for _, a in pairs})
+    if len(pairs) < 5:
+        return {
+            "ok": False,
+            "reason": (
+                f"Need at least 5 complete portfolio-eligible runs "
+                f"(found {len(pairs)}; {n_cases} distinct case(s)). "
+                "Filters: same model roster, track, scoring_version, "
+                "complete + valid judgments. Different scoring versions are never pooled."
+            ),
+            "available": len(all_eligible),
+            "n_cases": n_cases,
+            "scope": "portfolio",
+            "scoring_version": scoring_version,
+            "track": track,
+        }
+
+    rescored_arts: List[RunArtifact] = []
+    per_run: List[Dict[str, Any]] = []
+    for path, art in pairs:
+        clone, row = _offline_rescore_pair(path, art)
+        rescored_arts.append(clone)
+        per_run.append(row)
+
+    summary = summarize_runs(rescored_arts, allow_mixed_cohorts=True)
+    mean_rank = _mean_ranks_from_per_run(per_run)
+    # Attach mean rank onto ranking_mean rows when present.
+    if hasattr(summary, "ranking_mean"):
+        for row in summary.ranking_mean:
+            key = str(row.get("key") or "")
+            if key in mean_rank:
+                row["mean_rank"] = mean_rank[key]
+    return {
+        "ok": True,
+        "available": len(all_eligible),
+        "n_used": len(rescored_arts),
+        "n_cases": n_cases,
+        "summary": summary,
+        "per_run": per_run,
+        "formula": (
+            "exploratory cross-case mean · reference-relative scores per case · "
+            "not clinical validation"
+        ),
+        "api_cost_usd": 0.0,
+        "official": False,
+        "scope": "portfolio",
+        "scoring_version": scoring_version,
+        "track": track,
+        "mean_rank": mean_rank,
+        "case_ids": sorted({a.case_id for _, a in pairs}),
     }
 
 

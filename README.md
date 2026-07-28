@@ -170,8 +170,12 @@ History can rebuild last-N means with **zero API cost**:
   formula.
 - Re-validate stored judge JSON with current local salvage; presentation/schema
   salvageable N/A rows may recover offline.
-- Official means require five valid observations from one immutable cohort.
+- **Same case** means require five valid observations from one immutable cohort.
   Controlled and native-default runs never mix.
+- **Portfolio** (optional scope next to Rebuild) averages the last N complete
+  runs chronologically across cases for the same roster, track, and
+  `scoring_version` — exploratory cross-case mean, not clinical validation;
+  incompatible scoring versions are never pooled.
 - Prior rankings are preserved under `reproducibility.offline_rescore`.
 
 A local utility script `scripts/_offline_rescore_all.py` can batch-rescore an

@@ -64,9 +64,11 @@ from benchmark.prompts import candidate_system, candidate_user, parse_candidate_
 from benchmark.report import (
     artifacts_for_case,
     find_case_family_cohorts,
+    list_portfolio_runs,
     list_run_artifacts,
     load_artifact,
     rebuild_multi_from_history,
+    rebuild_portfolio_from_history,
     reliability_caption,
     summarize_runs,
     write_artifact,
@@ -94,6 +96,7 @@ from lib.benchmark_multi_ui import (
 )
 from lib.charts import fig_judge_accuracy_bars, fig_judge_mean_accuracy_bars
 from lib.model_labels import (
+    CURRENT_ROSTER_KEYS,
     filter_current_roster_rows,
     name_and_version,
     rerank_rows,
@@ -1169,7 +1172,7 @@ def _reliability_table_html(ranking_mean: list) -> str:
 
 
 @st.dialog(
-    "Rebuild mean · same cohort only · $0",
+    "Rebuild mean · offline · $0",
     width="large",
     on_dismiss=_clear_all_kpi_popups,
 )
@@ -1195,21 +1198,49 @@ def history_mean_rebuild_dialog():
             st.rerun()
         return
 
-    st.success(
-        f"**{case_display_name(summary.case_id)}** · per-model valid N shown below · "
-        f"same-cohort **reference-relative Clinical Composite Score** · "
-        f"**$0 API** (no OpenRouter / DeepSeek calls)"
-    )
+    _scope = str(payload.get("scope") or "same_case")
+    _n_cases = int(payload.get("n_cases") or 1)
+    if _scope == "portfolio":
+        st.success(
+            t(
+                "bench.rebuild_portfolio_success",
+                _ui_lang(),
+                n=payload.get("n_used") or summary.n,
+                cases=_n_cases,
+            )
+        )
+        st.caption(t("bench.rebuild_portfolio_caption", _ui_lang()))
+        _mr = payload.get("mean_rank") or {}
+        if _mr:
+            _mr_bits = ", ".join(
+                f"{short_model(k)}≈{v}"
+                for k, v in sorted(_mr.items(), key=lambda kv: kv[1])[:6]
+            )
+            st.caption(
+                t("bench.rebuild_portfolio_mean_rank", _ui_lang(), ranks=_mr_bits)
+            )
+    else:
+        st.success(
+            f"**{case_display_name(summary.case_id)}** · per-model valid N shown below · "
+            f"same-cohort **reference-relative Clinical Composite Score** · "
+            f"**$0 API** (no OpenRouter / DeepSeek calls)"
+        )
     st.caption(reliability_caption(summary))
 
     st.markdown("##### Ranking table")
     st.markdown(_reliability_table_html(summary.ranking_mean), unsafe_allow_html=True)
 
     st.markdown("##### Chart (mean %; whiskers = ±1 std)")
+    _chart_title = (
+        f"Mean Clinical Composite · Portfolio · {payload.get('n_used')} runs · "
+        f"{payload.get('n_cases')} cases"
+        if _scope == "portfolio"
+        else f"Mean Clinical Composite Score · {case_display_name(summary.case_id)}"
+    )
     st.plotly_chart(
         fig_judge_mean_accuracy_bars(
             summary.ranking_mean,
-            title=f"Mean Clinical Composite Score · {case_display_name(summary.case_id)}",
+            title=_chart_title,
             height=260,
         ),
         use_container_width=True,
@@ -5748,16 +5779,10 @@ if (
         st.dataframe(pd.DataFrame(matrix_rows), use_container_width=True, hide_index=True)
 # --- Offline: Rebuild mean across homogeneous cohorts ($0 API) ---
 st.markdown(
-    '<div class="sec-label">Rebuild mean across N runs · $0 API</div>',
+    f'<div class="sec-label">{t("bench.rebuild_sec_label", _ui_lang())}</div>',
     unsafe_allow_html=True,
 )
-st.caption(
-    f"**{case_display_name(case_id)}** · one immutable cohort only. "
-    "Cohort hash = normalized case + confirmed gold (excl. timestamp) + models + track. "
-    "Restore a prior confirmed reference to pool that cohort again; a new Prepare that "
-    "splits claims differently starts a fresh cohort. Legacy artifacts stay experimental. "
-    "**No API calls**."
-)
+
 _hist_for_case = artifacts_for_case(WORKSPACE_DIR, case_id)
 _rebuild_cohort_id = st.session_state.get("_restored_cohort_id") or None
 if _rebuild_cohort_id and not any(
@@ -5797,24 +5822,71 @@ if not _rebuild_cohort_id and effective_gold:
 if not _rebuild_cohort_id and _hist_for_case and _hist_for_case[0][1].cohort_id:
     _rebuild_cohort_id = _hist_for_case[0][1].cohort_id
 if _rebuild_cohort_id:
-    _avail_n = sum(
+    _avail_same = sum(
         1 for _, a in _hist_for_case if a.cohort_id == _rebuild_cohort_id
     )
 else:
-    _avail_n = len(_hist_for_case)
+    _avail_same = len(_hist_for_case)
+
+# Portfolio eligibility: same roster keys as current session toggle, track, v4.
+_portfolio_model_ids = (
+    list(CURRENT_ROSTER_KEYS)
+    if include_cloud
+    else [c["key"] for c in roster if c.get("key")]
+)
+_portfolio_probe = list_portfolio_runs(
+    WORKSPACE_DIR,
+    n=30,
+    scoring_version=SCORING_VERSION,
+    track=str(benchmark_track or "controlled"),
+    model_ids=_portfolio_model_ids,
+)
+_avail_portfolio = len(_portfolio_probe)
+
+# Scope control — highly visible, immediately next to N / Rebuild.
+if "history_rebuild_scope" not in st.session_state:
+    st.session_state["history_rebuild_scope"] = "same_case"
+_rebuild_scope = st.radio(
+    t("bench.rebuild_scope_label", _ui_lang()),
+    options=["same_case", "portfolio"],
+    format_func=lambda v: (
+        t("bench.rebuild_scope_same", _ui_lang())
+        if v == "same_case"
+        else t("bench.rebuild_scope_portfolio", _ui_lang())
+    ),
+    horizontal=True,
+    key="history_rebuild_scope",
+    on_change=_on_rebuild_n_pick_change,
+)
+
+if _rebuild_scope == "portfolio":
+    st.caption(t("bench.rebuild_portfolio_intro", _ui_lang()))
+    _avail_n = _avail_portfolio
+else:
+    st.caption(
+        f"**{case_display_name(case_id)}** · one immutable cohort only. "
+        "Cohort hash = normalized case + confirmed gold (excl. timestamp) + models + track. "
+        "Restore a prior confirmed reference to pool that cohort again; a new Prepare that "
+        "splits claims differently starts a fresh cohort. Legacy artifacts stay experimental. "
+        "**No API calls**."
+    )
+    _avail_n = _avail_same
 
 # Other confirm versions in the same case family (never auto-merged).
 _other_family_runs = 0
-if _family_cohorts and _rebuild_cohort_id:
-    _other_family_runs = sum(
-        int(c.get("run_count") or 0)
-        for c in _family_cohorts
-        if c.get("cohort_id") != _rebuild_cohort_id
-    )
-elif _family_cohorts and not effective_gold:
-    _other_family_runs = sum(int(c.get("run_count") or 0) for c in _family_cohorts)
+if _rebuild_scope == "same_case":
+    if _family_cohorts and _rebuild_cohort_id:
+        _other_family_runs = sum(
+            int(c.get("run_count") or 0)
+            for c in _family_cohorts
+            if c.get("cohort_id") != _rebuild_cohort_id
+        )
+    elif _family_cohorts and not effective_gold:
+        _other_family_runs = sum(
+            int(c.get("run_count") or 0) for c in _family_cohorts
+        )
 
-if _other_family_runs > 0 and _avail_n < 5:
+if _other_family_runs > 0 and _avail_n < 5 and _rebuild_scope == "same_case":
     st.caption(
         t(
             "bench.family_other_cohorts",
@@ -5838,7 +5910,7 @@ with _rb1:
     if _pick not in _n_options:
         st.session_state["history_rebuild_n_pick"] = 5
     _rebuild_n = st.selectbox(
-        "Average over N runs",
+        t("bench.rebuild_n_label", _ui_lang()),
         options=_n_options,
         format_func=lambda n: (
             f"{n} runs"
@@ -5855,30 +5927,59 @@ with _rb1:
         "Selecting N alone does not open a popup — use Rebuild mean.",
     )
 with _rb2:
-    st.caption(
-        f"Saved runs for {case_display_name(case_id)}"
-        + (
-            f" · this cohort: **{_avail_n}**"
-            if _rebuild_cohort_id
-            else f": **{_avail_n}**"
+    if _rebuild_scope == "portfolio":
+        _n_show = min(int(_rebuild_n), _avail_portfolio) if _avail_portfolio else 0
+        _k_show = (
+            len({a.case_id for _, a in _portfolio_probe[:_n_show]})
+            if _n_show
+            else 0
         )
-        + " · 5 exploratory · ~10 steadier CV · 20+ nicer but costly"
-    )
+        st.caption(
+            t(
+                "bench.rebuild_portfolio_stats",
+                _ui_lang(),
+                n=_n_show,
+                cases=_k_show,
+                avail=_avail_portfolio,
+                track=str(benchmark_track or "controlled"),
+            )
+        )
+    else:
+        st.caption(
+            f"Saved runs for {case_display_name(case_id)}"
+            + (
+                f" · this cohort: **{_avail_n}**"
+                if _rebuild_cohort_id
+                else f": **{_avail_n}**"
+            )
+            + " · 5 exploratory · ~10 steadier CV · 20+ nicer but costly"
+        )
     _can_rebuild = _avail_n >= 2
     _do_rebuild = st.button(
-        f"Rebuild mean · {_rebuild_n} runs · open KPI popup · $0",
+        t(
+            "bench.rebuild_btn",
+            _ui_lang(),
+            n=_rebuild_n,
+        ),
         type="primary",
         use_container_width=True,
         disabled=not _can_rebuild,
         key="history_rebuild_btn",
-        help="Offline mean for one immutable cohort only. Zero API cost.",
+        help=(
+            t("bench.rebuild_btn_help_portfolio", _ui_lang())
+            if _rebuild_scope == "portfolio"
+            else t("bench.rebuild_btn_help_same", _ui_lang())
+        ),
     )
 
 if _avail_n < 2:
-    st.info(
-        f"Need at least **2** saved runs for {case_display_name(case_id)} "
-        f"(found {_avail_n}). Run Single a few times, then rebuild the mean."
-    )
+    if _rebuild_scope == "portfolio":
+        st.info(t("bench.rebuild_need_portfolio", _ui_lang(), n=_avail_n))
+    else:
+        st.info(
+            f"Need at least **2** saved runs for {case_display_name(case_id)} "
+            f"(found {_avail_n}). Run Single a few times, then rebuild the mean."
+        )
 elif _do_rebuild:
     _n_use = min(int(_rebuild_n), _avail_n)
     if _n_use < int(_rebuild_n):
@@ -5886,12 +5987,21 @@ elif _do_rebuild:
             f"Only {_avail_n} runs saved — averaging {_n_use} (requested {_rebuild_n}).",
             icon="ℹ️",
         )
-    _built = rebuild_multi_from_history(
-        WORKSPACE_DIR,
-        case_id,
-        n=_n_use,
-        cohort_id=_rebuild_cohort_id,
-    )
+    if _rebuild_scope == "portfolio":
+        _built = rebuild_portfolio_from_history(
+            WORKSPACE_DIR,
+            n=_n_use,
+            scoring_version=SCORING_VERSION,
+            track=str(benchmark_track or "controlled"),
+            model_ids=_portfolio_model_ids,
+        )
+    else:
+        _built = rebuild_multi_from_history(
+            WORKSPACE_DIR,
+            case_id,
+            n=_n_use,
+            cohort_id=_rebuild_cohort_id,
+        )
     if not _built.get("ok"):
         st.warning(_built.get("reason") or "Rebuild failed.")
     else:
@@ -5918,18 +6028,35 @@ elif _do_rebuild:
         st.rerun()
 
 _prev = st.session_state.get("history_rebuild_result") or {}
-if (
+_prev_scope = str(_prev.get("scope") or "same_case")
+_prev_ok_for_ui = (
     _prev.get("ok")
     and isinstance(_prev.get("summary"), dict)
-    and _prev["summary"].get("case_id") == case_id
-):
+    and (
+        _prev_scope == "portfolio"
+        or _prev["summary"].get("case_id") == case_id
+    )
+)
+if _prev_ok_for_ui:
+    _reopen_label = (
+        t(
+            "bench.rebuild_reopen_portfolio",
+            _ui_lang(),
+            n=_prev["summary"].get("n"),
+            cases=_prev.get("n_cases") or "?",
+        )
+        if _prev_scope == "portfolio"
+        else f"Re-open mean popup · N={_prev['summary'].get('n')} · $0"
+    )
     if st.button(
-        f"Re-open mean popup · N={_prev['summary'].get('n')} · $0",
+        _reopen_label,
         use_container_width=False,
         key="history_rebuild_reopen",
     ):
         _arm_kpi_dialog("rebuild")
         st.rerun()
+if _rebuild_scope == "portfolio":
+    st.caption(t("bench.rebuild_portfolio_quiet", _ui_lang()))
 
 st.markdown('<div class="sec-label">Run history</div>', unsafe_allow_html=True)
 st.caption(

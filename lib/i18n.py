@@ -512,6 +512,50 @@ _STRINGS = {
             "reference to pool them. Different gold contracts are never auto-merged. "
             "Cost metadata / claim-split changes start a new cohort."
         ),
+        "bench.rebuild_sec_label": "Rebuild mean across N runs · $0 API",
+        "bench.rebuild_scope_label": "Scope",
+        "bench.rebuild_scope_same": "Same case",
+        "bench.rebuild_scope_portfolio": "Portfolio (last N · multi-case)",
+        "bench.rebuild_n_label": "Average over N runs",
+        "bench.rebuild_btn": "Rebuild mean · {n} runs · open KPI popup · $0",
+        "bench.rebuild_btn_help_same": (
+            "Offline mean for one immutable cohort only. Zero API cost."
+        ),
+        "bench.rebuild_btn_help_portfolio": (
+            "Offline exploratory mean across the last N complete runs (all cases) "
+            "with the same roster, track, and scoring_version. Zero API cost."
+        ),
+        "bench.rebuild_portfolio_intro": (
+            "Portfolio pools the newest complete runs across cases — same 9-model "
+            "roster (or current local roster), same track, same scoring_version. "
+            "Does not require the same gold/cohort. **No API calls.**"
+        ),
+        "bench.rebuild_portfolio_stats": (
+            "**{n} runs · {cases} distinct cases** (eligible saved: {avail}) · "
+            "track `{track}` · CV% noisier across heterogeneous cases"
+        ),
+        "bench.rebuild_portfolio_quiet": (
+            "Scores stay reference-relative per case; portfolio = exploratory "
+            "cross-case mean, not clinical validation. Incompatible scoring "
+            "versions are never auto-merged."
+        ),
+        "bench.rebuild_portfolio_success": (
+            "**Portfolio** · **{n} runs · {cases} distinct cases** · "
+            "exploratory cross-case mean · **$0 API**"
+        ),
+        "bench.rebuild_portfolio_caption": (
+            "Each run’s Clinical Composite is still relative to that case’s "
+            "confirmed gold. Averaging across cases is exploratory — not a "
+            "clinical validation claim. CV% can look noisier than same-case."
+        ),
+        "bench.rebuild_portfolio_mean_rank": "Mean rank (lower better): {ranks}",
+        "bench.rebuild_need_portfolio": (
+            "Need at least **2** portfolio-eligible complete runs "
+            "(found {n}). Same roster + track + scoring_version required."
+        ),
+        "bench.rebuild_reopen_portfolio": (
+            "Re-open portfolio mean · N={n} · {cases} cases · $0"
+        ),
     },
     "it": {
         "page_title": "QVAC vs Cloud LLMs - Health Test",
@@ -1022,6 +1066,51 @@ _STRINGS = {
             "quel riferimento per raggrupparle. Contratti gold diversi non vengono "
             "mai uniti in automatico. Metadata di costo / split claim diversi "
             "aprono un nuovo cohort."
+        ),
+        "bench.rebuild_sec_label": "Ricostruisci media su N run · $0 API",
+        "bench.rebuild_scope_label": "Ambito",
+        "bench.rebuild_scope_same": "Stesso caso",
+        "bench.rebuild_scope_portfolio": "Portfolio (ultime N · più casi)",
+        "bench.rebuild_n_label": "Media su N run",
+        "bench.rebuild_btn": "Ricostruisci media · {n} run · apri popup KPI · $0",
+        "bench.rebuild_btn_help_same": (
+            "Media offline per un solo cohort immutabile. Costo API zero."
+        ),
+        "bench.rebuild_btn_help_portfolio": (
+            "Media esplorativa offline sulle ultime N run complete (tutti i casi) "
+            "con stesso roster, track e scoring_version. Costo API zero."
+        ),
+        "bench.rebuild_portfolio_intro": (
+            "Il Portfolio prende le run complete più recenti tra i casi — stesso "
+            "roster (9 modelli o roster locale attuale), stesso track, stessa "
+            "scoring_version. Non richiede lo stesso gold/cohort. **Nessuna "
+            "chiamata API.**"
+        ),
+        "bench.rebuild_portfolio_stats": (
+            "**{n} run · {cases} casi distinti** (eligibili salvate: {avail}) · "
+            "track `{track}` · CV% più rumoroso tra casi eterogenei"
+        ),
+        "bench.rebuild_portfolio_quiet": (
+            "Gli score restano relativi al riferimento di ciascun caso; "
+            "portfolio = media esplorativa cross-caso, non validazione clinica. "
+            "Versioni di scoring incompatibili non vengono mai unite."
+        ),
+        "bench.rebuild_portfolio_success": (
+            "**Portfolio** · **{n} run · {cases} casi distinti** · "
+            "media esplorativa cross-caso · **$0 API**"
+        ),
+        "bench.rebuild_portfolio_caption": (
+            "Il Clinical Composite di ogni run resta relativo al gold confermato "
+            "di quel caso. La media tra casi è esplorativa — non è una claim di "
+            "validazione clinica. Il CV% può sembrare più rumoroso del same-case."
+        ),
+        "bench.rebuild_portfolio_mean_rank": "Rank medio (più basso = meglio): {ranks}",
+        "bench.rebuild_need_portfolio": (
+            "Servono almeno **2** run complete eleggibili per il portfolio "
+            "(trovate {n}). Stesso roster + track + scoring_version obbligatori."
+        ),
+        "bench.rebuild_reopen_portfolio": (
+            "Riapri media portfolio · N={n} · {cases} casi · $0"
         ),
     },
 }
