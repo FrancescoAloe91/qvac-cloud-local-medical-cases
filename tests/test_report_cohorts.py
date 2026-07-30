@@ -59,6 +59,8 @@ def test_mixed_execution_cohort_same_cohort_id_still_summarizes():
     assert summary.n == 5
     assert {row["key"] for row in summary.ranking_mean} == {"chatgpt", "claude"}
     assert any("execution_cohort_id varied" in note for note in summary.outliers)
+    assert any("Same-case Multi mean" in note for note in summary.outliers)
+    assert any("Portfolio cross-case" in note for note in summary.outliers)
 
 
 def test_failure_excludes_only_under_threshold_model():

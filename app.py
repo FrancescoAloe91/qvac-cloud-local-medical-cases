@@ -27,6 +27,7 @@ from benchmark.gold import (
     confirmed_gold as build_confirmed_gold,
     extract_with_chat,
     gold_json,
+    is_strict_track,
     load_confirmed_gold,
     source_quote_is_verbatim,
     track_ui_routing_blurb,
@@ -58,7 +59,7 @@ from benchmark.qvac_bridge import iter_tokens as qvac_iter_tokens
 from benchmark.qvac_variants import (
     is_on_device_key,
     is_qvac_key,
-    local_only_roster,
+    medical_peers_ready,
     merge_roster,
     panel_rows_for_roster,
 )
@@ -2020,9 +2021,14 @@ else:
 live_case = preset.model_copy(update={"stem": (case_stem or "").strip()})
 effective_gold = st.session_state.get("_confirmed_gold_json", "")
 
-# --- Models roster: Band A cloud + Band B local peers + MedPsy ---
-# Apply forced 3× QVAC BEFORE the toggle widget exists (Only local click → next rerun).
+# --- Models roster: Band A cloud + Band B generics + medical_local + MedPsy ---
+# Apply forced presets BEFORE toggle widgets exist (click → next rerun).
 if st.session_state.pop("_force_triple_qvac", False):
+    st.session_state.triple_qvac_toggle = True
+if st.session_state.pop("_force_solo_locali_medici", False):
+    st.session_state.include_cloud_models = False
+    st.session_state.include_generic_peers = False
+    st.session_state.include_medical_peers = True
     st.session_state.triple_qvac_toggle = True
 # Default ON = all three MedPsy quants. One-time migrate older default-off
 # sessions (defer while a run is in flight so we don't touch live roster).
@@ -2036,14 +2042,57 @@ elif not st.session_state.get("_triple_qvac_default_on_v1"):
 
 include_qvac = bool(qvac_ok or qvac_up)
 skip_qvac = False
+_med_ready = medical_peers_ready()
+if "include_medical_peers" not in st.session_state:
+    st.session_state.include_medical_peers = bool(_med_ready and include_qvac)
+if "include_generic_peers" not in st.session_state:
+    st.session_state.include_generic_peers = bool(include_qvac)
+
 include_cloud = st.toggle(
     "Include 3 Cloud API models · OpenAI / Claude / Gemini",
     value=True,
     key="include_cloud_models",
 )
+include_generic = st.toggle(
+    "Include 3 generic local peers · Gemma / Llama / Phi",
+    key="include_generic_peers",
+    disabled=not include_qvac,
+    help="Band B open GGUFs (not medical-specialized). Same QVAC sidecar.",
+)
+include_medical = st.toggle(
+    "Include 3 medical local peers · MedGemma / BioMistral / OpenBioLLM",
+    key="include_medical_peers",
+    disabled=not include_qvac,
+    help="Band medical_local specialized GGUFs. Download with "
+    "./scripts/download_medical_peers.sh when missing.",
+)
+if include_qvac and not _med_ready and include_medical:
+    st.caption(
+        "Medical GGUFs missing under `models/` — toggle stays available but "
+        "slots drop until you run `./scripts/download_medical_peers.sh` "
+        "(or `./scripts/download_all_ggufs.sh`)."
+    )
+elif include_qvac and not _med_ready:
+    st.caption(
+        "Medical peers OFF (GGUFs not ready). "
+        "`./scripts/download_medical_peers.sh` → then turn the toggle on."
+    )
+
+_solo_med = st.button(
+    "Solo locali medici",
+    key="solo_locali_medici_btn",
+    help="Cloud OFF · generic OFF · medical ON · 3× MedPsy ON → 6 models "
+    "(medical-specialized on-device only).",
+    disabled=not include_qvac,
+)
+if _solo_med:
+    st.session_state["_force_solo_locali_medici"] = True
+    st.rerun()
+
 st.caption(
-    "ON = 9 models (3 Cloud + 3 local peers + 3 MedPsy). "
-    "OFF = 6 on-device models only."
+    "Full grid ≤12 (3 Cloud + 3 generic + 3 medical + 3 MedPsy). "
+    "**Solo locali medici** = medical-specialized on-device only (6). "
+    "Generics ≠ medical band."
 )
 with st.expander("Advanced · generation settings", expanded=False):
     st.caption(
@@ -2085,17 +2134,23 @@ st.toggle(
     "3× QVAC · 1.7B / 4B Q4 / 4B Q8",
     key="triple_qvac_toggle",
     disabled=not include_qvac,
-    help="On (default) = three MedPsy GGUFs · grid 3 cloud + 3 local + 3 QVAC. "
-    "Off = disable 3× QVAC and use only MedPsy-4B Q4 (grid 3+3+1). "
+    help="On (default) = three MedPsy GGUFs. "
+    "Off = MedPsy-4B Q4 only. "
     "Same prompt · on-device GGUFs load one after another on the QVAC sidecar. "
-    "To skip cloud entirely use **Only local ×N**.",
+    "Use **Solo locali medici** for medical-only bake-off.",
 )
 triple_qvac = bool(st.session_state.triple_qvac_toggle) and include_qvac
+# When cloud is off, force triple MedPsy for the on-device bake-off.
+_eff_triple = triple_qvac if include_cloud else True
+_eff_generic = bool(include_generic) and include_qvac
+_eff_medical = bool(include_medical) and include_qvac
 
 roster = merge_roster(
     list(cfg.get("candidates") or []) if include_cloud else [],
-    triple_qvac=triple_qvac if include_cloud else True,
+    triple_qvac=_eff_triple,
     include_qvac=include_qvac,
+    include_local_peers=_eff_generic,
+    include_medical_peers=_eff_medical,
 )
 # Default local roster: only slots with a ready GGUF (missing peers disabled).
 roster = [
@@ -2104,6 +2159,13 @@ roster = [
     if c.get("provider") != "qvac" or c.get("gguf_ready", True)
 ]
 n_models = len(roster)
+_solo_medici_active = (
+    not include_cloud
+    and not _eff_generic
+    and _eff_medical
+    and _eff_triple
+    and include_qvac
+)
 
 with st.expander(
     f"Exact prompt (inference) — identical for all {n_models} models",
@@ -2114,20 +2176,45 @@ with st.expander(
     st.markdown("**User**")
     st.code(candidate_user(live_case))
 
+_band_bits = []
+if include_cloud:
+    _band_bits.append("Cloud")
+if _eff_generic:
+    _band_bits.append("generic local")
+if _eff_medical:
+    _band_bits.append("medical local")
+if include_qvac:
+    _band_bits.append("MedPsy")
+_band_label = " + ".join(_band_bits) if _band_bits else "no slots"
 st.markdown(
-    f'<div class="sec-label">Models ({n_models} on the same case · '
-    f'{"3 Cloud + 6 on-device" if include_cloud else "6 on-device · Cloud excluded"})</div>',
+    f'<div class="sec-label">Models ({n_models} on the same case · {_band_label})</div>',
     unsafe_allow_html=True,
 )
-st.caption(
-    (
-        "**Cloud** OpenRouter API · not ChatGPT/Claude/Gemini web · "
-        if include_cloud
-        else "**Cloud API excluded** · "
+if _solo_medici_active:
+    st.caption(
+        "**Solo locali medici** · medical-specialized on-device only · "
+        + track_ui_routing_blurb(benchmark_track)
     )
-    + "**On-device** Gemma / Llama / Phi + three MedPsy GGUFs · "
-    + track_ui_routing_blurb(benchmark_track)
-)
+else:
+    st.caption(
+        (
+            "**Cloud** OpenRouter API · not ChatGPT/Claude/Gemini web · "
+            if include_cloud
+            else "**Cloud API excluded** · "
+        )
+        + (
+            "**Generic** Gemma/Llama/Phi · "
+            if _eff_generic
+            else ""
+        )
+        + (
+            "**Medical** MedGemma/BioMistral/OpenBioLLM · "
+            if _eff_medical
+            else ""
+        )
+        + ("**MedPsy** triple · " if include_qvac and _eff_triple else "")
+        + track_ui_routing_blurb(benchmark_track)
+    )
 _chip_n = 3 if n_models >= 6 else min(3, max(1, n_models))
 chip_cols = st.columns(_chip_n)
 for i, c in enumerate(roster):
@@ -2157,7 +2244,8 @@ if missing:
         "Missing GGUF(s) under `models/`: "
         + ", ".join(missing)
         + ". MedPsy: `./scripts/download_medpsy_gguf.sh` · "
-        "Band B peers: `./scripts/download_local_peers.sh`."
+        "Band B: `./scripts/download_local_peers.sh` · "
+        "Medical: `./scripts/download_medical_peers.sh`."
     )
 
 bd = estimate_cost_breakdown(
@@ -2166,7 +2254,9 @@ bd = estimate_cost_breakdown(
     include_qvac=include_qvac,
     gold_reference=effective_gold or gold_reference,
     n=1,
-    triple_qvac=triple_qvac,
+    triple_qvac=_eff_triple,
+    include_local_peers=_eff_generic,
+    include_medical_peers=_eff_medical,
 )
 bd_multi = estimate_cost_breakdown(
     cfg,
@@ -2174,7 +2264,9 @@ bd_multi = estimate_cost_breakdown(
     include_qvac=include_qvac,
     gold_reference=effective_gold or gold_reference,
     n=int(n_multi),
-    triple_qvac=triple_qvac,
+    triple_qvac=_eff_triple,
+    include_local_peers=_eff_generic,
+    include_medical_peers=_eff_medical,
 )
 bd_local_only = estimate_cost_breakdown(
     cfg,
@@ -2184,6 +2276,8 @@ bd_local_only = estimate_cost_breakdown(
     n=1,
     triple_qvac=True,
     local_only=True,
+    include_local_peers=_eff_generic,
+    include_medical_peers=_eff_medical,
 )
 bd_local_only_multi = estimate_cost_breakdown(
     cfg,
@@ -2193,6 +2287,8 @@ bd_local_only_multi = estimate_cost_breakdown(
     n=int(n_multi),
     triple_qvac=True,
     local_only=True,
+    include_local_peers=_eff_generic,
+    include_medical_peers=_eff_medical,
 )
 
 
@@ -2295,14 +2391,15 @@ with _run_r2[0]:
     )
 with _run_r2[1]:
     st.info(
-        "Use the Cloud toggle above: ON compares all 9 models; OFF makes Single "
-        "and Multi run the 6 on-device models."
+        f"Roster now: **{n_models}** models (max 12). "
+        "Cloud / generic / medical / 3× MedPsy toggles above; "
+        "**Solo locali medici** = 6 medical-specialized on-device."
     )
 st.caption(
     "**Minimum aggregate:** 5 valid runs per model (exploratory cohort); "
     "N/A does not block other models. "
     "Multi N: 5 = quick look · ~10 = better CV stability · 20+ = diminishing returns. "
-    "With Cloud OFF, Multi is the on-device bake-off (Gemma/Llama/Phi + 3× MedPsy). "
+    "Cloud OFF = on-device bake-off from the active toggles. "
     "QVAC only = MedPsy rehearsal without cloud."
 )
 
@@ -3153,14 +3250,14 @@ if st.session_state.get("confirmed_run"):
             )
 
         if _local_bakeoff:
-            local_slots = local_only_roster()
-            # Ensure panel widgets exist for every slot (triple forced on click).
+            # Respect active toggles (generic / medical / MedPsy) — not a fixed 6.
+            local_slots = [c for c in roster if is_on_device_key(str(c.get("key") or ""))]
             for slot in local_slots:
                 k = slot["key"]
                 if k not in status_boxes:
                     _abort_run(
-                        "UI panels missing for Only local — turn on "
-                        "**3× QVAC** and retry (or reload the page)."
+                        "UI panels missing for Only local — reload the page "
+                        "after changing roster toggles."
                     )
         else:
             local_slots = [c for c in roster if is_qvac_key(c["key"])]
@@ -3592,8 +3689,19 @@ if st.session_state.get("confirmed_run"):
                             ),
                             ram_mb=meta_fields.get("ram_mb"),
                             gguf_mb=meta_fields.get("gguf_mb"),
+                            gguf_sha256=str(meta_fields.get("gguf_sha256") or ""),
+                            device=str(meta_fields.get("device") or ""),
+                            gpu_layers=meta_fields.get("gpu_layers"),
+                            ctx_size=meta_fields.get("ctx_size"),
+                            predict=meta_fields.get("predict"),
+                            seed=meta_fields.get("seed"),
+                            temperature=meta_fields.get("temperature"),
+                            top_k=meta_fields.get("top_k"),
+                            top_p=meta_fields.get("top_p"),
                             cost_usd=0.0,
                             error=error_text,
+                            prior_attempts=list(meta_fields.get("prior_attempts") or []),
+                            retry_count=int(meta_fields.get("retry_count") or 0),
                         ),
                     )
                     label_by_key[key_] = cand_row.display_label or cand_row.label
@@ -3612,15 +3720,31 @@ if st.session_state.get("confirmed_run"):
                     qkey = slot["key"]
                     qlabel = slot.get("display_label") or slot.get("label") or qkey
                     gguf = slot.get("gguf_path")
-                    _sampling: dict = (
-                        {"temp": 0.2, "top_k": 20, "top_p": 0.95}
-                        if uses_controlled_sampling(benchmark_track)
-                        else {}
-                    )
+                    model_id = str(slot.get("model") or qkey)
+                    # Match CLI runner: blind id is assigned in order; seed uses
+                    # sha256(f"{blind_id}:{key}:{model_id}")[:8] % (2**31-1).
+                    _next_blind = f"Candidate {int(lo_ui['blind_i']) + 1}"
+                    _sampling: dict = {}
+                    if uses_controlled_sampling(benchmark_track):
+                        _sampling = {"temp": 0.2, "top_k": 20, "top_p": 0.95}
+                        if is_strict_track(benchmark_track):
+                            seed_basis = f"{_next_blind}:{qkey}:{model_id}"
+                            _sampling["seed"] = int(
+                                hashlib.sha256(seed_basis.encode("utf-8")).hexdigest()[
+                                    :8
+                                ],
+                                16,
+                            ) % (2**31 - 1)
                     status_boxes[qkey].markdown(
                         _status_pill("wait", "Loading GGUF…" if gguf else "Streaming…"),
                         unsafe_allow_html=True,
                     )
+                    _runtime_pin: dict = {
+                        "seed": _sampling.get("seed"),
+                        "temperature": _sampling.get("temp"),
+                        "top_k": _sampling.get("top_k"),
+                        "top_p": _sampling.get("top_p"),
+                    }
                     if gguf:
                         loaded = qvac_load_model(gguf, sampling=_sampling)
                         if not loaded.get("ok"):
@@ -3650,10 +3774,26 @@ if st.session_state.get("confirmed_run"):
                                 str(qlabel),
                                 "",
                                 str(loaded.get("error") or "Failed to load GGUF"),
-                                {},
+                                {
+                                    **_runtime_pin,
+                                    "gguf_sha256": loaded.get("gguf_sha256") or "",
+                                    "device": loaded.get("device") or "",
+                                    "gpu_layers": loaded.get("gpu_layers"),
+                                    "ctx_size": loaded.get("ctx_size"),
+                                    "predict": loaded.get("predict"),
+                                },
                             )
                             _poll_pipe()
                             continue
+                        for _rk in (
+                            "device",
+                            "gpu_layers",
+                            "ctx_size",
+                            "predict",
+                            "gguf_sha256",
+                        ):
+                            if loaded.get(_rk) is not None and loaded.get(_rk) != "":
+                                _runtime_pin[_rk] = loaded.get(_rk)
                     status_boxes[qkey].markdown(
                         _status_pill("wait", "Streaming…"), unsafe_allow_html=True
                     )
@@ -3779,9 +3919,36 @@ if st.session_state.get("confirmed_run"):
                             buf or "",
                             err_msg,
                             {
+                                **_runtime_pin,
                                 "model": slot.get("model") or qkey,
                                 "completion_tokens": done_meta.get("completion_tokens"),
                                 "finish_reason": done_meta.get("finish_reason"),
+                                "device": (
+                                    done_meta.get("device")
+                                    or _runtime_pin.get("device")
+                                    or qvac_health().get("device")
+                                    or ""
+                                ),
+                                "gpu_layers": (
+                                    done_meta.get("gpu_layers")
+                                    if done_meta.get("gpu_layers") is not None
+                                    else _runtime_pin.get("gpu_layers")
+                                ),
+                                "ctx_size": (
+                                    done_meta.get("ctx_size")
+                                    if done_meta.get("ctx_size") is not None
+                                    else _runtime_pin.get("ctx_size")
+                                ),
+                                "predict": (
+                                    done_meta.get("predict")
+                                    if done_meta.get("predict") is not None
+                                    else _runtime_pin.get("predict")
+                                ),
+                                "gguf_sha256": (
+                                    done_meta.get("gguf_sha256")
+                                    or _runtime_pin.get("gguf_sha256")
+                                    or ""
+                                ),
                             },
                         )
                     else:
@@ -3803,13 +3970,54 @@ if st.session_state.get("confirmed_run"):
                             "ram_mb": done_meta.get("ram_mb"),
                             "gguf_mb": done_meta.get("gguf_mb"),
                             "finish_reason": done_meta.get("finish_reason"),
-                            "device": done_meta.get("device")
-                            or qvac_health().get("device")
-                            or "?",
+                            "device": (
+                                done_meta.get("device")
+                                or _runtime_pin.get("device")
+                                or qvac_health().get("device")
+                                or ""
+                            ),
+                            "gpu_layers": (
+                                done_meta.get("gpu_layers")
+                                if done_meta.get("gpu_layers") is not None
+                                else _runtime_pin.get("gpu_layers")
+                                if _runtime_pin.get("gpu_layers") is not None
+                                else qvac_health().get("gpu_layers")
+                            ),
+                            "ctx_size": (
+                                done_meta.get("ctx_size")
+                                if done_meta.get("ctx_size") is not None
+                                else _runtime_pin.get("ctx_size")
+                                if _runtime_pin.get("ctx_size") is not None
+                                else qvac_health().get("ctx_size")
+                            ),
+                            "predict": (
+                                done_meta.get("predict")
+                                if done_meta.get("predict") is not None
+                                else _runtime_pin.get("predict")
+                                if _runtime_pin.get("predict") is not None
+                                else qvac_health().get("predict")
+                            ),
+                            "seed": (
+                                done_meta.get("seed")
+                                if done_meta.get("seed") is not None
+                                else _runtime_pin.get("seed")
+                            ),
+                            "temperature": _runtime_pin.get("temperature"),
+                            "top_k": _runtime_pin.get("top_k"),
+                            "top_p": _runtime_pin.get("top_p"),
+                            "gguf_sha256": (
+                                done_meta.get("gguf_sha256")
+                                or _runtime_pin.get("gguf_sha256")
+                                or ""
+                            ),
                             "model": slot.get("model") or qkey,
                         }
                         kpi = _kpi_line(meta_done, buf)
-                        kpi_full = f"{kpi} · device {meta_done['device']}"
+                        kpi_full = f"{kpi} · device {meta_done['device'] or '?'}"
+                        if meta_done.get("gpu_layers") is not None:
+                            kpi_full += f" · L{meta_done['gpu_layers']}"
+                        if meta_done.get("seed") is not None:
+                            kpi_full += f" · seed {meta_done['seed']}"
                         kpi_boxes[qkey].markdown(
                             f'<div class="kpi-slot"><p class="kpi-row">{kpi_full}</p></div>',
                             unsafe_allow_html=True,
@@ -4437,9 +4645,41 @@ if st.session_state.get("confirmed_run"):
                     key="rank_chart_local_only_mean",
                 )
                 if summary.outliers:
-                    st.caption("Notes · " + " · ".join(summary.outliers[:4]))
-
-                # Mean on-device KPIs (TTFT / TPS / latency / RAM)
+                    _exec_notes = [
+                        o
+                        for o in summary.outliers
+                        if "execution_cohort" in o.lower()
+                    ]
+                    _other_notes = [
+                        o for o in summary.outliers if o not in _exec_notes
+                    ]
+                    if _exec_notes:
+                        st.caption(
+                            "⚠️ "
+                            + " · ".join(_exec_notes)
+                            + " · mean same recipe; routes/N/A may differ."
+                        )
+                    if _other_notes:
+                        st.caption("Notes · " + " · ".join(_other_notes[:4]))
+                    _prior_bits = []
+                    for art in all_artifacts:
+                        for cand in art.candidates or []:
+                            pa = list(getattr(cand.meta, "prior_attempts", None) or [])
+                            if pa:
+                                _prior_bits.append(
+                                    f"{cand.candidate_key}×{len(pa)}"
+                                )
+                        for j in art.judgments or []:
+                            pa = list(getattr(j, "prior_attempts", None) or [])
+                            if pa:
+                                _prior_bits.append(
+                                    f"judge:{j.candidate_key}×{len(pa)}"
+                                )
+                    if _prior_bits:
+                        st.caption(
+                            "Retries kept prior attempts · "
+                            + ", ".join(_prior_bits[:8])
+                        )
                 import statistics as _stats_lo
 
                 _kpi_acc: dict[str, dict[str, list]] = {}
@@ -5494,7 +5734,41 @@ if st.session_state.get("confirmed_run"):
                         "are required. Missing scores are never imputed."
                     )
                 if summary.outliers:
-                    st.caption("Notes · " + " · ".join(summary.outliers[:4]))
+                    _exec_notes = [
+                        o
+                        for o in summary.outliers
+                        if "execution_cohort" in o.lower()
+                    ]
+                    _other_notes = [
+                        o for o in summary.outliers if o not in _exec_notes
+                    ]
+                    if _exec_notes:
+                        st.caption(
+                            "⚠️ "
+                            + " · ".join(_exec_notes)
+                            + " · mean same recipe; routes/N/A may differ."
+                        )
+                    if _other_notes:
+                        st.caption("Notes · " + " · ".join(_other_notes[:4]))
+                    _prior_bits = []
+                    for art in all_artifacts:
+                        for cand in art.candidates or []:
+                            pa = list(getattr(cand.meta, "prior_attempts", None) or [])
+                            if pa:
+                                _prior_bits.append(
+                                    f"{cand.candidate_key}×{len(pa)}"
+                                )
+                        for j in art.judgments or []:
+                            pa = list(getattr(j, "prior_attempts", None) or [])
+                            if pa:
+                                _prior_bits.append(
+                                    f"judge:{j.candidate_key}×{len(pa)}"
+                                )
+                    if _prior_bits:
+                        st.caption(
+                            "Retries kept prior attempts · "
+                            + ", ".join(sorted(set(_prior_bits))[:8])
+                        )
 
             st.markdown(
                 '<div class="sec-label">Per-run detail · open a tab</div>',

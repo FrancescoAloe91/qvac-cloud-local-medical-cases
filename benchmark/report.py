@@ -320,10 +320,17 @@ def summarize_runs(
     }
     exec_ids_present = {e for e in exec_ids if e}
     if len(exec_ids_present) > 1:
-        outliers.append(
-            "execution_cohort_id varied across runs (audit only; mean still same "
-            "cohort_id — e.g. per-run N/A or best-effort routing)."
-        )
+        if case_id == "portfolio":
+            outliers.append(
+                "execution_cohort_id varied across runs (audit only; mean still same "
+                "cohort_id — e.g. per-run N/A or best-effort routing)."
+            )
+        else:
+            outliers.append(
+                "Same-case Multi mean pools on cohort_id (requested recipe); "
+                "execution_cohort_id varied — routes/N/A/GGUF may differ "
+                "(audit only; Portfolio cross-case means unchanged)."
+            )
     return MultiRunSummary(
         case_id=case_id,
         n=min((len(scores.get(key, [])) for key in eligible_keys), default=0),

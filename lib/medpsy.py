@@ -59,7 +59,8 @@ def runtime_header_chip() -> str:
     return f"MedPsy-4B {quant_label()} · Ollama {OLLAMA_MODEL} · on-device"
 
 # Inference uses Ollama Modelfile defaults only (temperature 0.6, top_k 20, top_p 0.95).
-# The dashboard does not override sampling — honest demo = same stack as setup_medpsy.sh.
+# Legacy helper — gold Automated Benchmark path uses the QVAC SDK sidecar, not Ollama.
+# Historical setup script: OLD/legacy/setup_medpsy.sh.
 
 _THINK_RE = re.compile(r"<think>(.*?)</think>", re.DOTALL)
 

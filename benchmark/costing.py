@@ -81,21 +81,37 @@ def extraction_from_artifact(artifact: RunArtifact) -> float:
     return 0.0
 
 
+def _extraction_per_distinct_batch(
+    artifacts: Sequence[RunArtifact],
+    *,
+    extraction_cost_usd: Optional[float] = None,
+) -> float:
+    """Charge gold extraction once per distinct batch_id (or prepare).
+
+    Same-batch Multi → ×1. Portfolio / multi-batch history → sum once per batch.
+    Empty batch_id groups collapse to a single ``__none__`` bucket (legacy).
+    """
+    if extraction_cost_usd is not None:
+        return batch_shared_cost_usd(extraction_cost_usd)
+    seen: Dict[str, float] = {}
+    for a in artifacts:
+        bid = str(getattr(a, "batch_id", None) or "").strip() or "__none__"
+        if bid in seen:
+            continue
+        seen[bid] = extraction_from_artifact(a)
+    return round(sum(seen.values()), 6)
+
+
 def batch_total_cost_usd(
     artifacts: Sequence[RunArtifact],
     *,
     extraction_cost_usd: Optional[float] = None,
 ) -> float:
-    """Sum of run costs + extraction once (from arg or first artifact metadata)."""
+    """Sum of run costs + extraction once per distinct batch_id."""
     runs = round(sum(_f(getattr(a, "total_cost_usd", 0.0)) for a in artifacts), 6)
-    if extraction_cost_usd is not None:
-        shared = batch_shared_cost_usd(extraction_cost_usd)
-    else:
-        shared = 0.0
-        for a in artifacts:
-            shared = extraction_from_artifact(a)
-            if shared > 0:
-                break
+    shared = _extraction_per_distinct_batch(
+        artifacts, extraction_cost_usd=extraction_cost_usd
+    )
     return round(runs + shared, 6)
 
 
@@ -115,15 +131,16 @@ def batch_cost_breakdown(
         else:
             # Fallback: treat total as run
             pass
-    if extraction_cost_usd is not None:
-        shared = batch_shared_cost_usd(extraction_cost_usd)
-    else:
-        shared = 0.0
-        for a in artifacts:
-            shared = extraction_from_artifact(a)
-            if shared > 0:
-                break
+    shared = _extraction_per_distinct_batch(
+        artifacts, extraction_cost_usd=extraction_cost_usd
+    )
     total = round(run_sum + shared, 6)
+    n_batches = len(
+        {
+            str(getattr(a, "batch_id", None) or "").strip() or "__none__"
+            for a in artifacts
+        }
+    )
     return {
         "candidates_usd": round(cand_sum, 6) if cand_sum else run_sum,
         "judge_usd": round(judge_sum, 6),
@@ -132,5 +149,6 @@ def batch_cost_breakdown(
         "batch_shared_cost_usd": shared,
         "batch_total_cost_usd": total,
         "n_runs": len(artifacts),
+        "n_batches": n_batches,
         "total_usd": total,
     }

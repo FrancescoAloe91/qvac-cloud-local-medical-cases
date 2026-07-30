@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
-# Active dashboard roster (3 cloud + 3 local peers + 3 MedPsy). Legacy keys
-# stay in MODEL_LABELS for old JSON only — KPI / history / charts drop them.
+# Active dashboard roster (≤12: 3 cloud + 3 generic + 3 medical + 3 MedPsy).
+# Legacy keys stay in MODEL_LABELS for old JSON only — KPI / history / charts drop them.
 CURRENT_ROSTER_KEYS: Tuple[str, ...] = (
     "chatgpt",
     "claude",
@@ -13,6 +13,9 @@ CURRENT_ROSTER_KEYS: Tuple[str, ...] = (
     "local_gemma",
     "local_llama",
     "local_phi",
+    "local_medgemma",
+    "local_biomistral",
+    "local_openbiollm",
     "qvac_1_7b",
     "qvac",
     "qvac_4b_q8",
@@ -97,6 +100,18 @@ MODEL_LABELS: Dict[str, Dict[str, str]] = {
     "local_phi": {
         "name": "Local Phi",
         "version": "Phi-3.5-mini Instruct Q4",
+    },
+    "local_medgemma": {
+        "name": "MedGemma",
+        "version": "MedGemma-4B-IT Q4",
+    },
+    "local_biomistral": {
+        "name": "BioMistral",
+        "version": "BioMistral-7B Q4",
+    },
+    "local_openbiollm": {
+        "name": "OpenBioLLM",
+        "version": "Llama3-OpenBioLLM-8B Q4",
     },
     # legacy Band B peer (older artifacts)
     "local_qwen": {

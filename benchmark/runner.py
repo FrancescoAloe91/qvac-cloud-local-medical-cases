@@ -35,7 +35,7 @@ from benchmark.prompts import (
     missing_section_ids,
     parse_candidate_answers,
 )
-from benchmark.qvac_variants import is_qvac_key, local_only_roster, merge_roster
+from benchmark.qvac_variants import is_qvac_key, merge_roster
 from benchmark.report import summarize_runs, write_artifact, write_summary
 from benchmark.schema import (
     CandidateAnswer,
@@ -294,6 +294,8 @@ def estimate_cost_breakdown(
     n: int = 1,
     triple_qvac: bool = False,
     local_only: bool = False,
+    include_local_peers: Optional[bool] = None,
+    include_medical_peers: Optional[bool] = None,
 ) -> Dict[str, Any]:
     """Length-aware OpenRouter spend estimate (USD).
 
@@ -334,12 +336,26 @@ def estimate_cost_breakdown(
     judge_out_primary = int(_JUDGE_PRIMARY_MAX_TOKENS)
 
     if local_only:
-        roster = local_only_roster()
+        roster = merge_roster(
+            [],
+            triple_qvac=bool(triple_qvac),
+            include_qvac=True,
+            include_local_peers=(
+                True if include_local_peers is None else bool(include_local_peers)
+            ),
+            include_medical_peers=(
+                False
+                if include_medical_peers is None
+                else bool(include_medical_peers)
+            ),
+        )
     else:
         roster = merge_roster(
             list(cfg.get("candidates") or []),
             triple_qvac=bool(triple_qvac),
             include_qvac=bool(include_qvac),
+            include_local_peers=include_local_peers,
+            include_medical_peers=include_medical_peers,
         )
 
     per_model: List[Dict[str, Any]] = []
@@ -802,6 +818,18 @@ def _merge_collect_meta(first: CandidateAnswer, second: CandidateAnswer) -> None
         3,
     )
     second.meta.retry_count = max(1, int(first.meta.retry_count or 0) + 1)
+    prior = list(first.meta.prior_attempts or [])
+    prior.append(
+        {
+            "error": first.meta.error or "",
+            "status": "error" if first.meta.error else "superseded",
+            "model": first.meta.model,
+            "provider": first.meta.provider,
+            "latency_s": first.meta.latency_s,
+            "finish_reason": first.meta.finish_reason or "",
+        }
+    )
+    second.meta.prior_attempts = prior + list(second.meta.prior_attempts or [])
 
 
 def _collect_candidate(

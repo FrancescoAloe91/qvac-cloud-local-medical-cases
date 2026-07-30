@@ -63,6 +63,7 @@ def test_batch_total_extraction_once_for_n_gt_1():
                 started_at="t0",
                 finished_at="t1",
                 n_index=i + 1,
+                batch_id="batch-a",
                 total_cost_usd=bd["run_cost_usd"],
                 cost_breakdown=bd,
                 models_config={"extraction_cost_usd": 0.12},
@@ -76,6 +77,34 @@ def test_batch_total_extraction_once_for_n_gt_1():
     assert bb["run_cost_usd"] == 1.5
     assert bb["batch_total_cost_usd"] == 1.62
     assert bb["n_runs"] == 5
+
+
+def test_batch_total_sums_extraction_per_distinct_batch_id():
+    """Portfolio / multi-batch: extraction once per batch_id, not once globally."""
+    arts = []
+    for batch, extract in (("batch-a", 0.12), ("batch-b", 0.10)):
+        for i in range(2):
+            cands = [_cand("a", 0.10)]
+            judges = [_judge("a", 0.20)]
+            bd = cost_breakdown_for_run(cands, judges, extraction_cost_usd=extract)
+            arts.append(
+                RunArtifact(
+                    run_id=f"{batch}-r{i}",
+                    case_id="caseC",
+                    started_at="t0",
+                    finished_at="t1",
+                    n_index=i + 1,
+                    batch_id=batch,
+                    total_cost_usd=bd["run_cost_usd"],
+                    cost_breakdown=bd,
+                    models_config={"extraction_cost_usd": extract},
+                )
+            )
+    # 4 * 0.30 run + 0.12 + 0.10 = 1.42
+    assert batch_total_cost_usd(arts) == 1.42
+    bb = batch_cost_breakdown(arts)
+    assert bb["batch_shared_cost_usd"] == 0.22
+    assert bb["n_batches"] == 2
 
 
 def test_batch_total_n1_includes_extraction_once():

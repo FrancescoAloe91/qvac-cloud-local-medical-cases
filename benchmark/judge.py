@@ -11,7 +11,11 @@ from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from typing import Any, Callable, Dict, List, Optional
 
 from benchmark import openrouter
-from benchmark.gold import load_confirmed_gold, uses_controlled_sampling
+from benchmark.gold import (
+    is_strict_track,
+    load_confirmed_gold,
+    uses_controlled_sampling,
+)
 from benchmark.run_control import is_cancelled
 from benchmark.prompts import judge_system, judge_user
 from benchmark.schema import (
@@ -1091,6 +1095,7 @@ def judge_candidate(
     progress_callback: Optional[Callable[[str, int], None]] = None,
     allowed_providers: Optional[List[str]] = None,
     require_parameters: bool = False,
+    allow_fallbacks: bool = True,
 ) -> JudgeResult:
     load_confirmed_gold(gold_reference)  # validate before any paid request
     messages = [
@@ -1121,6 +1126,7 @@ def judge_candidate(
         api_key=api_key,
         allowed_providers=allowed_providers,
         require_parameters=require_parameters,
+        allow_fallbacks=allow_fallbacks,
     )
     accumulated_meta = _append_paid_attempt(meta, role="primary", prior=None)
     meta = accumulated_meta
@@ -1191,6 +1197,7 @@ def judge_candidate(
                 api_key=api_key,
                 allowed_providers=allowed_providers,
                 require_parameters=require_parameters,
+                allow_fallbacks=allow_fallbacks,
             )
             accumulated_meta = _append_paid_attempt(
                 meta_repair, role="corrective_retry", prior=accumulated_meta
@@ -1456,7 +1463,8 @@ class PipelinedJudge:
                 if uses_controlled_sampling(self.benchmark_track)
                 else None
             ),
-            require_parameters=False,
+            require_parameters=is_strict_track(self.benchmark_track),
+            allow_fallbacks=not is_strict_track(self.benchmark_track),
             progress_callback=lambda stage, percent: self._worker_progress.put(
                 {
                     "key": cand.candidate_key,
@@ -1958,7 +1966,8 @@ class PipelinedJudge:
                     if uses_controlled_sampling(self.benchmark_track)
                     else None
                 ),
-                require_parameters=False,
+                require_parameters=is_strict_track(self.benchmark_track),
+                allow_fallbacks=not is_strict_track(self.benchmark_track),
                 progress_callback=lambda stage, percent: self._worker_progress.put(
                     {
                         "key": cand.candidate_key,
@@ -2013,6 +2022,27 @@ class PipelinedJudge:
                 retry.status = "timed_out"
                 retry.failure_reason = "Corrective retry timed out"
             retry.retry_count += 1
+            prior_list = list(getattr(j, "prior_attempts", None) or [])
+            prior_list.append(
+                {
+                    "error": j.failure_reason or "",
+                    "status": j.status,
+                    "model": j.judge_model,
+                    "provider": (
+                        j.judge_meta.provider
+                        if isinstance(j.judge_meta, ModelCallMeta)
+                        else "openrouter"
+                    ),
+                    "latency_s": (
+                        j.judge_meta.latency_s
+                        if isinstance(j.judge_meta, ModelCallMeta)
+                        else None
+                    ),
+                }
+            )
+            retry.prior_attempts = prior_list + list(
+                getattr(retry, "prior_attempts", None) or []
+            )
             retry.primary_judge_model = self.judge_model
             self._drain_worker_progress()
             self._by_key[j.candidate_key] = retry

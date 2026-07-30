@@ -1,4 +1,4 @@
-"""On-device GGUF variants: MedPsy (QVAC) + Band B open local peers."""
+"""On-device GGUF variants: MedPsy (QVAC) + Band B open peers + medical-local peers."""
 
 from __future__ import annotations
 
@@ -89,6 +89,49 @@ LOCAL_PEER_SPECS: List[Dict[str, Any]] = [
     },
 ]
 
+# Band medical_local — medical-specialized open Q4 GGUFs (not Band B generics).
+MEDICAL_PEER_SPECS: List[Dict[str, Any]] = [
+    {
+        "key": "local_medgemma",
+        "label": "MedGemma 4B IT",
+        "display_label": "Medical · MedGemma-4B-IT Q4 · on-device",
+        "vendor": "Google / Unsloth (open)",
+        "site": "local (QVAC SDK)",
+        "color": "#f59e0b",
+        "provider": "qvac",
+        "model": "medgemma-4b-it-q4",
+        "gguf": "medgemma-4b-it-Q4_K_M.gguf",
+        "band": "medical_local",
+    },
+    {
+        "key": "local_biomistral",
+        "label": "BioMistral 7B",
+        "display_label": "Medical · BioMistral-7B Q4 · on-device",
+        "vendor": "BioMistral (open)",
+        "site": "local (QVAC SDK)",
+        "color": "#ef4444",
+        "provider": "qvac",
+        "model": "biomistral-7b-q4",
+        "gguf": "BioMistral-7B-Q4_K_M.gguf",
+        "band": "medical_local",
+    },
+    {
+        "key": "local_openbiollm",
+        "label": "OpenBioLLM 8B",
+        "display_label": "Medical · Llama3-OpenBioLLM-8B Q4 · on-device",
+        "vendor": "Aaditya / QuantFactory (open)",
+        "site": "local (QVAC SDK)",
+        "color": "#ec4899",
+        "provider": "qvac",
+        "model": "llama3-openbiollm-8b-q4",
+        "gguf": "Llama3-OpenBioLLM-8B.Q4_K_M.gguf",
+        "band": "medical_local",
+    },
+]
+
+_LOCAL_PEER_KEYS = frozenset(str(s["key"]) for s in LOCAL_PEER_SPECS)
+_MEDICAL_PEER_KEYS = frozenset(str(s["key"]) for s in MEDICAL_PEER_SPECS)
+
 
 def gguf_path(filename: str) -> Path:
     return MODELS_DIR / filename
@@ -113,9 +156,24 @@ def local_peer_candidates() -> List[Dict[str, Any]]:
     return [_with_gguf(s) for s in LOCAL_PEER_SPECS]
 
 
+def medical_peer_candidates() -> List[Dict[str, Any]]:
+    """Band medical_local specialized GGUFs (always all three when included)."""
+    return [_with_gguf(s) for s in MEDICAL_PEER_SPECS]
+
+
+def medical_peers_ready() -> bool:
+    """True when all three medical-local GGUFs are present and non-trivial."""
+    return all(c.get("gguf_ready") for c in medical_peer_candidates())
+
+
 def local_only_roster() -> List[Dict[str, Any]]:
     """Fair on-device compare: 3 open peers + 3 MedPsy quants (always all six)."""
     return local_peer_candidates() + variant_candidates(triple=True)
+
+
+def local_medical_only_roster() -> List[Dict[str, Any]]:
+    """Medical-specialized on-device only: 3 MedPsy + 3 medical_local (six slots)."""
+    return medical_peer_candidates() + variant_candidates(triple=True)
 
 
 def merge_roster(
@@ -124,15 +182,21 @@ def merge_roster(
     triple_qvac: bool,
     include_qvac: bool,
     include_local_peers: Optional[bool] = None,
+    include_medical_peers: Optional[bool] = None,
 ) -> List[Dict[str, Any]]:
-    """Band A cloud + Band B local peers + optional MedPsy slot(s).
+    """Band A cloud + Band B generics + medical_local + optional MedPsy slot(s).
 
-    Drops YAML qvac / free_light / local_peer rows to avoid duplicates.
+    Drops YAML qvac / free_light / local_peer / medical_local rows to avoid duplicates.
     ``include_local_peers`` defaults to the same gate as ``include_qvac``
-    (sidecar up = all on-device slots available).
+    (sidecar up = generic on-device slots available).
+    ``include_medical_peers`` defaults False unless explicitly requested (UI
+    turns it on when GGUFs are ready).
+    Cap: ≤12 = 3 cloud + 3 generic + 3 medical + 3 MedPsy.
     """
     if include_local_peers is None:
         include_local_peers = include_qvac
+    if include_medical_peers is None:
+        include_medical_peers = False
     # Band A only from YAML. Accept current API rows and archived free_web rows.
     cloud = [
         c
@@ -141,28 +205,35 @@ def merge_roster(
         and (c.get("band") or "free_web") in {"api", "free_web"}
     ]
     peers = local_peer_candidates() if include_local_peers else []
+    medical = medical_peer_candidates() if include_medical_peers else []
     medpsy = variant_candidates(triple=triple_qvac) if include_qvac else []
-    return cloud + peers + medpsy
+    return cloud + peers + medical + medpsy
 
 
 def is_qvac_key(key: str) -> bool:
-    """MedPsy / QVAC brand slots only (not Band B local peers)."""
+    """MedPsy / QVAC brand slots only (not Band B or medical_local peers)."""
     k = (key or "").lower()
     return k == "qvac" or k.startswith("qvac_")
 
 
 def is_local_peer_key(key: str) -> bool:
-    k = (key or "").lower()
-    return k.startswith("local_")
+    """Band B generic open peers only (not medical_local)."""
+    return (key or "") in _LOCAL_PEER_KEYS
+
+
+def is_medical_peer_key(key: str) -> bool:
+    return (key or "") in _MEDICAL_PEER_KEYS
 
 
 def is_on_device_key(key: str) -> bool:
-    return is_qvac_key(key) or is_local_peer_key(key)
+    return is_qvac_key(key) or is_local_peer_key(key) or is_medical_peer_key(key)
 
 
 def panel_rows_for_roster(roster: List[Dict[str, Any]]) -> List[List[Dict[str, Any]]]:
-    """Layout: 7 → 3+3+1 · 9 → 3×3 · 6 cloud-only → 3+3 · else one row."""
+    """Layout: 12 → 3×4 · 9 → 3×3 · 7 → 3+3+1 · 6 → 3+3 · else one row."""
     n = len(roster)
+    if n >= 12:
+        return [roster[0:3], roster[3:6], roster[6:9], roster[9:12]]
     if n >= 9:
         return [roster[0:3], roster[3:6], roster[6:9]]
     if n == 7:

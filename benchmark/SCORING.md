@@ -172,8 +172,14 @@ only; section summaries are display-only), model configuration, prompt/scoring
 versions, and protocol track. Multi/Rebuild same-case means pool only on matching
 `cohort_id`; `execution_cohort_id` (actual routed providers/models, GGUF SHA,
 QVAC device / ctx / seed, judge endpoint) is audit metadata and does not split
-the batch mean. `controlled` is best-effort preferred-provider;
-`strict_controlled` is opt-in no-fallback; native-default runs never mix.
+the batch mean — same-case UI captions strengthen when it varies. **Portfolio**
+cross-case means stay exploratory and are not broken by that disclosure.
+`controlled` is best-effort preferred-provider; `strict_controlled` is opt-in
+no-fallback (judge + candidates); native-default runs never mix.
+
+On-device roster bands: Band B generics (Gemma/Llama/Phi) ≠ Band
+**medical_local** (MedGemma/BioMistral/OpenBioLLM); MedPsy is the QVAC brand
+triple. Cap ≤12 with all toggles on.
 
 Multi runs continue when any valid judged results remain and abort early only
 when judge infrastructure is globally unavailable. The judge pipeline has a

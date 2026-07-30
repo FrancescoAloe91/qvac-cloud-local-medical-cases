@@ -159,3 +159,28 @@ def test_execution_cohort_changes_with_routed_provider_and_gguf():
         judgments=[],
     )
     assert d1 != d2
+
+
+def test_judge_candidate_forwards_strict_provider_prefs():
+    """judge_candidate must thread require_parameters + allow_fallbacks into chat."""
+    import inspect
+
+    from benchmark.judge import judge_candidate
+
+    sig = inspect.signature(judge_candidate)
+    assert "require_parameters" in sig.parameters
+    assert "allow_fallbacks" in sig.parameters
+    assert sig.parameters["allow_fallbacks"].default is True
+    src = inspect.getsource(judge_candidate)
+    assert "allow_fallbacks=allow_fallbacks" in src
+    assert "require_parameters=require_parameters" in src
+
+
+def test_pipelined_judge_uses_strict_track_flags():
+    import inspect
+
+    from benchmark.judge import PipelinedJudge
+
+    src = inspect.getsource(PipelinedJudge)
+    assert "allow_fallbacks=not is_strict_track" in src
+    assert "require_parameters=is_strict_track" in src

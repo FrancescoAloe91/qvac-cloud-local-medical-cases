@@ -99,6 +99,8 @@ class ModelCallMeta(BaseModel):
     error: Optional[str] = None
     # Append-only paid OpenRouter attempts (primary / corrective / verifier).
     paid_attempts: List[Dict[str, Any]] = Field(default_factory=list)
+    # Prior failed/superseded attempts kept for audit (not only retry_count).
+    prior_attempts: List[Dict[str, Any]] = Field(default_factory=list)
     configuration_deviation: bool = False
     requested_providers: List[str] = Field(default_factory=list)
 
@@ -141,6 +143,8 @@ class JudgeResult(BaseModel):
     quality_score: Optional[float] = None
     discipline_score: Optional[float] = None
     retry_count: int = 0
+    # Prior failed/superseded judge observations (error, status, model, …).
+    prior_attempts: List[Dict[str, Any]] = Field(default_factory=list)
     judge_model: str  # effective judge that produced this observation
     primary_judge_model: str = ""  # requested primary; may differ after verifier
     judge_meta: ModelCallMeta

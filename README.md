@@ -48,12 +48,20 @@ Demo cases and rubric scoring are not part of the active protocol.
 
 ### 2. Candidates collect answers
 
-Nine roster slots answer the same five questions under the same prompt:
+Nine roster slots answer the same five questions under the same prompt (up to
+**12** when medical peers are enabled):
 
 - Cloud (OpenRouter API routes in [benchmark/models.yaml](benchmark/models.yaml)):
   `openai/gpt-5.5`, `anthropic/claude-sonnet-5`, `google/gemini-3.5-flash`
-- Local GGUFs via the QVAC SDK sidecar: Gemma 2 2B IT Q4, Llama 3.2 3B Instruct
-  Q4, Phi-3.5 Mini Instruct Q4, MedPsy 1.7B Q4, MedPsy 4B Q4, MedPsy 4B Q8
+- Band B generic local GGUFs (toggle): Gemma 2 2B IT Q4, Llama 3.2 3B Instruct
+  Q4, Phi-3.5 Mini Instruct Q4
+- Band **medical_local** (toggle; default ON when GGUFs ready): MedGemma 4B IT
+  Q4, BioMistral 7B Q4, OpenBioLLM 8B Q4 — **not** the same band as generics
+- MedPsy via QVAC SDK: 1.7B Q4, 4B Q4, 4B Q8 (3× QVAC toggle)
+
+Preset **Solo locali medici**: cloud OFF, generics OFF, medical ON, 3× MedPsy →
+6 medical-specialized on-device models only. Download medical weights with
+`./scripts/download_medical_peers.sh` (or `./scripts/download_all_ggufs.sh`).
 
 Candidate identities are blinded before judging. Every candidate keeps a hard
 **3000-token output budget** (cloud and local). That budget was **not** raised
@@ -309,12 +317,14 @@ comes from OpenRouter usage.
 
 **Actual cost model** (`benchmark/costing.py`): each artifact stores
 `run_cost_usd` (candidates + judge/repair/verifier for that iteration only).
-Gold extraction is `batch_shared_cost_usd` and is charged **once** per Prepare,
-never ×N. Multi-run / batch totals = sum(run costs) + shared extraction.
+Gold extraction is `batch_shared_cost_usd` and is charged **once per distinct
+`batch_id` / Prepare** (same-batch Multi → ×1; portfolio / multi-batch history
+sums once per batch). Multi-run totals = sum(run costs) + shared extraction(s).
 Estimates remain separate from billed usage.
 
 Windows: `launch_dashboard.bat` / `stop_dashboard.bat` start and stop the
-**QVAC SDK sidecar** (not Ollama). Legacy Ollama setup lives under `OLD/legacy/`.
+**QVAC SDK sidecar** (not Ollama). Legacy Ollama setup lives under `OLD/legacy/`
+(including archived `setup_medpsy.sh`).
 
 ## Live judging UI
 
