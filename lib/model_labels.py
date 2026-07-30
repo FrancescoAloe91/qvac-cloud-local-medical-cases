@@ -113,11 +113,6 @@ MODEL_LABELS: Dict[str, Dict[str, str]] = {
         "name": "OpenBioLLM",
         "version": "Llama3-OpenBioLLM-8B Q4",
     },
-    # legacy medical_local peer (older artifacts)
-    "local_biomistral": {
-        "name": "BioMistral",
-        "version": "BioMistral-7B Q4 (legacy peer)",
-    },
     # legacy Band B peer (older artifacts)
     "local_qwen": {
         "name": "Local Qwen",

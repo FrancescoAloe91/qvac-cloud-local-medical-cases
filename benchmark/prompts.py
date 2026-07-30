@@ -38,8 +38,8 @@ def candidate_system() -> str:
 
 
 def candidate_user(case: Case) -> str:
-    # Single-section recovery: avoid a Q1-line template that local Mistral GGUFs
-    # often regenerate and then early-stop on (leaving a question echo, not an answer).
+    # Single-section recovery: avoid a Q1-line template that some local GGUFs
+    # regenerate and then early-stop on (leaving a question echo, not an answer).
     if len(case.questions) == 1:
         q = case.questions[0]
         return "\n".join(
