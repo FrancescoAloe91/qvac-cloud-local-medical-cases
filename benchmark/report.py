@@ -818,7 +818,7 @@ def find_case_family_cohorts(
             continue
         if not art.cohort_id:
             continue
-        if str(art.run_status or "") != "complete":
+        if not is_mean_poolable_run(art):
             continue
         cfg = art.models_config or {}
         gold_ref = str(cfg.get("gold_reference") or "").strip()
@@ -882,6 +882,21 @@ def _has_valid_judged_scores(art: RunArtifact) -> bool:
     )
 
 
+def is_mean_poolable_run(art: RunArtifact) -> bool:
+    """True when a finished roster may enter Multi/Portfolio means.
+
+    ``complete`` = every candidate scored valid.
+    ``partial`` = at least one technical N/A (candidate_partial / collect /
+    judge / timeout / empty) while others may still be valid — those N/A must
+    count toward Failed %, so partial runs stay in the pool.
+
+    ``cancelled`` / ``failed`` = abort or hard stop; excluded from official /
+    rebuild means (STOP / crash stamps must not dilute Failed or means).
+    """
+    status = str(art.run_status or "complete").strip().lower()
+    return status in {"complete", "partial"}
+
+
 def list_portfolio_runs(
     out_dir: Path,
     *,
@@ -891,9 +906,10 @@ def list_portfolio_runs(
     model_ids: Optional[Sequence[str]] = None,
     preloaded: Optional[Sequence[RunArtifact]] = None,
 ) -> List[Tuple[Optional[Path], RunArtifact]]:
-    """Newest-first complete runs across cases matching protocol filters.
+    """Newest-first poolable runs across cases matching protocol filters.
 
-    Filters: same scoring_version, track, complete + valid judgments.
+    Filters: same scoring_version, track, complete|partial + ≥1 valid judgment.
+    ``partial`` keeps per-model technical N/A in Failed %; cancelled/failed stay out.
     Roster shapes may differ: a run is kept when its keys intersect
     ``model_ids`` (or any current-roster key if omitted). Per-model means
     later use only observations that exist (different N is OK). Chronological
@@ -918,7 +934,7 @@ def list_portfolio_runs(
             except Exception:
                 continue
     for path, art in source:
-        if str(art.run_status or "") != "complete":
+        if not is_mean_poolable_run(art):
             continue
         if str(art.scoring_version or "").strip() != want_sv:
             continue
@@ -1053,19 +1069,20 @@ def rebuild_multi_from_history(
                 for _, artifact in legacy_pairs
             ],
         }
-    # Match portfolio: cancelled / partial / failed abort stamps must not enter
-    # official same-case means even when cohort_id was filled for audit.
+    # Cancelled / failed abort stamps stay out. Partial runs (per-model technical
+    # N/A) stay in so Failed % is honest — same rule as portfolio.
     pairs = [
         pair
         for pair in all_pairs
         if pair[1].cohort_id == target_cohort
-        and str(pair[1].run_status or "") == "complete"
+        and is_mean_poolable_run(pair[1])
     ][:n]
     if len(pairs) < 1:
         return {
             "ok": False,
             "reason": (
-                f"Need at least 1 complete same-cohort run (found {len(pairs)}). "
+                f"Need at least 1 same-cohort run (complete or partial with scores; "
+                f"found {len(pairs)}). Cancelled/failed aborts are excluded. "
                 "Different stems, references, protocols or model configs cannot be mixed."
             ),
             "available": len(pairs),
@@ -1106,11 +1123,12 @@ def rebuild_portfolio_from_history(
     model_ids: Optional[Sequence[str]] = None,
     preloaded: Optional[Sequence[RunArtifact]] = None,
 ) -> Dict[str, Any]:
-    """Offline exploratory mean across last N complete runs (all cases).
+    """Offline exploratory mean across last N poolable runs (all cases).
 
     Same track + scoring_version. Roster shapes may differ — each model keeps
-    its own valid N / failures. Never merges incompatible scoring versions.
-    Zero API cost. Not clinical validation.
+    its own valid N / failures. Partial runs with technical N/A are included.
+    Never merges incompatible scoring versions. Zero API cost. Not clinical
+    validation.
     """
     n = max(1, min(int(n), 30))
     want_keys = list(model_ids) if model_ids is not None else list(CURRENT_ROSTER_KEYS)
@@ -1129,10 +1147,11 @@ def rebuild_portfolio_from_history(
         return {
             "ok": False,
             "reason": (
-                f"Need at least 1 complete portfolio-eligible run "
+                f"Need at least 1 portfolio-eligible run "
                 f"(found {len(pairs)}; {n_cases} distinct case(s)). "
-                "Filters: same track + scoring_version, complete + valid "
-                "judgments; roster shapes may differ (per-model N). "
+                "Filters: same track + scoring_version, complete|partial + "
+                "≥1 valid judgment; roster shapes may differ (per-model N). "
+                "Cancelled/failed aborts stay out. "
                 "Different scoring versions are never pooled."
             ),
             "available": len(all_eligible),

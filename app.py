@@ -73,6 +73,7 @@ from benchmark.prompts import (
 from benchmark.report import (
     artifacts_for_case,
     find_case_family_cohorts,
+    is_mean_poolable_run,
     list_portfolio_runs,
     load_artifact,
     rebuild_multi_from_history,
@@ -3124,13 +3125,13 @@ if _rebuild_cohort_id:
         1
         for _, a in _hist_for_case
         if a.cohort_id == _rebuild_cohort_id
-        and str(a.run_status or "") == "complete"
+        and is_mean_poolable_run(a)
     )
 else:
     _avail_same = sum(
         1
         for _, a in _hist_for_case
-        if str(a.run_status or "") == "complete"
+        if is_mean_poolable_run(a)
     )
 
 # Portfolio eligibility: same track + v4; roster shapes may differ (per-model N).

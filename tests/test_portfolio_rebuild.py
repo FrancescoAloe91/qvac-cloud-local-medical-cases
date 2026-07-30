@@ -197,7 +197,7 @@ def test_same_case_rebuild_path_unchanged(tmp_path: Path):
 
 
 def test_same_case_rebuild_excludes_cancelled_even_with_cohort_id(tmp_path: Path):
-    """Abort stamps may share cohort_id; only complete runs enter official means."""
+    """Abort stamps may share cohort_id; only complete/partial runs enter means."""
     for i in range(5):
         _write(
             tmp_path,
@@ -246,6 +246,119 @@ def test_same_case_rebuild_excludes_cancelled_even_with_cohort_id(tmp_path: Path
     assert thin["available"] == 4
     assert thin["n_used"] == 4
 
+
+def test_partial_technical_na_counts_in_failed_pct_same_case_and_portfolio(
+    tmp_path: Path,
+):
+    """partial runs (per-model N/A) enter means; Failed % > 0; model stays listed.
+
+    Regression: run_status=partial used to be excluded like cancelled, so every
+    mean table showed Failed 0% while History still showed N/A rows.
+    """
+    cohort = "cohort-partial-na"
+    keys = ["chatgpt", "claude"]
+
+    def _write_mixed(*, run_id: str, finished_at: str, fail_chatgpt: bool):
+        ranking = []
+        for i, key in enumerate(keys):
+            if fail_chatgpt and key == "chatgpt":
+                ranking.append(
+                    {
+                        "key": key,
+                        "accuracy": None,
+                        "status": "n/a",
+                        "status_note": "candidate_partial",
+                        "rank": None,
+                        "coverage": None,
+                        "quality": None,
+                        "discipline": None,
+                    }
+                )
+            else:
+                ranking.append(
+                    {
+                        "key": key,
+                        "accuracy": 80.0 + i,
+                        "status": "ok",
+                        "rank": i + 1,
+                        "coverage": 70.0,
+                        "quality": 80.0,
+                        "discipline": 90.0,
+                    }
+                )
+        art = RunArtifact(
+            run_id=run_id,
+            case_id="caseC",
+            started_at=finished_at,
+            finished_at=finished_at,
+            n_index=1,
+            batch_id="batch-partial",
+            models_config={
+                "candidates": [{"key": k, "model": f"test/{k}"} for k in keys],
+                "judge": {"model": "deepseek/deepseek-r1"},
+                "gold_reference": "{}",
+                "case_stem": "stem-caseC",
+            },
+            ranking=ranking,
+            judgments=[],
+            cohort_id=cohort,
+            scoring_version="graded-clinical-v4",
+            prompt_version="gold-only-v1",
+            benchmark_track="controlled",
+            run_status="partial" if fail_chatgpt else "complete",
+        )
+        write_artifact(art, tmp_path)
+
+    # 4 complete + 1 partial with chatgpt N/A
+    for i in range(4):
+        _write_mixed(
+            run_id=f"ok{i}",
+            finished_at=f"2026-04-01T1{i}:00:00Z",
+            fail_chatgpt=False,
+        )
+    _write_mixed(
+        run_id="na-partial",
+        finished_at="2026-04-01T19:00:00Z",
+        fail_chatgpt=True,
+    )
+
+    same = rebuild_multi_from_history(
+        tmp_path, "caseC", n=5, cohort_id=cohort
+    )
+    assert same["ok"] is True
+    assert same["n_used"] == 5
+    by_key = {r["key"]: r for r in same["summary"].ranking_mean}
+    assert "chatgpt" in by_key
+    assert by_key["chatgpt"]["n_failed"] == 1
+    assert by_key["chatgpt"]["n_requested"] == 5
+    assert by_key["chatgpt"]["n_runs"] == 4
+    assert by_key["chatgpt"]["failure_rate"] == 0.2
+    assert by_key["claude"]["n_failed"] == 0
+    assert by_key["claude"]["failure_rate"] == 0.0
+
+    port = rebuild_portfolio_from_history(
+        tmp_path, n=5, scoring_version="graded-clinical-v4", track="controlled"
+    )
+    assert port["ok"] is True
+    assert port["n_used"] == 5
+    p_by = {r["key"]: r for r in port["summary"].ranking_mean}
+    assert p_by["chatgpt"]["n_failed"] >= 1
+    assert float(p_by["chatgpt"]["failure_rate"] or 0) > 0.0
+    # Cancelled still excluded from portfolio
+    _write(
+        tmp_path,
+        run_id="cancel-noise",
+        case_id="caseC",
+        finished_at="2026-04-02T10:00:00Z",
+        cohort_id=cohort,
+        run_status="cancelled",
+        roster=keys,
+    )
+    pairs = list_portfolio_runs(
+        tmp_path, n=10, scoring_version="graded-clinical-v4", track="controlled"
+    )
+    assert all(a.run_id != "cancel-noise" for _, a in pairs)
+    assert any(a.run_id == "na-partial" for _, a in pairs)
 
 def test_summarize_mixed_cohorts_opt_in(tmp_path: Path):
     arts = []
