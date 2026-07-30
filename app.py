@@ -63,7 +63,13 @@ from benchmark.qvac_variants import (
     merge_roster,
     panel_rows_for_roster,
 )
-from benchmark.prompts import candidate_system, candidate_user, parse_candidate_answers
+from benchmark.prompts import (
+    candidate_system,
+    candidate_user,
+    local_chat_messages,
+    missing_section_ids,
+    parse_candidate_answers,
+)
 from benchmark.report import (
     artifacts_for_case,
     find_case_family_cohorts,
@@ -81,6 +87,7 @@ from benchmark.runner import (
     estimate_cost_breakdown,
     is_retryable_local_error,
     iter_collect_live,
+    maybe_retry_candidate,
     prepare_run,
     _validate_judge_separation,
 )
@@ -3328,7 +3335,7 @@ if st.session_state.get("confirmed_run"):
         _sys_p = candidate_system()
         _user_p = candidate_user(live_case)
         prompt = _sys_p + "\n\n" + _user_p
-        _chat_msgs = [
+        _base_chat_msgs = [
             {"role": "system", "content": _sys_p},
             {"role": "user", "content": _user_p},
         ]
@@ -3687,8 +3694,8 @@ if st.session_state.get("confirmed_run"):
                     key_ = str(slot_cfg.get("key") or "")
                     if not key_ or key_ in submitted_local:
                         return
-                    submitted_local.add(key_)
                     lo_ui["blind_i"] = int(lo_ui["blind_i"]) + 1
+                    blind_id_ = f"Candidate {lo_ui['blind_i']}"
                     cand_row = CandidateAnswer(
                         candidate_key=key_,
                         label=str(slot_cfg.get("label") or key_),
@@ -3697,7 +3704,7 @@ if st.session_state.get("confirmed_run"):
                         ),
                         vendor=str(slot_cfg.get("vendor") or "local"),
                         site=str(slot_cfg.get("site") or "local (QVAC SDK)"),
-                        blind_id=f"Candidate {lo_ui['blind_i']}",
+                        blind_id=blind_id_,
                         answers=(
                             parse_candidate_answers(live_case, body_text)
                             if body_text
@@ -3734,6 +3741,23 @@ if st.session_state.get("confirmed_run"):
                             retry_count=int(meta_fields.get("retry_count") or 0),
                         ),
                     )
+                    # Same format-repair / section recovery as the CLI collector.
+                    if not error_text and missing_section_ids(
+                        live_case, cand_row.answers or {}
+                    ):
+                        if key_ in status_boxes:
+                            status_boxes[key_].markdown(
+                                _status_pill("wait", "Recovering sections…"),
+                                unsafe_allow_html=True,
+                            )
+                        cand_row = maybe_retry_candidate(
+                            live_case,
+                            cand_row,
+                            slot_cfg,
+                            blind_id_,
+                            benchmark_track=benchmark_track,
+                        )
+                    submitted_local.add(key_)
                     label_by_key[key_] = cand_row.display_label or cand_row.label
                     if key_ not in started_keys:
                         lo_ui["queue_i"] = int(lo_ui["queue_i"]) + 1
@@ -3828,6 +3852,10 @@ if st.session_state.get("confirmed_run"):
                         _status_pill("wait", "Streaming…"), unsafe_allow_html=True
                     )
                     stream_state = {"last_paint": 0.0, "last_pipe_poll": 0.0}
+                    _chat_msgs = local_chat_messages(_base_chat_msgs, slot)
+                    _slot_prompt = "\n\n".join(
+                        str(m.get("content") or "") for m in _chat_msgs
+                    ) or prompt
 
                     def _stream_local_once() -> tuple:
                         """Consume one on-device generation, painting tokens live."""
@@ -3838,7 +3866,7 @@ if st.session_state.get("confirmed_run"):
                         t0_ = _time_live.time()
                         ttft_ = None
                         for evt in qvac_iter_tokens(
-                            prompt,
+                            _slot_prompt,
                             messages=_chat_msgs,
                             sampling=_sampling or None,
                         ):

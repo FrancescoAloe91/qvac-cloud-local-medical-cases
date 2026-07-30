@@ -1,10 +1,16 @@
 from benchmark.cases_loader import load_case
-from benchmark.prompts import missing_section_ids, parse_candidate_answers
+from benchmark.prompts import (
+    fold_system_into_user,
+    is_unsubstantive_section,
+    missing_section_ids,
+    parse_candidate_answers,
+    prefers_user_only_chat,
+)
 from benchmark.runner import _collect_candidate
 from benchmark.schema import CandidateAnswer, ModelCallMeta
 
 
-def _candidate(*, error=None, finish_reason="", answers=None):
+def _candidate(*, error=None, finish_reason="", answers=None, provider="openrouter"):
     return CandidateAnswer(
         candidate_key="candidate",
         label="Candidate",
@@ -13,7 +19,7 @@ def _candidate(*, error=None, finish_reason="", answers=None):
         raw_response="response" if answers else "",
         meta=ModelCallMeta(
             model="model",
-            provider="openrouter",
+            provider=provider,
             error=error,
             finish_reason=finish_reason,
             cost_usd=0.01,
@@ -70,6 +76,37 @@ def test_candidate_missing_sections_trigger_one_targeted_regeneration(monkeypatc
     assert result.meta.retry_count == 1
 
 
+def test_local_missing_sections_recover_one_question_at_a_time(monkeypatch):
+    case = load_case("caseC")
+    responses = [
+        _candidate(
+            answers={"diagnosis": "only one section"},
+            provider="qvac",
+        ),
+        _candidate(answers={"tests": "labs"}, provider="qvac"),
+        _candidate(answers={"urgency": "high"}, provider="qvac"),
+        _candidate(answers={"safety": "hold ACE"}, provider="qvac"),
+        _candidate(answers={"plan": "fluids"}, provider="qvac"),
+    ]
+    requested_sections = []
+
+    def fake_once(case_arg, *args, **kwargs):
+        requested_sections.append([q.id for q in case_arg.questions])
+        return responses.pop(0)
+
+    monkeypatch.setattr("benchmark.runner._collect_candidate_once", fake_once)
+    result = _collect_candidate(
+        case,
+        {"key": "local_biomistral", "provider": "qvac", "model": "biomistral-7b-q4"},
+        "Candidate 1",
+    )
+
+    assert requested_sections[0] == [q.id for q in case.questions]
+    assert requested_sections[1:] == [["tests"], ["urgency"], ["safety"], ["plan"]]
+    assert missing_section_ids(case, result.answers) == []
+    assert result.answers["plan"] == "fluids"
+
+
 def test_candidate_retry_budget_stops_after_one_attempt(monkeypatch):
     case = load_case("caseC")
     calls = []
@@ -95,8 +132,11 @@ def test_candidate_retry_budget_stops_after_one_attempt(monkeypatch):
 def test_local_sidecar_failure_is_retried_once(monkeypatch):
     case = load_case("caseC")
     responses = [
-        _candidate(error="Failed to load /models/medpsy-4b.gguf"),
-        _candidate(answers={q.id: "answer" for q in case.questions}),
+        _candidate(error="Failed to load /models/medpsy-4b.gguf", provider="qvac"),
+        _candidate(
+            answers={q.id: "answer" for q in case.questions},
+            provider="qvac",
+        ),
     ]
     calls = []
 
@@ -176,3 +216,38 @@ def test_candidate_parser_normalizes_presentation_without_inventing_sections():
     assert parsed["urgency"] == "moderate"
     assert "safety" not in parsed
     assert "plan" not in parsed
+
+
+def test_question_echo_is_not_a_substantive_section():
+    case = load_case("caseC")
+    q = case.questions[0]
+    echo = f"Q1 [diagnosis]: {q.text}"
+    assert is_unsubstantive_section(case, "diagnosis", echo)
+    parsed = parse_candidate_answers(case, echo)
+    assert "diagnosis" not in parsed
+    assert missing_section_ids(case, parsed) == [x.id for x in case.questions]
+
+
+def test_single_section_unlabeled_prose_is_attributed():
+    case = load_case("caseC")
+    one = case.model_copy(update={"questions": [case.questions[2]]})
+    raw = "Critical acuity with ECG changes and potassium above 6.5."
+    parsed = parse_candidate_answers(one, raw)
+    assert parsed == {"urgency": raw}
+
+
+def test_biomistral_folds_system_into_user():
+    assert prefers_user_only_chat(
+        {"key": "local_biomistral", "model": "biomistral-7b-q4"}
+    )
+    assert not prefers_user_only_chat({"key": "local_medgemma"})
+    msgs = fold_system_into_user(
+        [
+            {"role": "system", "content": "Be a physician."},
+            {"role": "user", "content": "Answer A1–A5."},
+        ]
+    )
+    assert len(msgs) == 1
+    assert msgs[0]["role"] == "user"
+    assert msgs[0]["content"].startswith("Be a physician.")
+    assert "Answer A1–A5." in msgs[0]["content"]

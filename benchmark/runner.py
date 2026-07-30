@@ -32,6 +32,7 @@ from benchmark.prompts import (
     candidate_system,
     candidate_user,
     format_repair_messages,
+    local_chat_messages,
     missing_section_ids,
     parse_candidate_answers,
 )
@@ -641,6 +642,8 @@ def _collect_candidate_once(
             {"role": "system", "content": candidate_system()},
             {"role": "user", "content": candidate_user(case)},
         ]
+    if provider == "qvac":
+        messages = local_chat_messages(messages, cand_cfg)
 
     if provider == "openrouter":
         from benchmark.gold import is_strict_track, uses_controlled_sampling
@@ -846,7 +849,8 @@ def _collect_candidate(
     truncation, or sections the model left unwritten. When the first reply has
     content but almost no parseable A# markers, one format-repair pass asks the
     same model to re-label that text (no new clinical facts). Otherwise missing
-    sections regenerate only the affected questions.
+    sections regenerate only the affected questions. Local GGUFs that early-stop
+    after one section recover remaining gaps one question at a time.
     """
     first = _collect_candidate_once(
         case,
@@ -856,6 +860,31 @@ def _collect_candidate(
         benchmark_track,
         api_key,
     )
+    return maybe_retry_candidate(
+        case,
+        first,
+        cand_cfg,
+        blind_id,
+        on_event=on_event,
+        benchmark_track=benchmark_track,
+        api_key=api_key,
+    )
+
+
+def maybe_retry_candidate(
+    case: Case,
+    first: CandidateAnswer,
+    cand_cfg: Dict[str, Any],
+    blind_id: str,
+    on_event: EventCallback = None,
+    benchmark_track: str = "controlled",
+    api_key: Optional[str] = None,
+) -> CandidateAnswer:
+    """Run format-repair / section recovery on an already-collected candidate.
+
+    Used by the CLI collector and by the live UI after the first streamed reply
+    so both paths share the same gap-filling policy.
+    """
     error_text = first.meta.error or ""
     transport_failure = bool(
         error_text
@@ -871,8 +900,9 @@ def _collect_candidate(
     missing = missing_section_ids(case, first.answers or {})
     section_gap = bool(missing) and not error_text
     raw_blob = (first.raw_response or "").strip()
+    # Short local replies (BioMistral often ~70–100 chars) still need re-labeling.
     needs_format_repair = (
-        section_gap and len(first.answers or {}) < 2 and len(raw_blob) > 80
+        section_gap and len(first.answers or {}) < 2 and len(raw_blob) > 40
     )
     if not (transport_failure or truncation or section_gap):
         return first
@@ -943,14 +973,67 @@ def _collect_candidate(
         },
     )
     targeted = (truncation or section_gap) and not transport_failure
-    recovery_case = case
-    target_question_ids = {question.id for question in case.questions}
-    if targeted:
-        target_questions = [
-            question for question in case.questions if question.id in set(missing)
-        ] or [case.questions[-1]]
-        target_question_ids = {question.id for question in target_questions}
-        recovery_case = case.model_copy(update={"questions": target_questions})
+    if not targeted:
+        second = _collect_candidate_once(
+            case,
+            cand_cfg,
+            blind_id,
+            on_event,
+            benchmark_track,
+            api_key,
+        )
+        _merge_collect_meta(first, second)
+        return second
+
+    target_questions = [
+        question for question in case.questions if question.id in set(missing)
+    ] or [case.questions[-1]]
+    # Local GGUFs (esp. BioMistral) often early-stop after one section. Asking for
+    # every gap in one call still yields a single block — recover one id at a time.
+    sequential_local = cand_cfg.get("provider") == "qvac" and len(target_questions) > 1
+    if sequential_local:
+        merged_answers = dict(first.answers or {})
+        raw_chunks: List[str] = []
+        latest = first
+        for question in target_questions:
+            if (merged_answers.get(question.id) or "").strip():
+                continue
+            _emit(
+                on_event,
+                {
+                    "type": "candidate_retry",
+                    "key": first.candidate_key,
+                    "reason": f"missing section:{question.id}",
+                },
+            )
+            one_case = case.model_copy(update={"questions": [question]})
+            part = _collect_candidate_once(
+                one_case,
+                cand_cfg,
+                blind_id,
+                on_event,
+                benchmark_track,
+                api_key,
+            )
+            _merge_collect_meta(latest, part)
+            latest = part
+            recovered = (part.answers or {}).get(question.id)
+            if (recovered or "").strip():
+                merged_answers[question.id] = recovered
+            if (part.raw_response or "").strip():
+                raw_chunks.append(part.raw_response.strip())
+        latest.answers = merged_answers
+        latest.raw_response = (
+            (first.raw_response or "").rstrip()
+            + "\n\n[TARGETED SECTION RECOVERY]\n"
+            + "\n\n".join(raw_chunks)
+        ).strip()
+        if not missing_section_ids(case, latest.answers):
+            latest.meta.finish_reason = first.meta.finish_reason
+        return latest
+
+    recovery_case = case.model_copy(update={"questions": target_questions})
+    target_question_ids = {question.id for question in target_questions}
     second = _collect_candidate_once(
         recovery_case,
         cand_cfg,
@@ -960,20 +1043,19 @@ def _collect_candidate(
         api_key,
     )
     _merge_collect_meta(first, second)
-    if targeted:
-        merged_answers = dict(first.answers or {})
-        for question_id in target_question_ids:
-            recovered = (second.answers or {}).get(question_id)
-            if (recovered or "").strip():
-                merged_answers[question_id] = recovered
-        second.answers = merged_answers
-        second.raw_response = (
-            (first.raw_response or "").rstrip()
-            + "\n\n[TARGETED SECTION RECOVERY]\n"
-            + (second.raw_response or "").lstrip()
-        ).strip()
-        if not missing_section_ids(case, second.answers):
-            second.meta.finish_reason = first.meta.finish_reason
+    merged_answers = dict(first.answers or {})
+    for question_id in target_question_ids:
+        recovered = (second.answers or {}).get(question_id)
+        if (recovered or "").strip():
+            merged_answers[question_id] = recovered
+    second.answers = merged_answers
+    second.raw_response = (
+        (first.raw_response or "").rstrip()
+        + "\n\n[TARGETED SECTION RECOVERY]\n"
+        + (second.raw_response or "").lstrip()
+    ).strip()
+    if not missing_section_ids(case, second.answers):
+        second.meta.finish_reason = first.meta.finish_reason
     return second
 
 

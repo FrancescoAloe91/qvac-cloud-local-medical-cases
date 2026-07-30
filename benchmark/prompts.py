@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import re
 import unicodedata
-from typing import Dict, Iterator, List, NamedTuple, Optional, Tuple
+from typing import Any, Dict, Iterator, List, NamedTuple, Optional, Tuple
 
 from benchmark.gold import load_confirmed_gold
 from benchmark.schema import Case
@@ -38,6 +38,23 @@ def candidate_system() -> str:
 
 
 def candidate_user(case: Case) -> str:
+    # Single-section recovery: avoid a Q1-line template that local Mistral GGUFs
+    # often regenerate and then early-stop on (leaving a question echo, not an answer).
+    if len(case.questions) == 1:
+        q = case.questions[0]
+        return "\n".join(
+            [
+                "CLINICAL CASE:",
+                case.stem.strip(),
+                "",
+                "Answer ONLY this question. Your reply MUST start with A1: and then "
+                "clinical content. Do not reprint the question text.",
+                f"Question ({q.id}): {q.text}",
+                "A1:",
+                "",
+                f"Stay within {CANDIDATE_MAX_OUTPUT_TOKENS} tokens.",
+            ]
+        )
     lines = [
         "CLINICAL CASE:",
         case.stem.strip(),
@@ -89,6 +106,110 @@ def format_repair_messages(case: Case, previous_raw: str) -> List[Dict[str, str]
         },
         {"role": "user", "content": "\n".join(template_lines)},
     ]
+
+
+def fold_system_into_user(
+    messages: List[Dict[str, str]],
+) -> List[Dict[str, str]]:
+    """Merge system text into the first user turn (Mistral chat templates reject system)."""
+    if not messages:
+        return messages
+    systems = [
+        str(m.get("content") or "").strip()
+        for m in messages
+        if str(m.get("role") or "").lower() == "system"
+        and str(m.get("content") or "").strip()
+    ]
+    if not systems:
+        return [dict(m) for m in messages]
+    sys_blob = "\n\n".join(systems)
+    rest = [
+        dict(m)
+        for m in messages
+        if str(m.get("role") or "").lower() != "system"
+    ]
+    if not rest:
+        return [{"role": "user", "content": sys_blob}]
+    for index, message in enumerate(rest):
+        if str(message.get("role") or "").lower() == "user":
+            body = str(message.get("content") or "").strip()
+            rest[index] = {
+                **message,
+                "content": (sys_blob + "\n\n" + body).strip() if body else sys_blob,
+            }
+            return rest
+    return [{"role": "user", "content": sys_blob}, *rest]
+
+
+def prefers_user_only_chat(
+    cand_cfg: Optional[Dict[str, Any]] = None, **hints: str
+) -> bool:
+    """True for GGUFs whose embedded chat template rejects role=system (BioMistral)."""
+    parts = [
+        str((cand_cfg or {}).get("key") or ""),
+        str((cand_cfg or {}).get("model") or ""),
+        str((cand_cfg or {}).get("gguf") or ""),
+        str((cand_cfg or {}).get("gguf_path") or ""),
+        str(hints.get("key") or ""),
+        str(hints.get("model") or ""),
+        str(hints.get("gguf") or ""),
+    ]
+    blob = " ".join(parts).casefold()
+    return "biomistral" in blob
+
+
+def local_chat_messages(
+    messages: List[Dict[str, str]],
+    cand_cfg: Optional[Dict[str, Any]] = None,
+    **hints: str,
+) -> List[Dict[str, str]]:
+    """Adapt chat history for local GGUF families that break on a system role."""
+    if prefers_user_only_chat(cand_cfg, **hints):
+        return fold_system_into_user(messages)
+    return [dict(m) for m in messages]
+
+
+def _norm_cmp(text: str) -> str:
+    return re.sub(r"[^a-z0-9 ]+", " ", (text or "").casefold())
+
+
+def is_unsubstantive_section(case: Case, question_id: str, body: str) -> bool:
+    """True when attributed text is empty or just restates the question (common GGUF echo)."""
+    text = unicodedata.normalize("NFKC", body or "").strip()
+    if not text:
+        return True
+    # Regenerating a Q# / Question# line is never a clinical answer.
+    if re.match(r"(?is)^(?:q|question)\s*\d+\b", text):
+        return True
+    question = next((q for q in case.questions if q.id == question_id), None)
+    if question is None:
+        return False
+    qtext = (question.text or "").strip()
+    stripped = re.sub(
+        rf"(?is)^(?:q|a|answer|question)\s*\d+\s*(?:\[[^\]]*\])?\s*[:.\-)\]–—]\s*",
+        "",
+        text,
+    ).strip()
+    cmp_text = stripped or text
+    nc = _norm_cmp(cmp_text).strip()
+    nq = _norm_cmp(qtext).strip()
+    if not nc:
+        return True
+    # Exact / near-exact restatement of the question (not a short categorical answer
+    # like urgency "moderate" that happens to appear inside the question wording).
+    if nq and (
+        nc == nq
+        or (nq in nc and len(nc) <= len(nq) + 24)
+        or (len(nc) >= 24 and nc in nq)
+    ):
+        return True
+    tc = {tok for tok in nc.split() if len(tok) > 2}
+    tq = {tok for tok in nq.split() if len(tok) > 2}
+    if tc and tq and len(nc) >= 48 and len(tc) >= 6:
+        overlap = len(tc & tq) / max(len(tc), 1)
+        if overlap >= 0.85:
+            return True
+    return False
 
 
 # --------------------------------------------------------------------------
@@ -361,7 +482,23 @@ def parse_candidate_answers(case: Case, raw: str) -> Dict[str, str]:
 
     # Only sections with deterministically attributed markers. Never photocopy
     # the whole response into missing sections — that bypassed missing=N/A.
-    return {qid: "\n\n".join(parts) for qid, parts in chunks.items() if parts}
+    # Drop question-echo "answers" (local GGUFs often regenerate Q# text then stop).
+    answers = {
+        qid: "\n\n".join(parts)
+        for qid, parts in chunks.items()
+        if parts and not is_unsubstantive_section(case, qid, "\n\n".join(parts))
+    }
+
+    # Single-question recovery: the whole reply is that section when markers fail
+    # but the prose is real clinical content (not a question echo).
+    if (
+        len(case.questions) == 1
+        and not answers
+        and text.strip()
+        and not is_unsubstantive_section(case, case.questions[0].id, text)
+    ):
+        answers = {case.questions[0].id: text.strip()}
+    return answers
 
 
 def missing_section_ids(case: Case, answers: Dict[str, str]) -> List[str]:
