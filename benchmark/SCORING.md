@@ -215,20 +215,22 @@ Saved artifacts can be rescored without API calls:
   formula used and never silently stamps v3 runs as v4.
 - Re-validate stored judge JSON with current local salvage; N/A rows that were
   only presentation/schema failures may recover offline.
-- History “rebuild last N” builds exploratory or official means from the newest
+- History “rebuild last N” builds exploratory or official means from eligible
   same-cohort runs (official means still need ≥5 valid cohort observations).
-  Cohort identity is the SHA-256 of normalized case stem + confirmed gold
+  **N = max observations per model** (newest first), not a global slice of the
+  newest N run documents. Cohort identity is the SHA-256 of normalized case stem + confirmed gold
   (excluding `confirmed_at`) + `scoring_version` + prompt version + model
   config + track — not “whatever text is currently pasted.” Re-Prepare that
   changes claim splits creates a new cohort. History resume restores the exact
   prior confirmed gold (case-family key = normalized stem + raw reference);
   different Confirm contracts stay separate and are never auto-merged.
-- Optional **Portfolio** scope averages the last N complete runs across cases
-  (same track + `scoring_version`; **roster shapes may differ**). Each model
-  keeps its own valid N / failures — a 6-slot medical-only run and a 12-slot
-  full run both contribute observations for the models they share. Scores
-  remain reference-relative per case; the cross-case mean is exploratory, not
-  clinical validation, and never auto-merges incompatible scoring versions.
+- Optional **Portfolio** scope averages ≤N **per-model** observations across
+  cases (same track + `scoring_version`; **roster shapes may differ**). Each
+  model keeps its own newest ≤N ranking rows (ok + technical N/A) from History —
+  so cloud models with older full-roster runs still appear when the newest
+  global runs were medical-only. Scores remain reference-relative per case; the
+  cross-case mean is exploratory, not clinical validation, and never
+  auto-merges incompatible scoring versions.
 - Prior rankings are stamped under `reproducibility.offline_rescore.stored_ranking`
   so old vs new comparisons remain possible.
 

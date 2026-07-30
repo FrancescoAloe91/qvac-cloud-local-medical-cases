@@ -437,3 +437,74 @@ def test_portfolio_pools_heterogeneous_roster_shapes(tmp_path: Path):
     med_key = medical_six[1]
     n_valid = int(summary.candidate_stats.get(med_key, {}).get("n_valid") or 0)
     assert n_valid >= 3
+
+
+def test_portfolio_per_model_n_includes_older_cloud_history(tmp_path: Path):
+    """Recent medical-only runs must not hide cloud models with older history.
+
+    Regression: Portfolio used to slice the last N *global* run documents, so
+    medical-only recency dropped chatgpt/claude/gemini even when History still
+    had full-roster runs. N is now a per-model observation cap.
+    """
+    medical_six = [
+        k
+        for k in (
+            "qvac_1_7b",
+            "qvac",
+            "qvac_4b_q8",
+            "local_medgemma",
+            "local_med42",
+            "local_ultramedical",
+        )
+        if k in ROSTER
+    ] or ROSTER[:6]
+    cloud = [k for k in ("chatgpt", "claude", "gemini") if k in ROSTER]
+    assert cloud, "roster must include at least one cloud key"
+
+    # Older: 10 full-roster runs with cloud.
+    for i in range(10):
+        _write(
+            tmp_path,
+            run_id=f"full-old-{i}",
+            case_id="caseFull",
+            finished_at=f"2026-01-01T{10 + i:02d}:00:00Z",
+            roster=ROSTER,
+            cohort_id=f"cohort-full-{i}",
+            acc=60.0 + i,
+        )
+    # Newer: 5 medical-only runs (would fill a global last-5 / last-20 slice).
+    for i in range(5):
+        _write(
+            tmp_path,
+            run_id=f"med-new-{i}",
+            case_id="caseMed",
+            finished_at=f"2026-06-01T1{i}:00:00Z",
+            roster=medical_six,
+            cohort_id=f"cohort-med-{i}",
+            acc=70.0 + i,
+        )
+
+    # Global last-5 slice would be medical-only — cloud absent.
+    global5 = list_portfolio_runs(
+        tmp_path, n=5, scoring_version="graded-clinical-v4", track="controlled"
+    )
+    assert len(global5) == 5
+    assert all(a.run_id.startswith("med-new") for _, a in global5)
+
+    built = rebuild_portfolio_from_history(
+        tmp_path, n=20, scoring_version="graded-clinical-v4", track="controlled"
+    )
+    assert built["ok"] is True
+    assert built["n_per_model_cap"] == 20
+    # Contributing docs: 5 medical + 10 full (cloud needs the older ones).
+    assert built["n_used"] == 15
+    by_key = {r["key"]: r for r in built["summary"].ranking_mean}
+    for ck in cloud:
+        assert ck in by_key, f"{ck} missing from portfolio mean"
+        assert int(by_key[ck]["n_requested"]) == 10
+        assert int(by_key[ck]["n_runs"]) == 10
+        assert float(by_key[ck]["failure_rate"] or 0) == 0.0
+    # Medical keys see newest ≤20: 5 med + 10 full = 15 obs.
+    med_key = medical_six[0]
+    assert med_key in by_key
+    assert int(by_key[med_key]["n_requested"]) == 15

@@ -900,7 +900,7 @@ def is_mean_poolable_run(art: RunArtifact) -> bool:
 def list_portfolio_runs(
     out_dir: Path,
     *,
-    n: int = 5,
+    n: Optional[int] = 5,
     scoring_version: str = "graded-clinical-v4",
     track: str = "controlled",
     model_ids: Optional[Sequence[str]] = None,
@@ -913,9 +913,12 @@ def list_portfolio_runs(
     Roster shapes may differ: a run is kept when its keys intersect
     ``model_ids`` (or any current-roster key if omitted). Per-model means
     later use only observations that exist (different N is OK). Chronological
-    by finished_at (then started_at), newest first. Cap at ``n`` (1–30).
+    by finished_at (then started_at), newest first.
+
+    ``n`` caps how many **run documents** are returned (1–30). Pass ``n=None``
+    to return every eligible run (needed for Portfolio rebuild, where N is a
+    per-model observation cap rather than a global run-document slice).
     """
-    n = max(1, min(int(n), 30))
     want_keys = frozenset(model_ids) if model_ids is not None else frozenset(
         CURRENT_ROSTER_KEYS
     )
@@ -951,7 +954,54 @@ def list_portfolio_runs(
         when = art.finished_at or art.started_at or ""
         matched.append((path, art, when))
     matched.sort(key=lambda t: t[2], reverse=True)
-    return [(p, a) for p, a, _ in matched[:n]]
+    pairs = [(p, a) for p, a, _ in matched]
+    if n is None:
+        return pairs
+    cap = max(1, min(int(n), 30))
+    return pairs[:cap]
+
+
+def _trim_rescored_to_per_model_n(
+    rescored_pairs: Sequence[Tuple[RunArtifact, Dict[str, Any]]],
+    *,
+    n: int,
+    model_ids: Optional[Sequence[str]] = None,
+) -> Tuple[List[RunArtifact], List[Dict[str, Any]], Dict[str, int]]:
+    """Keep ≤N newest ranking observations per model (ok + technical N/A).
+
+    ``rescored_pairs`` must already be newest-first. Each ranking row for a
+    wanted key counts as one observation (Failed % stays honest). Rows beyond
+    a model's cap are dropped; run documents that retain no rows are omitted.
+    Returns (arts, per_run rows, per-model observation counts).
+    """
+    n = max(1, min(int(n), 30))
+    want = (
+        frozenset(str(k) for k in model_ids)
+        if model_ids is not None
+        else frozenset(CURRENT_ROSTER_KEYS)
+    )
+    counts: Dict[str, int] = {}
+    arts: List[RunArtifact] = []
+    per_run: List[Dict[str, Any]] = []
+    for clone, row in rescored_pairs:
+        kept_ranking: List[Dict[str, Any]] = []
+        for r in list(clone.ranking or []):
+            key = str(r.get("key") or "")
+            if key not in want or not is_current_roster_key(key):
+                continue
+            if counts.get(key, 0) >= n:
+                continue
+            kept_ranking.append(r)
+            counts[key] = counts.get(key, 0) + 1
+        if not kept_ranking:
+            continue
+        trimmed = clone.model_copy(deep=True)
+        trimmed.ranking = kept_ranking
+        arts.append(trimmed)
+        trimmed_row = dict(row)
+        trimmed_row["ranking"] = kept_ranking
+        per_run.append(trimmed_row)
+    return arts, per_run, counts
 
 
 def _offline_rescore_pair(
@@ -1030,9 +1080,9 @@ def rebuild_multi_from_history(
     preloaded: Optional[Sequence[RunArtifact]] = None,
 ) -> Dict[str, Any]:
     """
-    Offline Multi×N: take the N newest runs for case_id, rescore with the
-    current formula, return summarize_runs-compatible summary + per-run rows.
-    Zero API cost.
+    Offline Multi×N: same immutable cohort only; ``n`` = max observations
+    **per model** (newest first). Rescore with the current formula; return
+    summarize_runs-compatible summary + per-run rows. Zero API cost.
 
     When ``cohort_id`` is set (e.g. after restoring a prior confirmed gold),
     rebuild that immutable cohort instead of the newest case cohort.
@@ -1071,12 +1121,13 @@ def rebuild_multi_from_history(
         }
     # Cancelled / failed abort stamps stay out. Partial runs (per-model technical
     # N/A) stay in so Failed % is honest — same rule as portfolio.
+    # Load full cohort history; N caps observations per model (not global docs).
     pairs = [
         pair
         for pair in all_pairs
         if pair[1].cohort_id == target_cohort
         and is_mean_poolable_run(pair[1])
-    ][:n]
+    ]
     if len(pairs) < 1:
         return {
             "ok": False,
@@ -1090,21 +1141,38 @@ def rebuild_multi_from_history(
             "scope": "same_case",
         }
 
-    rescored_arts: List[RunArtifact] = []
-    per_run: List[Dict[str, Any]] = []
+    rescored_pairs: List[Tuple[RunArtifact, Dict[str, Any]]] = []
     for path, art in pairs:
         clone, row = _offline_rescore_pair(path, art)
-        rescored_arts.append(clone)
-        per_run.append(row)
+        rescored_pairs.append((clone, row))
+
+    rescored_arts, per_run, _counts = _trim_rescored_to_per_model_n(
+        rescored_pairs, n=n
+    )
+    if not rescored_arts:
+        return {
+            "ok": False,
+            "reason": (
+                "Need at least 1 same-cohort run (complete or partial with scores; "
+                "found 0 after per-model trim). Cancelled/failed aborts are excluded."
+            ),
+            "available": len(pairs),
+            "cohort_id": target_cohort,
+            "scope": "same_case",
+        }
 
     summary = summarize_runs(rescored_arts, min_valid_for_ranking=1)
     return {
         "ok": True,
         "available": len(pairs),
         "n_used": len(rescored_arts),
+        "n_per_model_cap": n,
         "summary": summary,
         "per_run": per_run,
-        "formula": "reference-relative Clinical Composite Score · same immutable cohort only",
+        "formula": (
+            "reference-relative Clinical Composite Score · same immutable cohort · "
+            "≤N observations per model"
+        ),
         "api_cost_usd": 0.0,
         "cohort_id": target_cohort,
         "official": True,
@@ -1123,50 +1191,66 @@ def rebuild_portfolio_from_history(
     model_ids: Optional[Sequence[str]] = None,
     preloaded: Optional[Sequence[RunArtifact]] = None,
 ) -> Dict[str, Any]:
-    """Offline exploratory mean across last N poolable runs (all cases).
+    """Offline exploratory mean: ≤N observations **per model** across cases.
 
-    Same track + scoring_version. Roster shapes may differ — each model keeps
-    its own valid N / failures. Partial runs with technical N/A are included.
-    Never merges incompatible scoring versions. Zero API cost. Not clinical
-    validation.
+    Loads every eligible run (same track + scoring_version, complete|partial),
+    then for each roster key keeps that model's own newest ≤N ranking rows
+    (ok + technical N/A). Cloud models with older history still appear when
+    recent global runs were medical-only. Never invents scores; never merges
+    incompatible scoring versions. Zero API cost. Not clinical validation.
     """
     n = max(1, min(int(n), 30))
     want_keys = list(model_ids) if model_ids is not None else list(CURRENT_ROSTER_KEYS)
-    # Probe availability beyond n for UI messaging.
+    # All eligible run documents — N is applied per model, not as a global slice.
     all_eligible = list_portfolio_runs(
         out_dir,
-        n=30,
+        n=None,
         scoring_version=scoring_version,
         track=track,
         model_ids=want_keys,
         preloaded=preloaded,
     )
-    pairs = all_eligible[:n]
-    n_cases = len({a.case_id for _, a in pairs})
-    if len(pairs) < 1:
+    n_cases_all = len({a.case_id for _, a in all_eligible})
+    if len(all_eligible) < 1:
         return {
             "ok": False,
             "reason": (
                 f"Need at least 1 portfolio-eligible run "
-                f"(found {len(pairs)}; {n_cases} distinct case(s)). "
+                f"(found {len(all_eligible)}; {n_cases_all} distinct case(s)). "
                 "Filters: same track + scoring_version, complete|partial + "
-                "≥1 valid judgment; roster shapes may differ (per-model N). "
+                "≥1 valid judgment; roster shapes may differ "
+                "(≤N observations per model). "
                 "Cancelled/failed aborts stay out. "
                 "Different scoring versions are never pooled."
             ),
             "available": len(all_eligible),
-            "n_cases": n_cases,
+            "n_cases": n_cases_all,
             "scope": "portfolio",
             "scoring_version": scoring_version,
             "track": track,
         }
 
-    rescored_arts: List[RunArtifact] = []
-    per_run: List[Dict[str, Any]] = []
-    for path, art in pairs:
+    rescored_pairs: List[Tuple[RunArtifact, Dict[str, Any]]] = []
+    for path, art in all_eligible:
         clone, row = _offline_rescore_pair(path, art)
-        rescored_arts.append(clone)
-        per_run.append(row)
+        rescored_pairs.append((clone, row))
+
+    rescored_arts, per_run, _counts = _trim_rescored_to_per_model_n(
+        rescored_pairs, n=n, model_ids=want_keys
+    )
+    if not rescored_arts:
+        return {
+            "ok": False,
+            "reason": (
+                "Need at least 1 portfolio-eligible observation after per-model "
+                "trim. Filters: same track + scoring_version, complete|partial."
+            ),
+            "available": len(all_eligible),
+            "n_cases": n_cases_all,
+            "scope": "portfolio",
+            "scoring_version": scoring_version,
+            "track": track,
+        }
 
     summary = summarize_runs(
         rescored_arts, allow_mixed_cohorts=True, min_valid_for_ranking=1
@@ -1178,16 +1262,19 @@ def rebuild_portfolio_from_history(
             key = str(row.get("key") or "")
             if key in mean_rank:
                 row["mean_rank"] = mean_rank[key]
+    n_cases = len({a.case_id for a in rescored_arts})
     return {
         "ok": True,
         "available": len(all_eligible),
         "n_used": len(rescored_arts),
+        "n_per_model_cap": n,
         "n_cases": n_cases,
         "summary": summary,
         "per_run": per_run,
         "formula": (
             "exploratory cross-case mean · mixed roster shapes OK · "
-            "per-model valid N · reference-relative scores · not clinical validation"
+            "≤N observations per model · reference-relative scores · "
+            "not clinical validation"
         ),
         "api_cost_usd": 0.0,
         "official": False,
@@ -1195,7 +1282,7 @@ def rebuild_portfolio_from_history(
         "scoring_version": scoring_version,
         "track": track,
         "mean_rank": mean_rank,
-        "case_ids": sorted({a.case_id for _, a in pairs}),
+        "case_ids": sorted({a.case_id for a in rescored_arts}),
     }
 
 

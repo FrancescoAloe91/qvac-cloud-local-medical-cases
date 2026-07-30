@@ -1322,8 +1322,8 @@ def history_mean_rebuild_dialog():
 
     st.markdown("##### Chart (mean %; whiskers = ±1 std)")
     _chart_title = (
-        f"Mean Clinical Composite · Portfolio · {payload.get('n_used')} runs · "
-        f"{payload.get('n_cases')} cases"
+        f"Mean Clinical Composite · Portfolio · ≤{payload.get('n_per_model_cap') or '?'} / model · "
+        f"{payload.get('n_used')} run docs · {payload.get('n_cases')} cases"
         if _scope == "portfolio"
         else f"Mean Clinical Composite Score · {case_display_name(summary.case_id)}"
     )
@@ -3137,9 +3137,10 @@ else:
 # Portfolio eligibility: same track + v4; roster shapes may differ (per-model N).
 # Intersect against the full current-roster key set so 6-/9-/12-slot runs can pool.
 _portfolio_model_ids = list(CURRENT_ROSTER_KEYS)
+# All eligible docs — Rebuild N is per-model obs, not a global last-N slice.
 _portfolio_probe = list_portfolio_runs(
     WORKSPACE_DIR,
-    n=30,
+    n=None,
     scoring_version=SCORING_VERSION,
     track=str(benchmark_track or "controlled"),
     model_ids=_portfolio_model_ids,
@@ -3216,26 +3217,25 @@ with _rb1:
         t("bench.rebuild_n_label", _ui_lang()),
         options=_n_options,
         format_func=lambda n: (
-            f"{n} runs"
+            f"≤{n} / model"
             + (" · exploratory" if n == 5 else "")
             + (" · better CV (suggested)" if n == 10 else "")
             + (" · diminishing returns" if n == 20 else "")
-            + (" · max cost" if n == 30 else "")
-            + (f"  (only {_avail_n} saved)" if _avail_n < n else "")
+            + (" · max" if n == 30 else "")
+            + (f"  (only {_avail_n} eligible runs)" if _avail_n < n else "")
         ),
         key="history_rebuild_n_pick",
         on_change=_on_rebuild_n_pick_change,
-        help="Tiers: 5 exploratory · ~10 better for CV eye-check · 20–30 diminishing returns. "
-        "Default stays 5. If fewer runs are saved, rebuild uses all available. "
-        "Selecting N alone does not open a popup — use Rebuild mean.",
+        help="N = max scored observations per model (newest first), not a global "
+        "last-N run slice. Tiers: 5 exploratory · ~10 better for CV · 20–30 "
+        "diminishing returns. Default stays 5. Selecting N alone does not open "
+        "a popup — use Rebuild mean.",
     )
 with _rb2:
     if _rebuild_scope == "portfolio":
-        _n_show = min(int(_rebuild_n), _avail_portfolio) if _avail_portfolio else 0
+        _n_show = int(_rebuild_n) if _avail_portfolio else 0
         _k_show = (
-            len({a.case_id for _, a in _portfolio_probe[:_n_show]})
-            if _n_show
-            else 0
+            len({a.case_id for _, a in _portfolio_probe}) if _avail_portfolio else 0
         )
         st.caption(
             t(
@@ -3284,10 +3284,12 @@ if _avail_n < 1:
             f"(found {_avail_n}). Run Single once, then rebuild the mean."
         )
 elif _do_rebuild:
-    _n_use = min(int(_rebuild_n), _avail_n)
-    if _n_use < int(_rebuild_n):
+    # Pass requested per-model cap; rebuild loads all eligible history and trims.
+    _n_use = int(_rebuild_n)
+    if _avail_n < int(_rebuild_n):
         st.toast(
-            f"Only {_avail_n} runs saved — averaging {_n_use} (requested {_rebuild_n}).",
+            f"Only {_avail_n} eligible runs saved — each model gets ≤{_avail_n} "
+            f"obs (requested ≤{_rebuild_n}/model).",
             icon="ℹ️",
         )
     if _rebuild_scope == "portfolio":
@@ -3343,15 +3345,22 @@ _prev_ok_for_ui = (
     )
 )
 if _prev_ok_for_ui:
+    _prev_n_docs = _prev.get("n_used")
+    if _prev_n_docs is None:
+        _prev_n_docs = (
+            _prev["summary"].get("n")
+            if isinstance(_prev.get("summary"), dict)
+            else getattr(_prev.get("summary"), "n", "?")
+        )
     _reopen_label = (
         t(
             "bench.rebuild_reopen_portfolio",
             _ui_lang(),
-            n=_prev["summary"].get("n"),
+            n=_prev_n_docs,
             cases=_prev.get("n_cases") or "?",
         )
         if _prev_scope == "portfolio"
-        else f"Re-open mean popup · N={_prev['summary'].get('n')} · $0"
+        else f"Re-open mean popup · N={_prev_n_docs} · $0"
     )
     if st.button(
         _reopen_label,
