@@ -30,6 +30,8 @@ def candidate_system() -> str:
         "Do not invent patient identifiers. Be concise but complete. "
         "You MUST label every answer with the exact markers A1:, A2:, A3:, A4:, A5: "
         "(one block per question). Unlabeled prose cannot be scored. "
+        "Do not reprint the case stem, the Q# questions, or these instructions — "
+        "emit only the A# clinical answer blocks. "
         f"Hard length budget: at most {CANDIDATE_MAX_OUTPUT_TOKENS} tokens for the entire "
         "reply (all A# answers together). Stopping earlier is fine; do not pad. "
         "Cover every question within that budget — put the most important clinical "
@@ -48,11 +50,12 @@ def candidate_user(case: Case) -> str:
                 case.stem.strip(),
                 "",
                 "Answer ONLY this question. Your reply MUST start with A1: and then "
-                "clinical content. Do not reprint the question text.",
+                "clinical content. Do not reprint the case, the question text, or "
+                "these instructions.",
                 f"Question ({q.id}): {q.text}",
-                "A1:",
                 "",
                 f"Stay within {CANDIDATE_MAX_OUTPUT_TOKENS} tokens.",
+                "Begin your reply with A1: immediately.",
             ]
         )
     lines = [
@@ -69,7 +72,9 @@ def candidate_user(case: Case) -> str:
     lines.append(
         "Fill every A# answer. Do not skip questions. "
         "For urgency use one of: critical, high, moderate, low. "
-        f"Stay within {CANDIDATE_MAX_OUTPUT_TOKENS} tokens total for the whole answer."
+        "Do not reprint the case stem, the Q# lines, or this instruction block. "
+        f"Stay within {CANDIDATE_MAX_OUTPUT_TOKENS} tokens total for the whole answer. "
+        "Start your reply at A1:."
     )
     return "\n".join(lines)
 
@@ -108,22 +113,80 @@ def format_repair_messages(case: Case, previous_raw: str) -> List[Dict[str, str]
     ]
 
 
+# Llama-3 Instruct packing matches the Jinja Med42 ships in-GGUF. Applied only
+# for GGUFs that omit tokenizer.chat_template so role packing equals Med42.
+
+
+def render_llama3_instruct(messages: List[Dict[str, str]]) -> str:
+    """Apply the stock Llama-3 Instruct chat template (bos + roles + assistant)."""
+    chunks: List[str] = []
+    for index, message in enumerate(messages):
+        role = str(message.get("role") or "user")
+        content = str(message.get("content") or "").strip()
+        block = (
+            f"<|start_header_id|>{role}<|end_header_id|>\n\n{content}<|eot_id|>"
+        )
+        if index == 0:
+            block = "<|begin_of_text|>" + block
+        chunks.append(block)
+    chunks.append("<|start_header_id|>assistant<|end_header_id|>\n\n")
+    return "".join(chunks)
+
+
 def local_chat_messages(
     messages: List[Dict[str, str]],
     cand_cfg: Optional[Dict[str, Any]] = None,
     **hints: str,
 ) -> List[Dict[str, str]]:
-    """Return a shallow copy of chat messages for local GGUF calls.
+    """Return chat messages for local GGUF calls.
 
-    Medical peers (MedGemma / Med42 / OpenBioLLM) use standard Instruct templates
-    that accept role=system — no per-model message rewriting.
+    Default: shallow copy (MedGemma / Med42 keep SDK/GGUF templates).
+    ``chat_format=llama3``: pre-render Llama-3 Instruct (for GGUFs that lack
+    ``tokenizer.chat_template``, e.g. QuantFactory OpenBioLLM) so the model
+    receives the same assistant turn header Med42 gets from its embedded template.
     """
-    _ = cand_cfg, hints  # API kept for call-site stability
-    return [dict(m) for m in messages]
+    _ = hints
+    copied = [dict(m) for m in messages]
+    fmt = str((cand_cfg or {}).get("chat_format") or "").strip().lower()
+    if fmt == "llama3":
+        return [{"role": "user", "content": render_llama3_instruct(copied)}]
+    return copied
 
 
 def _norm_cmp(text: str) -> str:
     return re.sub(r"[^a-z0-9 ]+", " ", (text or "").casefold())
+
+
+_PROMPT_BOILERPLATE_RE = re.compile(
+    r"(?is)^\s*(?:"
+    r"fill every a#|answer all of the following|stay within \d+\s*tokens|"
+    r"hard length budget|do not skip questions|use this exact format|"
+    r"clinical case\s*:|answer only this question|begin your reply with a\d"
+    r")"
+)
+_SECTION_HEADING_RE = re.compile(
+    r"(?is)^(?:q|a|answer|question)\s*\d+\b",
+)
+
+
+def is_prompt_template_echo(raw: str, case: Optional[Case] = None) -> bool:
+    """True when the model mostly regenerated the candidate prompt, not answers."""
+    text = raw or ""
+    if "CLINICAL CASE:" in text and (
+        "Answer ALL of the following" in text
+        or "Fill every A#" in text
+        or "Answer ONLY this question" in text
+    ):
+        return True
+    if case is not None:
+        stem_head = (case.stem or "").strip()[:60]
+        if (
+            stem_head
+            and stem_head in text
+            and text.lstrip().startswith("CLINICAL CASE:")
+        ):
+            return True
+    return False
 
 
 def is_unsubstantive_section(case: Case, question_id: str, body: str) -> bool:
@@ -131,8 +194,11 @@ def is_unsubstantive_section(case: Case, question_id: str, body: str) -> bool:
     text = unicodedata.normalize("NFKC", body or "").strip()
     if not text:
         return True
+    # Prompt-instruction echo is never a clinical answer.
+    if _PROMPT_BOILERPLATE_RE.match(text):
+        return True
     # Regenerating a Q# / Question# line is never a clinical answer.
-    if re.match(r"(?is)^(?:q|question)\s*\d+\b", text):
+    if _SECTION_HEADING_RE.match(text):
         return True
     question = next((q for q in case.questions if q.id == question_id), None)
     if question is None:
@@ -143,19 +209,40 @@ def is_unsubstantive_section(case: Case, question_id: str, body: str) -> bool:
         "",
         text,
     ).strip()
+    if not stripped:
+        return True
+    # Marker-only body that immediately continues into the next heading.
+    if _SECTION_HEADING_RE.match(stripped):
+        return True
     cmp_text = stripped or text
     nc = _norm_cmp(cmp_text).strip()
     nq = _norm_cmp(qtext).strip()
     if not nc:
         return True
-    # Exact / near-exact restatement of the question (not a short categorical answer
-    # like urgency "moderate" that happens to appear inside the question wording).
-    if nq and (
-        nc == nq
-        or (nq in nc and len(nc) <= len(nq) + 24)
-        or (len(nc) >= 24 and nc in nq)
-    ):
+    # Exact restatement of the question (not a short categorical answer like
+    # urgency "critical" that appears inside the question wording).
+    if nq and (nc == nq or (len(nc) >= 24 and nc in nq)):
         return True
+    # Question restatement followed by little else.
+    if nq and nq in nc and len(nc) <= len(nq) + 24:
+        after = nc.split(nq, 1)[-1].strip()
+        after = re.sub(r"^(?:and|with|or|the|a|an)\s+", "", after).strip()
+        # Triage / binary leftovers are real answers (A3: Critical · A4: None).
+        if after in {"critical", "high", "moderate", "low", "none", "na", "n a"}:
+            return False
+        if not after or _SECTION_HEADING_RE.match(after):
+            return True
+        # Real short clinical leftovers (e.g. "CBC, BMP, ECG") stay substantive.
+        after_toks = {tok for tok in after.split() if len(tok) > 1}
+        q_toks = {tok for tok in nq.split() if len(tok) > 2}
+        if after_toks and after_toks <= q_toks:
+            return True
+    # Question restatement followed only by another Q#/A# heading (no clinical content).
+    if nq and nq in nc:
+        after = nc.split(nq, 1)[-1].strip()
+        after = re.sub(r"^(?:and|with|or|the|a|an)\s+", "", after).strip()
+        if not after or _SECTION_HEADING_RE.match(after):
+            return True
     tc = {tok for tok in nc.split() if len(tok) > 2}
     tq = {tok for tok in nq.split() if len(tok) > 2}
     if tc and tq and len(nc) >= 48 and len(tc) >= 6:
@@ -326,6 +413,14 @@ _INLINE_NUMBERED_RE = re.compile(
     rf"(?:[ \t]*[\[(][ \t]*(?P<sid>[A-Za-z][A-Za-z /_-]{{1,30}}?)[ \t]*[\])])?"
     rf"[ \t]*:+{_TRAILING}"
 )
+# Same idea without requiring sentence punctuation — common one-line GGUF layout:
+# "A1: ATN Q2 [tests]: CBC …" (no period before Q2).
+_INLINE_NUMBERED_LOOSE_RE = re.compile(
+    rf"(?im)(?<=\S)[ \t]+(?:\*{{1,3}}|_{{1,3}})?"
+    rf"(?:answers?|questions?|ans|a|q)[ \t]*\.?[ \t]*(?P<num>\d{{1,2}})"
+    rf"(?:[ \t]*[\[(][ \t]*(?P<sid>[A-Za-z][A-Za-z /_-]{{1,30}}?)[ \t]*[\])])?"
+    rf"[ \t]*:+{_TRAILING}"
+)
 # "## Plan", "**Safety:**", "[urgency] -", "3. Management:"
 _LABEL_RE = re.compile(
     rf"(?im)^{_LINE_NOISE}{_ORDINAL}\[?[ \t]*"
@@ -391,10 +486,14 @@ def _iter_markers(text: str, order: List[str]) -> Iterator[_Marker]:
         marker = numbered(match, 1)
         if marker is not None:
             yield marker
+    for match in _INLINE_NUMBERED_LOOSE_RE.finditer(text):
+        marker = numbered(match, 2)
+        if marker is not None:
+            yield marker
     for match in _LABEL_RE.finditer(text):
         question_id = _resolve_label(match.group("label"))
         if question_id in known_ids:
-            yield _Marker(match.start(), match.end(), question_id, 2)
+            yield _Marker(match.start(), match.end(), question_id, 3)
 
 
 def _accepted_markers(text: str, order: List[str]) -> List[_Marker]:

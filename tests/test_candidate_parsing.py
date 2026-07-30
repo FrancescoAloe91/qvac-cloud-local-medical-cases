@@ -315,6 +315,86 @@ def test_missing_after_parse_triggers_missing_section_ids():
     ]
 
 
+def test_prompt_footer_echo_is_not_a_plan_answer():
+    from benchmark.prompts import is_unsubstantive_section
+
+    case = load_case("caseC")
+    assert is_unsubstantive_section(
+        case,
+        "plan",
+        "Fill every A# answer. Do not skip questions. Stay within 3000 tokens.",
+    )
+    assert is_unsubstantive_section(
+        case,
+        "diagnosis",
+        "What is the most likely primary diagnosis? Rank the top differential.\n\n"
+        "Q2 [tests]: Which tests should be ordered next?",
+    )
+
+
+def test_prompt_template_echo_detected():
+    from benchmark.prompts import is_prompt_template_echo
+
+    case = load_case("caseC")
+    raw = (
+        "CLINICAL CASE:\n"
+        + case.stem[:80]
+        + "\n\nAnswer ALL of the following questions. Use this exact format:\n"
+        "Q1 [diagnosis]: …\nA1:\n"
+    )
+    assert is_prompt_template_echo(raw, case) is True
+    assert is_prompt_template_echo("A1: AKI\nA2: labs\n", case) is False
+
+
+def test_one_line_q_a_markers_split_without_sentence_punctuation():
+    raw = (
+        "Q1 [diagnosis]: What is the most likely primary diagnosis? Rank the top "
+        "differential. A1: Acute tubular necrosis (ATN) "
+        "Q2 [tests]: Which tests should be ordered next? A2: CBC, BMP, ECG "
+        "Q3 [urgency]: Urgency level (critical / high / moderate / low) and red flags. "
+        "A3: Critical "
+        "Q4 [safety]: Critical contraindications or safety traps. A4: None "
+        "Q5 [plan]: Outline the initial management plan. "
+        "A5: Calcium gluconate, then insulin-glucose, then dialysis."
+    )
+    parsed = _parse(raw)
+    assert missing_section_ids(load_case("caseC"), parsed) == []
+    assert "ATN" in parsed["diagnosis"]
+    assert "CBC" in parsed["tests"]
+    assert "Critical" in parsed["urgency"]
+    assert "None" in parsed["safety"]
+    assert "dialysis" in parsed["plan"]
+
+
+def test_llama3_chat_format_pre_renders_assistant_header():
+    from benchmark.prompts import local_chat_messages, render_llama3_instruct
+
+    messages = [
+        {"role": "system", "content": "Be brief."},
+        {"role": "user", "content": "A1: answer"},
+    ]
+    packed = local_chat_messages(messages, {"chat_format": "llama3"})
+    assert len(packed) == 1
+    assert packed[0]["role"] == "user"
+    body = packed[0]["content"]
+    assert body.startswith("<|begin_of_text|>")
+    assert "<|start_header_id|>system<|end_header_id|>" in body
+    assert body.endswith("<|start_header_id|>assistant<|end_header_id|>\n\n")
+    # Med42 / MedGemma keep role messages untouched (GGUF/SDK template).
+    plain = local_chat_messages(messages, {"key": "local_med42"})
+    assert plain == messages
+    assert "assistant" in render_llama3_instruct(messages)
+
+
+def test_openbiollm_spec_requests_llama3_chat_format():
+    from benchmark.qvac_variants import MEDICAL_PEER_SPECS
+
+    by_key = {s["key"]: s for s in MEDICAL_PEER_SPECS}
+    assert by_key["local_openbiollm"].get("chat_format") == "llama3"
+    assert "chat_format" not in by_key["local_med42"]
+    assert "chat_format" not in by_key["local_medgemma"]
+
+
 def test_unterminated_reasoning_block_is_kept_as_the_only_output():
     raw = "<think>\nThe likely diagnosis is acute kidney injury with hyperkalemia."
     assert "acute kidney injury" in strip_reasoning_blocks(raw)

@@ -125,6 +125,9 @@ MEDICAL_PEER_SPECS: List[Dict[str, Any]] = [
         "provider": "qvac",
         "model": "llama3-openbiollm-8b-q4",
         "gguf": "Llama3-OpenBioLLM-8B.Q4_K_M.gguf",
+        # QuantFactory GGUF omits tokenizer.chat_template; Med42 embeds the same
+        # Llama-3 Instruct Jinja. Equalize role packing via local_chat_messages.
+        "chat_format": "llama3",
         "band": "medical_local",
     },
 ]

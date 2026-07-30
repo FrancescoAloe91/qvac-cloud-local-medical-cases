@@ -2562,6 +2562,35 @@ def _status_pill(kind: str, text: str) -> str:
     return f'<span class="status-pill {kind}">{text}</span>'
 
 
+def _na_failure_label(status: str, reason: str) -> str:
+    """Compact UI label for technical N/A; include missing section ids when known."""
+    low = (reason or "").lower()
+    st = (status or "").lower()
+    if (
+        st == "candidate_partial"
+        or "missing required sections" in low
+        or "partial candidate" in low
+    ):
+        detail = ""
+        marker = "missing required sections:"
+        if marker in low:
+            idx = low.find(marker)
+            detail = (reason or "")[idx + len(marker) :].strip()
+            # Keep the label short for the status pill.
+            if len(detail) > 48:
+                detail = detail[:45].rstrip(", ") + "…"
+        return (
+            f"N/A · missing sections ({detail})"
+            if detail
+            else "N/A · missing sections"
+        )
+    if st == "candidate_empty" or "empty answer" in low:
+        return "N/A · empty"
+    if st == "collect_failed" or "candidate error" in low:
+        return "N/A · collect error"
+    return "N/A · technical"
+
+
 def _stream_uid(panel_id: str) -> str:
     return "".join(ch if ch.isalnum() else "_" for ch in (panel_id or "ans"))[:32]
 
@@ -3856,23 +3885,8 @@ if st.session_state.get("confirmed_run"):
                                 or evt.get("status")
                                 or ""
                             )
-                            low = reason.lower()
                             status = str(evt.get("status") or "").lower()
-                            if (
-                                status == "candidate_partial"
-                                or "missing required sections" in low
-                                or "partial candidate" in low
-                            ):
-                                na_label = "N/A · missing sections"
-                            elif status == "candidate_empty" or "empty answer" in low:
-                                na_label = "N/A · empty"
-                            elif (
-                                status == "collect_failed"
-                                or "candidate error" in low
-                            ):
-                                na_label = "N/A · collect error"
-                            else:
-                                na_label = "N/A · technical"
+                            na_label = _na_failure_label(status, reason)
                             lo_board[key] = {
                                 "label": name,
                                 "status": "failed",
@@ -5498,20 +5512,8 @@ if st.session_state.get("confirmed_run"):
                             or evt.get("status")
                             or ""
                         )
-                        low = reason.lower()
                         status = str(evt.get("status") or "").lower()
-                        if (
-                            status == "candidate_partial"
-                            or "missing required sections" in low
-                            or "partial candidate" in low
-                        ):
-                            na_label = "N/A · missing sections"
-                        elif status == "candidate_empty" or "empty answer" in low:
-                            na_label = "N/A · empty"
-                        elif status == "collect_failed" or "candidate error" in low:
-                            na_label = "N/A · collect error"
-                        else:
-                            na_label = "N/A · technical"
+                        na_label = _na_failure_label(status, reason)
                         full_board[key] = {
                             "label": name,
                             "status": "failed",

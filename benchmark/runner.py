@@ -32,6 +32,7 @@ from benchmark.prompts import (
     candidate_system,
     candidate_user,
     format_repair_messages,
+    is_prompt_template_echo,
     local_chat_messages,
     missing_section_ids,
     parse_candidate_answers,
@@ -994,8 +995,13 @@ def maybe_retry_candidate(
     section_gap = bool(missing) and not error_text
     raw_blob = (first.raw_response or "").strip()
     # Short local replies still need re-labeling when almost no sections parsed.
+    # Skip format-repair when the model mostly echoed the prompt template — that
+    # content has no clinical substance to re-label; targeted regen is better.
     needs_format_repair = (
-        section_gap and len(first.answers or {}) < 2 and len(raw_blob) > 40
+        section_gap
+        and len(first.answers or {}) < 2
+        and len(raw_blob) > 40
+        and not is_prompt_template_echo(raw_blob, case)
     )
     if not (transport_failure or truncation or section_gap):
         return first
@@ -1007,6 +1013,7 @@ def maybe_retry_candidate(
                 "type": "candidate_retry",
                 "key": first.candidate_key,
                 "reason": "format repair",
+                "missing_sections": list(missing),
             },
         )
         repaired = _recover_collect_once(
@@ -1082,6 +1089,7 @@ def maybe_retry_candidate(
             "type": "candidate_retry",
             "key": first.candidate_key,
             "reason": reason,
+            "missing_sections": list(missing),
         },
     )
     targeted = (truncation or section_gap) and not transport_failure

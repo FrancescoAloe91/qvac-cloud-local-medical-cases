@@ -170,6 +170,67 @@ def test_local_format_repair_does_not_stack_targeted(monkeypatch):
     ]
 
 
+def test_local_prompt_echo_skips_format_repair_uses_targeted(monkeypatch):
+    """Prompt-template echo has nothing to re-label — one targeted regen only."""
+    case = load_case("caseC")
+    echo = (
+        "CLINICAL CASE:\n"
+        + case.stem
+        + "\n\nAnswer ALL of the following questions. Use this exact format:\n"
+        "Q1 [diagnosis]: x\nA1:\nQ2 [tests]: y\nA2:\n"
+        "Fill every A# answer. Do not skip questions."
+    )
+    first = _candidate(answers={}, provider="qvac", raw=echo)
+    recovered = _candidate(
+        answers={q.id: "ok" for q in case.questions},
+        provider="qvac",
+    )
+    responses = [first, recovered]
+    calls = []
+
+    def fake_once(case_arg, *args, **kwargs):
+        calls.append(
+            {
+                "ids": [q.id for q in case_arg.questions],
+                "has_messages": bool(kwargs.get("messages")),
+            }
+        )
+        return responses.pop(0)
+
+    monkeypatch.setattr("benchmark.runner._collect_candidate_once", fake_once)
+
+    def fake_recover(
+        case_arg,
+        cand_cfg,
+        blind_id,
+        on_event=None,
+        benchmark_track="controlled",
+        api_key=None,
+        *,
+        messages=None,
+        timeout=None,
+        template=None,
+    ):
+        return fake_once(case_arg, messages=messages)
+
+    monkeypatch.setattr("benchmark.runner._recover_collect_once", fake_recover)
+    result = _collect_candidate(
+        case,
+        {
+            "key": "local_openbiollm",
+            "provider": "qvac",
+            "model": "llama3-openbiollm-8b-q4",
+        },
+        "Candidate 1",
+    )
+
+    assert len(calls) == 2
+    assert calls[1]["has_messages"] is False  # targeted, not format-repair
+    assert calls[1]["ids"] == [q.id for q in case.questions]
+    assert missing_section_ids(case, result.answers) == []
+    assert result.meta.retry_count == 1
+
+
 def test_local_recovery_timeout_leaves_gaps_as_na(monkeypatch):
     case = load_case("caseC")
     first = _candidate(
