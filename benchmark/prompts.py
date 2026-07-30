@@ -108,64 +108,17 @@ def format_repair_messages(case: Case, previous_raw: str) -> List[Dict[str, str]
     ]
 
 
-def fold_system_into_user(
-    messages: List[Dict[str, str]],
-) -> List[Dict[str, str]]:
-    """Merge system text into the first user turn (Mistral chat templates reject system)."""
-    if not messages:
-        return messages
-    systems = [
-        str(m.get("content") or "").strip()
-        for m in messages
-        if str(m.get("role") or "").lower() == "system"
-        and str(m.get("content") or "").strip()
-    ]
-    if not systems:
-        return [dict(m) for m in messages]
-    sys_blob = "\n\n".join(systems)
-    rest = [
-        dict(m)
-        for m in messages
-        if str(m.get("role") or "").lower() != "system"
-    ]
-    if not rest:
-        return [{"role": "user", "content": sys_blob}]
-    for index, message in enumerate(rest):
-        if str(message.get("role") or "").lower() == "user":
-            body = str(message.get("content") or "").strip()
-            rest[index] = {
-                **message,
-                "content": (sys_blob + "\n\n" + body).strip() if body else sys_blob,
-            }
-            return rest
-    return [{"role": "user", "content": sys_blob}, *rest]
-
-
-def prefers_user_only_chat(
-    cand_cfg: Optional[Dict[str, Any]] = None, **hints: str
-) -> bool:
-    """True for GGUFs whose embedded chat template rejects role=system (BioMistral)."""
-    parts = [
-        str((cand_cfg or {}).get("key") or ""),
-        str((cand_cfg or {}).get("model") or ""),
-        str((cand_cfg or {}).get("gguf") or ""),
-        str((cand_cfg or {}).get("gguf_path") or ""),
-        str(hints.get("key") or ""),
-        str(hints.get("model") or ""),
-        str(hints.get("gguf") or ""),
-    ]
-    blob = " ".join(parts).casefold()
-    return "biomistral" in blob
-
-
 def local_chat_messages(
     messages: List[Dict[str, str]],
     cand_cfg: Optional[Dict[str, Any]] = None,
     **hints: str,
 ) -> List[Dict[str, str]]:
-    """Adapt chat history for local GGUF families that break on a system role."""
-    if prefers_user_only_chat(cand_cfg, **hints):
-        return fold_system_into_user(messages)
+    """Return a shallow copy of chat messages for local GGUF calls.
+
+    Medical peers (MedGemma / Med42 / OpenBioLLM) use standard Instruct templates
+    that accept role=system — no per-model message rewriting.
+    """
+    _ = cand_cfg, hints  # API kept for call-site stability
     return [dict(m) for m in messages]
 
 

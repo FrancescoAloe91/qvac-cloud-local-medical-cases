@@ -602,7 +602,7 @@ def dry_run_estimate(
 
 
 # Local section recovery must fail fast — sequential per-gap regenerations can
-# hang the live UI on "Recovering sections…" for BioMistral-class GGUFs.
+# hang the live UI on "Recovering sections…" for slow local GGUFs.
 LOCAL_RECOVERY_TIMEOUT_S = 90.0
 
 
@@ -993,7 +993,7 @@ def maybe_retry_candidate(
     missing = missing_section_ids(case, first.answers or {})
     section_gap = bool(missing) and not error_text
     raw_blob = (first.raw_response or "").strip()
-    # Short local replies (BioMistral often ~70–100 chars) still need re-labeling.
+    # Short local replies still need re-labeling when almost no sections parsed.
     needs_format_repair = (
         section_gap and len(first.answers or {}) < 2 and len(raw_blob) > 40
     )

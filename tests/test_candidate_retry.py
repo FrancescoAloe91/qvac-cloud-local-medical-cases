@@ -1,10 +1,8 @@
 from benchmark.cases_loader import load_case
 from benchmark.prompts import (
-    fold_system_into_user,
     is_unsubstantive_section,
     missing_section_ids,
     parse_candidate_answers,
-    prefers_user_only_chat,
 )
 from benchmark.runner import _collect_candidate
 from benchmark.schema import CandidateAnswer, ModelCallMeta
@@ -110,7 +108,7 @@ def test_local_missing_sections_one_multi_gap_targeted_call(monkeypatch):
     monkeypatch.setattr("benchmark.runner._collect_candidate_once", fake_once)
     result = _collect_candidate(
         case,
-        {"key": "local_biomistral", "provider": "qvac", "model": "biomistral-7b-q4"},
+        {"key": "local_med42", "provider": "qvac", "model": "med42-8b-q4"},
         "Candidate 1",
     )
 
@@ -160,7 +158,7 @@ def test_local_format_repair_does_not_stack_targeted(monkeypatch):
     monkeypatch.setattr("benchmark.runner._recover_collect_once", fake_recover)
     result = _collect_candidate(
         case,
-        {"key": "local_biomistral", "provider": "qvac", "model": "biomistral-7b-q4"},
+        {"key": "local_med42", "provider": "qvac", "model": "med42-8b-q4"},
         "Candidate 1",
     )
 
@@ -193,7 +191,7 @@ def test_local_recovery_timeout_leaves_gaps_as_na(monkeypatch):
     monkeypatch.setattr("benchmark.runner.LOCAL_RECOVERY_TIMEOUT_S", 0.05)
     result = _collect_candidate(
         case,
-        {"key": "local_biomistral", "provider": "qvac", "model": "biomistral-7b-q4"},
+        {"key": "local_med42", "provider": "qvac", "model": "med42-8b-q4"},
         "Candidate 1",
     )
 
@@ -331,20 +329,3 @@ def test_single_section_unlabeled_prose_is_attributed():
     raw = "Critical acuity with ECG changes and potassium above 6.5."
     parsed = parse_candidate_answers(one, raw)
     assert parsed == {"urgency": raw}
-
-
-def test_biomistral_folds_system_into_user():
-    assert prefers_user_only_chat(
-        {"key": "local_biomistral", "model": "biomistral-7b-q4"}
-    )
-    assert not prefers_user_only_chat({"key": "local_medgemma"})
-    msgs = fold_system_into_user(
-        [
-            {"role": "system", "content": "Be a physician."},
-            {"role": "user", "content": "Answer A1–A5."},
-        ]
-    )
-    assert len(msgs) == 1
-    assert msgs[0]["role"] == "user"
-    assert msgs[0]["content"].startswith("Be a physician.")
-    assert "Answer A1–A5." in msgs[0]["content"]

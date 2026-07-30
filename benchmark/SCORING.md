@@ -180,7 +180,7 @@ cross-case means stay exploratory and are not broken by that disclosure.
 no-fallback (judge + candidates); native-default runs never mix.
 
 On-device roster bands: Band B generics (Gemma/Llama/Phi) ≠ Band
-**medical_local** (MedGemma/BioMistral/OpenBioLLM); MedPsy is the QVAC brand
+**medical_local** (MedGemma/Med42/OpenBioLLM); MedPsy is the QVAC brand
 triple. Cap ≤12 with all toggles on. UI presets (English): Medical on-device
 only (6), All on-device (9), Full roster (≤12), Cloud only (3).
 

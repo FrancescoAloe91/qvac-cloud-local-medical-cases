@@ -14,7 +14,7 @@ CURRENT_ROSTER_KEYS: Tuple[str, ...] = (
     "local_llama",
     "local_phi",
     "local_medgemma",
-    "local_biomistral",
+    "local_med42",
     "local_openbiollm",
     "qvac_1_7b",
     "qvac",
@@ -105,13 +105,18 @@ MODEL_LABELS: Dict[str, Dict[str, str]] = {
         "name": "MedGemma",
         "version": "MedGemma-4B-IT Q4",
     },
-    "local_biomistral": {
-        "name": "BioMistral",
-        "version": "BioMistral-7B Q4",
+    "local_med42": {
+        "name": "Med42",
+        "version": "Med42-8B Q4",
     },
     "local_openbiollm": {
         "name": "OpenBioLLM",
         "version": "Llama3-OpenBioLLM-8B Q4",
+    },
+    # legacy medical_local peer (older artifacts)
+    "local_biomistral": {
+        "name": "BioMistral",
+        "version": "BioMistral-7B Q4 (legacy peer)",
     },
     # legacy Band B peer (older artifacts)
     "local_qwen": {

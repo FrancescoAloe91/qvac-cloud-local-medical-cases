@@ -2085,7 +2085,7 @@ include_generic = st.toggle(
     help="Band B open GGUFs — not medical-specialized. Same QVAC sidecar.",
 )
 include_medical = st.toggle(
-    "Include 3 medical local LLMs · MedGemma / BioMistral / OpenBioLLM",
+    "Include 3 medical local LLMs · MedGemma / Med42 / OpenBioLLM",
     key="include_medical_peers",
     disabled=not sidecar_up,
     help="Medical-specialized open GGUFs (not MedPsy). "
@@ -2251,7 +2251,7 @@ else:
             else ""
         )
         + (
-            "**Medical local** MedGemma/BioMistral/OpenBioLLM · "
+            "**Medical local** MedGemma/Med42/OpenBioLLM · "
             if _eff_medical
             else ""
         )

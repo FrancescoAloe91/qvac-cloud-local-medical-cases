@@ -45,7 +45,7 @@ echo "==> 4/5 Band B peers (Gemma / Llama / Phi)…"
 if [[ "${SKIP_MEDICAL:-0}" == "1" ]]; then
   echo "==> 5/5 medical peers skipped (SKIP_MEDICAL=1)"
 else
-  echo "==> 5/5 medical peers (MedGemma / BioMistral / OpenBioLLM)…"
+  echo "==> 5/5 medical peers (MedGemma / Med42 / OpenBioLLM)…"
   ./scripts/download_medical_peers.sh
 fi
 

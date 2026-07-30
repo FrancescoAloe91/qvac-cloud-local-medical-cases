@@ -12,7 +12,7 @@ quant used for Band B / MedPsy / medical_local reproducibility.
 ## One-shot: full pack (~25 GB)
 
 All three MedPsy quants used by **3× QVAC** + Band B generics + medical_local
-peers (MedGemma / BioMistral / OpenBioLLM):
+peers (MedGemma / Med42 / OpenBioLLM):
 
 ```bash
 ./scripts/download_all_ggufs.sh
@@ -57,7 +57,7 @@ preset **Medical on-device only** (3 MedPsy + 3 medical, cloud/generics off).
 | File (local name) | Role | HF repo · remote file |
 |-------------------|------|------------------------|
 | `medgemma-4b-it-Q4_K_M.gguf` | MedGemma 4B IT | [`unsloth/medgemma-4b-it-GGUF`](https://huggingface.co/unsloth/medgemma-4b-it-GGUF) · `medgemma-4b-it-Q4_K_M.gguf` |
-| `BioMistral-7B-Q4_K_M.gguf` | BioMistral 7B | [`BioMistral/BioMistral-7B-GGUF`](https://huggingface.co/BioMistral/BioMistral-7B-GGUF) · `ggml-model-Q4_K_M.gguf` |
+| `Llama3-Med42-8B.Q4_K_M.gguf` | Med42 8B (M42 Health) | [`mradermacher/Llama3-Med42-8B-GGUF`](https://huggingface.co/mradermacher/Llama3-Med42-8B-GGUF) · `Llama3-Med42-8B.Q4_K_M.gguf` (fallback: [`tensorblock/Llama3-Med42-8B-GGUF`](https://huggingface.co/tensorblock/Llama3-Med42-8B-GGUF)) |
 | `Llama3-OpenBioLLM-8B.Q4_K_M.gguf` | OpenBioLLM 8B | [`QuantFactory/Llama3-OpenBioLLM-8B-GGUF`](https://huggingface.co/QuantFactory/Llama3-OpenBioLLM-8B-GGUF) · `Llama3-OpenBioLLM-8B.Q4_K_M.gguf` |
 
 ```bash

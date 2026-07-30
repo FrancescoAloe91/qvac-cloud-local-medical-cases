@@ -53,7 +53,7 @@ def test_merge_roster_medical_peers_toggle():
     med_keys = [c["key"] for c in on if is_medical_peer_key(c["key"])]
     assert med_keys == [
         "local_medgemma",
-        "local_biomistral",
+        "local_med42",
         "local_openbiollm",
     ]
     assert all(c.get("band") == "medical_local" for c in on if is_medical_peer_key(c["key"]))
@@ -83,7 +83,7 @@ def test_local_medical_only_roster_six_keys():
     assert len(keys) == 6
     assert keys[:3] == [
         "local_medgemma",
-        "local_biomistral",
+        "local_med42",
         "local_openbiollm",
     ]
     assert keys[3:] == ["qvac_1_7b", "qvac", "qvac_4b_q8"]

@@ -276,7 +276,7 @@ def test_portfolio_pools_heterogeneous_roster_shapes(tmp_path: Path):
         "qvac",
         "qvac_4b_q8",
         "local_medgemma",
-        "local_biomistral",
+        "local_med42",
         "local_openbiollm",
     ]
     # Prefer keys that exist in CURRENT_ROSTER_KEYS; fall back to subset of ROSTER.
