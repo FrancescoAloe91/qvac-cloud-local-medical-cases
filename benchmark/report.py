@@ -202,13 +202,16 @@ def summarize_runs(
     eligible_keys = {
         key for key in all_keys if len(scores.get(key, [])) >= min_rank_n
     }
+    # Include every requested model so Failed % is visible even when a model
+    # drops below min_valid_for_ranking (common at Multi N=5: one N/A ⇒ excluded
+    # from competitive rank, which previously hid the only non-zero Failed cells).
     ranking_mean = []
     for k, v in stats.items():
-        if k not in eligible_keys:
-            continue
         mean_raw = (
             statistics.fmean(scores[k]) if scores.get(k) else None
         )
+        n_valid = int(v.get("n_valid") or v.get("n_runs") or v.get("n") or 0)
+        is_eligible = k in eligible_keys and mean_raw is not None
         ranking_mean.append(
             {
                 "key": k,
@@ -221,27 +224,42 @@ def summarize_runs(
                 "iqr": v["iqr"],
                 "min": v["min"],
                 "max": v["max"],
-                "n_runs": int(v.get("n_runs") or v.get("n") or 0),
+                "n_runs": n_valid,
                 "n_requested": int(v.get("n_requested") or 0),
                 "n_failed": int(v.get("n_failed") or 0),
                 "failure_rate": v.get("failure_rate"),
+                "failure_reasons": dict(v.get("failure_reasons") or {}),
                 "coverage_mean": v.get("coverage_mean"),
                 "quality_mean": v.get("quality_mean"),
                 "discipline_mean": v.get("discipline_mean"),
+                "eligible": is_eligible,
                 "exploratory": True,
             }
         )
     ranking_mean.sort(
-        key=lambda r: float(r["accuracy_mean_raw"] if r["accuracy_mean_raw"] is not None else -1),
-        reverse=True,
+        key=lambda r: (
+            0 if r.get("eligible") else 1,
+            -float(
+                r["accuracy_mean_raw"]
+                if r.get("accuracy_mean_raw") is not None
+                else -1
+            ),
+            -float(r.get("failure_rate") or 0),
+            str(r.get("key") or ""),
+        ),
     )
     last_mean: Optional[float] = None
     last_rank = 0
-    for i, row in enumerate(ranking_mean, 1):
+    eligible_i = 0
+    for row in ranking_mean:
+        if not row.get("eligible") or row.get("accuracy_mean_raw") is None:
+            row["rank"] = None
+            continue
+        eligible_i += 1
         mean_value = float(row["accuracy_mean_raw"])
         if last_mean is None or mean_value != last_mean:
             last_mean = mean_value
-            last_rank = i
+            last_rank = eligible_i
         row["rank"] = last_rank
 
     paired_values: Dict[str, List[float]] = {key: [] for key in all_keys}
@@ -349,9 +367,9 @@ def summarize_runs(
             []
             if not excluded
             else [
-                "Excluded until "
+                "Unranked until "
                 + str(min_rank_n)
-                + " valid observation(s): "
+                + " valid observation(s) (still listed with Failed %): "
                 + ", ".join(
                     f"{key} ({len(scores.get(key, []))}/{min_rank_n})"
                     for key in excluded
@@ -365,20 +383,26 @@ def summarize_runs(
 def print_summary_table(summary: MultiRunSummary) -> str:
     lines = [
         f"Case {summary.case_id} · N={summary.n} · cost≈${summary.total_cost_usd:.4f}",
-        f"{'Rank':<6}{'Model':<12}{'Mean%':>7}{'±Std':>7}{'CV%':>6}{'Rel':>11}{'Med%':>7}{'Runs':>6}",
-        "-" * 70,
+        f"{'Rank':<6}{'Model':<12}{'Mean%':>7}{'±Std':>7}{'CV%':>6}{'Rel':>11}"
+        f"{'Med%':>7}{'Runs':>6}{'Fail%':>7}",
+        "-" * 78,
     ]
     for row in summary.ranking_mean:
         std = row.get("std")
         cv = row.get("cv_pct")
+        mean = row.get("accuracy_mean")
+        med = row.get("median")
+        fail_pct = 100.0 * float(row.get("failure_rate") or 0)
+        rank = row.get("rank")
         lines.append(
-            f"{row['rank']:<6}{row['key']:<12}"
-            f"{row['accuracy_mean']:>7.1f}"
+            f"{('—' if rank is None else rank):<6}{row['key']:<12}"
+            f"{('N/A' if mean is None else f'{float(mean):.1f}'):>7}"
             f"{(f'{std:.1f}' if std is not None else '—'):>7}"
             f"{(f'{cv:.1f}' if cv is not None else '—'):>6}"
             f"{str(row.get('reliability', '—')):>11}"
-            f"{row.get('median', 0):>7.1f}"
+            f"{('—' if med is None else f'{float(med):.1f}'):>7}"
             f"{int(row.get('n_runs') or 0):>6}"
+            f"{fail_pct:>6.0f}%"
         )
     if summary.outliers:
         lines.append("Reliability notes:")
@@ -389,15 +413,24 @@ def print_summary_table(summary: MultiRunSummary) -> str:
 
 def reliability_caption(summary: MultiRunSummary) -> str:
     """One-line plain-language guide for the multi-run mean."""
-    if not summary.ranking_mean:
+    ranked = [
+        r
+        for r in (summary.ranking_mean or [])
+        if r.get("rank") is not None and r.get("eligible", True)
+    ]
+    if not ranked:
         return (
-            "No model has 5 valid runs yet. Technical failures are N/A, never zero; "
-            "valid scores and KPIs remain stored."
+            "No model has enough valid runs for exploratory ranking yet. "
+            "Failed % = share of pooled runs that are technical N/A "
+            "(collect/judge/timeout/partial/empty) — not a clinical zero; "
+            "means use only scored runs."
         )
-    eligible = len(summary.ranking_mean)
+    eligible = len(ranked)
     return (
-        f"Exploratory ranking for {eligible} model(s) with at least 5 valid runs · "
+        f"Exploratory ranking for {eligible} model(s) with enough valid runs · "
         "each mean shows its own N; technical N/A never discard other models' data · "
+        "Failed % = technical N/A rate across requested runs "
+        "(collect/judge/timeout/partial/empty) · "
         "C/Q/D = coverage/quality/discipline (quality independent of coverage) · "
         "sample SD + median/IQR do not measure clinical generalization."
     )

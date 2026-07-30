@@ -139,6 +139,10 @@ def _mean_rows_to_last_ranking(ranking_mean):
     """Persist mean summary as last_ranking (current roster + per-model Runs)."""
     out = []
     for r in _current_ranking(ranking_mean or [], score_field="accuracy_mean"):
+        if r.get("eligible") is False or r.get("rank") is None:
+            continue
+        if r.get("accuracy_mean") is None:
+            continue
         out.append(
             {
                 "key": r["key"],
@@ -1146,6 +1150,15 @@ def _reliability_table_html(ranking_mean: list) -> str:
         ranking_mean or [], score_field="accuracy_mean"
     )
     _td = "padding:0.45rem 0.55rem;border-bottom:1px solid #1e293b"
+
+    def _fmt_pct(value, *, digits: int = 1, suffix: str = "%") -> str:
+        if value is None:
+            return "N/A"
+        try:
+            return f"{float(value):.{digits}f}{suffix}"
+        except (TypeError, ValueError):
+            return "N/A"
+
     for r in ranking_mean:
         raw_cv = r.get("cv_pct")
         try:
@@ -1155,31 +1168,59 @@ def _reliability_table_html(ranking_mean: list) -> str:
         cv_cell, badge, _band = cv_reliability_cells_html(cv_val, td_style=_td)
         nm, ver = _nv(r.get("key"), label=r.get("label"), model=r.get("model"))
         n_runs = int(r.get("n_runs") or r.get("n") or 0)
+        n_req = int(r.get("n_requested") or n_runs)
+        n_failed = int(r.get("n_failed") or 0)
+        try:
+            fail_pct = 100.0 * float(r.get("failure_rate") or 0)
+        except (TypeError, ValueError):
+            fail_pct = 0.0
+        rank = r.get("rank")
+        rank_cell = "—" if rank is None else f"#{rank}"
+        mean = r.get("accuracy_mean")
+        cov = r.get("coverage_mean")
+        qual = r.get("quality_mean")
+        disc = r.get("discipline_mean")
+        if cov is None and qual is None and disc is None:
+            cqd = "N/A"
+        else:
+            cqd = (
+                f"{_fmt_pct(cov, digits=0, suffix='')}/"
+                f"{_fmt_pct(qual, digits=0, suffix='')}/"
+                f"{_fmt_pct(disc, digits=0, suffix='')}"
+            )
+        std = r.get("std")
+        med = r.get("median")
+        mn = r.get("min")
+        mx = r.get("max")
+        range_cell = (
+            "N/A"
+            if mn is None or mx is None
+            else f"{float(mn):.0f}–{float(mx):.0f}"
+        )
+        fail_color = "#fca5a5" if n_failed else "#94a3b8"
         rows_html.append(
             "<tr>"
-            f"<td style='{_td}'>#{r.get('rank')}</td>"
+            f"<td style='{_td}'>{rank_cell}</td>"
             f"<td style='{_td};font-weight:600'>{html.escape(nm)}</td>"
             f"<td style='{_td};color:#cbd5e1;font-size:0.85rem'>"
             f"{html.escape(ver)}</td>"
             f"<td style='{_td};font-weight:700;color:#fbbf24;font-size:1.05rem'>"
-            f"{float(r.get('accuracy_mean') or 0):.1f}%</td>"
+            f"{_fmt_pct(mean)}</td>"
+            f"<td style='{_td};color:#cbd5e1'>{cqd}</td>"
             f"<td style='{_td};color:#cbd5e1'>"
-            f"{float(r.get('coverage_mean') or 0):.0f}/"
-            f"{float(r.get('quality_mean') or 0):.0f}/"
-            f"{float(r.get('discipline_mean') or 0):.0f}</td>"
-            f"<td style='{_td};color:#cbd5e1'>"
-            f"± {float(r.get('std') or 0):.1f}</td>"
+            f"{'—' if std is None else f'± {float(std):.1f}'}</td>"
             f"{cv_cell}"
             f"<td style='{_td}'>{badge}</td>"
             f"<td style='{_td};color:#94a3b8'>"
-            f"{float(r.get('median') or 0):.1f}</td>"
+            f"{_fmt_pct(med)}</td>"
             f"<td style='{_td};color:#64748b;font-size:0.85rem'>"
-            f"{float(r.get('min') or 0):.0f}–{float(r.get('max') or 0):.0f}</td>"
+            f"{range_cell}</td>"
             f"<td style='{_td};font-weight:700;color:#e2e8f0;text-align:right'>"
-            f"{n_runs}</td>"
-            f"<td style='{_td};color:#fca5a5;text-align:right'>"
-            f"{int(r.get('n_failed') or 0)} "
-            f"({100 * float(r.get('failure_rate') or 0):.0f}%)</td>"
+            f"{n_runs}"
+            f"<span style='color:#64748b;font-weight:500;font-size:0.8rem'>"
+            f"/{n_req}</span></td>"
+            f"<td style='{_td};color:{fail_color};text-align:right'>"
+            f"{n_failed} ({fail_pct:.0f}%)</td>"
             "</tr>"
         )
     return (
@@ -1207,8 +1248,11 @@ def _reliability_table_html(ranking_mean: list) -> str:
         f"{reliability_badge('very_low')} CV &gt; 20% &nbsp;·&nbsp; "
         "cell color = CV band · lower CV = stabler mean · "
         "<b>CV band ≠ clinical validation</b> · "
-        "<b>Runs</b> = scored passes for that model/version "
-        "(can differ if local was repeated more than cloud) · "
+        "<b>Runs</b> = scored / requested for that model "
+        "(can differ across models) · "
+        "<b>Failed</b> = technical N/A rate "
+        "(collect / judge / timeout / partial / empty) — not clinical 0% · "
+        "unranked rows (#—) need more valid runs for exploratory rank · "
         "N=5 exploratory · ~10 better for CV eye-check · 20+ diminishing returns · "
         "<b>C/Q/D</b> = coverage / quality / discipline "
         "(quality is independent of coverage; a high board % can still have low C)</div>"

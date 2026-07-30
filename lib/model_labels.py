@@ -54,23 +54,35 @@ def rerank_rows(
     score_field: str = "accuracy",
 ) -> List[Dict[str, Any]]:
     """Sort valid rows, preserve exact ties, and leave technical N/A unranked."""
+
+    def _rankable(r: Dict[str, Any]) -> bool:
+        if r.get("eligible") is False:
+            return False
+        if str(r.get("status") or "ok") != "ok":
+            return False
+        if r.get(score_field) is None:
+            return False
+        return True
+
     ranked = sorted(
         (dict(r) for r in rows),
         key=lambda r: (
-            0 if str(r.get("status") or "ok") == "ok" and r.get(score_field) is not None else 1,
+            0 if _rankable(r) else 1,
             -float(r.get(score_field) or 0),
         ),
     )
     last_score = None
     last_rank = 0
-    for i, r in enumerate(ranked, 1):
-        if str(r.get("status") or "ok") != "ok" or r.get(score_field) is None:
+    rankable_i = 0
+    for r in ranked:
+        if not _rankable(r):
             r["rank"] = None
             continue
+        rankable_i += 1
         score = float(r[score_field])
         if last_score is None or score != last_score:
             last_score = score
-            last_rank = i
+            last_rank = rankable_i
         r["rank"] = last_rank
     return ranked
 

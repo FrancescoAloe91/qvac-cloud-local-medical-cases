@@ -561,6 +561,15 @@ def fig_judge_mean_accuracy_bars(
 ) -> go.Figure:
     """Mean Clinical Composite Score with ±1 std error bars."""
     ranking_mean_rows = filter_current_roster_rows(ranking_mean_rows)
+    # Mean bars are competitive ranks only — unranked / insufficient-N rows stay
+    # in the Failed column of the table, not as fake chart competitors.
+    ranking_mean_rows = [
+        r
+        for r in ranking_mean_rows
+        if r.get("eligible", True)
+        and r.get("accuracy_mean") is not None
+        and r.get("rank") is not None
+    ]
     if not ranking_mean_rows:
         fig = go.Figure()
         fig.update_layout(**_base_layout(title, height=height))
@@ -583,7 +592,6 @@ def fig_judge_mean_accuracy_bars(
     cvs = [float(r.get("cv_pct") or 0) for r in rows]
     n_runs_list = [int(r.get("n_runs") or r.get("n") or 0) for r in rows]
     colors = [MODEL_COLORS.get(r.get("key"), "#94a3b8") for r in rows]
-    ranks = [int(r.get("rank") or i + 1) for i, r in enumerate(rows)]
     n = max(1, len(rows))
     bar_h = max(height, 64 + n * 52)
 

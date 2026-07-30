@@ -67,11 +67,38 @@ def test_failure_excludes_only_under_threshold_model():
     artifacts = [_artifact(i) for i in range(5)]
     artifacts[2] = _artifact(2, failure=True)
     summary = summarize_runs(artifacts)
-    assert [row["key"] for row in summary.ranking_mean] == ["claude"]
+    # Under-threshold models stay listed (honest Failed %) but are unranked.
+    by_key = {row["key"]: row for row in summary.ranking_mean}
+    assert set(by_key) == {"chatgpt", "claude"}
+    assert by_key["claude"]["rank"] == 1
+    assert by_key["claude"]["eligible"] is True
+    assert by_key["claude"]["n_failed"] == 0
+    assert by_key["claude"]["failure_rate"] == 0.0
+    assert by_key["chatgpt"]["rank"] is None
+    assert by_key["chatgpt"]["eligible"] is False
+    assert by_key["chatgpt"]["n_runs"] == 4
+    assert by_key["chatgpt"]["n_requested"] == 5
+    assert by_key["chatgpt"]["n_failed"] == 1
+    assert by_key["chatgpt"]["failure_rate"] == 0.2
     assert summary.candidate_stats["chatgpt"]["n_valid"] == 4
     assert summary.candidate_stats["chatgpt"]["n_failed"] == 1
     assert summary.candidate_stats["claude"]["n_valid"] == 5
     assert summary.candidate_stats["chatgpt"]["failure_rate"] == 0.2
+    assert any("Unranked until" in note for note in summary.outliers)
+
+
+def test_ranking_mean_failed_column_for_eligible_partial_failures():
+    """Eligible models (enough valid runs) still expose non-zero Failed %."""
+    artifacts = [_artifact(i) for i in range(6)]
+    artifacts[1] = _artifact(1, failure=True)
+    summary = summarize_runs(artifacts, min_valid_for_ranking=5)
+    chatgpt = next(row for row in summary.ranking_mean if row["key"] == "chatgpt")
+    assert chatgpt["eligible"] is True
+    assert chatgpt["rank"] is not None
+    assert chatgpt["n_runs"] == 5
+    assert chatgpt["n_requested"] == 6
+    assert chatgpt["n_failed"] == 1
+    assert chatgpt["failure_rate"] == pytest.approx(1 / 6, rel=1e-3)
 
 
 def test_equal_five_valid_runs_enable_exploratory_ranking():
