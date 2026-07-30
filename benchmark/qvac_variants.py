@@ -125,9 +125,7 @@ MEDICAL_PEER_SPECS: List[Dict[str, Any]] = [
         "provider": "qvac",
         "model": "llama3-ultramedical-8b-q4",
         "gguf": "Llama-3-8B-UltraMedical.Q4_K_M.gguf",
-        # Replaces OpenBioLLM: QuantFactory OpenBio lacked chat_template; Llama-3
-        # pre-pack emptied QVAC SDK output; free-form replies missed all A1–A5.
-        # UltraMedical (mradermacher) embeds Llama-3 Instruct like Med42.
+        # mradermacher UltraMedical embeds Llama-3 Instruct chat_template in-GGUF.
         "band": "medical_local",
     },
 ]

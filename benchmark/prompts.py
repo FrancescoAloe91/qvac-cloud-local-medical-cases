@@ -113,10 +113,9 @@ def format_repair_messages(case: Case, previous_raw: str) -> List[Dict[str, str]
     ]
 
 
-# Llama-3 Instruct packing (optional). Not used by the active medical roster:
-# Med42 / UltraMedical / MedGemma ship tokenizer.chat_template in-GGUF. Pre-
-# rendering special tokens into a single user message emptied QVAC SDK output
-# for OpenBioLLM (legacy), so active peers rely on the embedded template.
+# Llama-3 Instruct packing (optional). Active medical peers (MedGemma / Med42 /
+# UltraMedical) ship tokenizer.chat_template in-GGUF and rely on that instead
+# of pre-rendering special tokens into a single user message.
 
 
 def render_llama3_instruct(messages: List[Dict[str, str]]) -> str:

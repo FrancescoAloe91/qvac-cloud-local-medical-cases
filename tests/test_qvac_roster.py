@@ -99,6 +99,24 @@ def test_peer_key_helpers_distinguish_bands():
     assert not is_on_device_key("chatgpt")
 
 
+def test_retired_medical_peers_absent_from_roster():
+    """BioMistral / OpenBioLLM were replaced; keys must not appear anywhere live."""
+    from lib.model_labels import CURRENT_ROSTER_KEYS, MODEL_LABELS
+    from benchmark.qvac_variants import MEDICAL_PEER_SPECS
+
+    retired = ("local_biomistral", "local_openbiollm")
+    for key in retired:
+        assert key not in CURRENT_ROSTER_KEYS
+        assert key not in MODEL_LABELS
+        assert not is_medical_peer_key(key)
+        assert not is_on_device_key(key)
+    assert {s["key"] for s in MEDICAL_PEER_SPECS} == {
+        "local_medgemma",
+        "local_med42",
+        "local_ultramedical",
+    }
+
+
 def test_medical_on_device_only_merge():
     """Medical on-device only preset: MedPsy ×3 + medical ×3, no cloud/generics."""
     roster = merge_roster(
