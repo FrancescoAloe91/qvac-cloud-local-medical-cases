@@ -231,11 +231,12 @@ def test_rebuild_does_not_mix_family_cohorts(tmp_path: Path):
     cid_b = _write_run(
         tmp_path, run_id="mix-b1", gold=gold_b, finished_at="2026-01-05T10:00:00Z"
     )
-    # Newest overall is B (1 run) — without cohort filter, rebuild fails <5.
+    # Newest overall is B (1 run) — without cohort filter, rebuild uses that cohort.
     newest = rebuild_multi_from_history(tmp_path, "caseC", n=5)
-    assert newest["ok"] is False
+    assert newest["ok"] is True
     assert newest["cohort_id"] == cid_b
     assert newest["available"] == 1
+    assert newest["n_used"] == 1
 
     # Explicit restore of A pools the five A runs only.
     restored = rebuild_multi_from_history(

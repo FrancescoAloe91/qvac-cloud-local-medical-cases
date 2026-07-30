@@ -77,9 +77,11 @@ def summarize_runs(
     artifacts: List[RunArtifact],
     *,
     allow_mixed_cohorts: bool = False,
+    min_valid_for_ranking: int = 5,
 ) -> MultiRunSummary:
     if not artifacts:
         return MultiRunSummary(case_id="", n=0)
+    min_rank_n = max(1, int(min_valid_for_ranking))
     # Pool only on cohort_id (requested recipe + scoring gold). execution_cohort_id
     # is audit metadata — best-effort routing / per-run N/A must not abort Multi means.
     cohort_ids = {(a.cohort_id or "") for a in artifacts}
@@ -197,7 +199,9 @@ def summarize_runs(
                 outliers.append(f"{key}: possible bimodal gap={mid_gap:.1f}")
 
     all_keys = set(requested)
-    eligible_keys = {key for key in all_keys if len(scores.get(key, [])) >= 5}
+    eligible_keys = {
+        key for key in all_keys if len(scores.get(key, [])) >= min_rank_n
+    }
     ranking_mean = []
     for k, v in stats.items():
         if k not in eligible_keys:
@@ -345,9 +349,12 @@ def summarize_runs(
             []
             if not excluded
             else [
-                "Excluded until 5 valid observations: "
+                "Excluded until "
+                + str(min_rank_n)
+                + " valid observation(s): "
                 + ", ".join(
-                    f"{key} ({len(scores.get(key, []))}/5)" for key in excluded
+                    f"{key} ({len(scores.get(key, []))}/{min_rank_n})"
+                    for key in excluded
                 )
                 + ". Technical failures are N/A; other models keep their valid data."
             ]
@@ -981,7 +988,7 @@ def rebuild_multi_from_history(
     When ``cohort_id`` is set (e.g. after restoring a prior confirmed gold),
     rebuild that immutable cohort instead of the newest case cohort.
     """
-    n = max(5, min(int(n), 30))
+    n = max(1, min(int(n), 30))
     all_pairs = artifacts_for_case(
         out_dir, case_id, limit=None, preloaded=preloaded
     )
@@ -1021,11 +1028,11 @@ def rebuild_multi_from_history(
         if pair[1].cohort_id == target_cohort
         and str(pair[1].run_status or "") == "complete"
     ][:n]
-    if len(pairs) < 5:
+    if len(pairs) < 1:
         return {
             "ok": False,
             "reason": (
-                f"Need at least 5 saved valid-cohort runs (found {len(pairs)}). "
+                f"Need at least 1 complete same-cohort run (found {len(pairs)}). "
                 "Different stems, references, protocols or model configs cannot be mixed."
             ),
             "available": len(pairs),
@@ -1040,7 +1047,7 @@ def rebuild_multi_from_history(
         rescored_arts.append(clone)
         per_run.append(row)
 
-    summary = summarize_runs(rescored_arts)
+    summary = summarize_runs(rescored_arts, min_valid_for_ranking=1)
     return {
         "ok": True,
         "available": len(pairs),
@@ -1072,7 +1079,7 @@ def rebuild_portfolio_from_history(
     its own valid N / failures. Never merges incompatible scoring versions.
     Zero API cost. Not clinical validation.
     """
-    n = max(5, min(int(n), 30))
+    n = max(1, min(int(n), 30))
     want_keys = list(model_ids) if model_ids is not None else list(CURRENT_ROSTER_KEYS)
     # Probe availability beyond n for UI messaging.
     all_eligible = list_portfolio_runs(
@@ -1085,11 +1092,11 @@ def rebuild_portfolio_from_history(
     )
     pairs = all_eligible[:n]
     n_cases = len({a.case_id for _, a in pairs})
-    if len(pairs) < 5:
+    if len(pairs) < 1:
         return {
             "ok": False,
             "reason": (
-                f"Need at least 5 complete portfolio-eligible runs "
+                f"Need at least 1 complete portfolio-eligible run "
                 f"(found {len(pairs)}; {n_cases} distinct case(s)). "
                 "Filters: same track + scoring_version, complete + valid "
                 "judgments; roster shapes may differ (per-model N). "
@@ -1109,7 +1116,9 @@ def rebuild_portfolio_from_history(
         rescored_arts.append(clone)
         per_run.append(row)
 
-    summary = summarize_runs(rescored_arts, allow_mixed_cohorts=True)
+    summary = summarize_runs(
+        rescored_arts, allow_mixed_cohorts=True, min_valid_for_ranking=1
+    )
     mean_rank = _mean_ranks_from_per_run(per_run)
     # Attach mean rank onto ranking_mean rows when present.
     if hasattr(summary, "ranking_mean"):

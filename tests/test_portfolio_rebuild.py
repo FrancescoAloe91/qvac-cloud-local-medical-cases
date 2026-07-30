@@ -221,7 +221,7 @@ def test_same_case_rebuild_excludes_cancelled_even_with_cohort_id(tmp_path: Path
     assert built["ok"] is True
     assert built["n_used"] == 5
     assert all(pr.get("run_id") != "abort-stale" for pr in built["per_run"])
-    # Four complete + one cancelled with same cohort → insufficient for n=5 if we drop completes.
+    # Four complete + one cancelled with same cohort → mean from the 4 completes.
     for i in range(4):
         _write(
             tmp_path,
@@ -242,8 +242,9 @@ def test_same_case_rebuild_excludes_cancelled_even_with_cohort_id(tmp_path: Path
     thin = rebuild_multi_from_history(
         tmp_path, "caseD", n=5, cohort_id="cohort-d"
     )
-    assert thin["ok"] is False
+    assert thin["ok"] is True
     assert thin["available"] == 4
+    assert thin["n_used"] == 4
 
 
 def test_summarize_mixed_cohorts_opt_in(tmp_path: Path):
