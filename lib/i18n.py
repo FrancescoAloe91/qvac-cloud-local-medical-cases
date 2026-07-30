@@ -501,7 +501,7 @@ _STRINGS = {
         "bench.family_restore_help": (
             "Loads the exact frozen gold contract from History (same claim splits). "
             "Does not merge different Confirm versions. "
-            "Re-Prepare or extraction_cost metadata can split cohort_id — restore exact Confirm."
+            "Re-Prepare or claim-split edits can split cohort_id — restore exact Confirm."
         ),
         "bench.family_restore_ok": (
             "Confirmed reference restored — candidates unlocked; Rebuild uses this cohort."
@@ -1053,7 +1053,7 @@ _STRINGS = {
         "bench.family_restore_help": (
             "Carica il contratto gold congelato esatto dalla History (stessi split "
             "dei claim). Non unisce versioni Confirm diverse. "
-            "Re-Prepare o metadata extraction_cost possono spezzare cohort_id — "
+            "Re-Prepare o modifiche agli split dei claim possono spezzare cohort_id — "
             "ripristina il Confirm esatto."
         ),
         "bench.family_restore_ok": (

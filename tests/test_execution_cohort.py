@@ -5,6 +5,7 @@ from __future__ import annotations
 from benchmark.gold import (
     execution_cohort_id,
     is_strict_track,
+    track_ui_routing_blurb,
     uses_controlled_sampling,
 )
 from benchmark.openrouter import _provider_prefs
@@ -50,6 +51,19 @@ def test_track_helpers():
     assert not uses_controlled_sampling("native_defaults")
     assert is_strict_track("strict_controlled")
     assert not is_strict_track("controlled")
+
+
+def test_track_ui_routing_blurb_branches():
+    soft = track_ui_routing_blurb("controlled")
+    assert "fallbacks remain on" in soft
+    assert "temp 0.2" in soft
+    strict = track_ui_routing_blurb("strict_controlled")
+    assert "fallbacks OFF" in strict
+    assert "strict_controlled" in strict
+    native = track_ui_routing_blurb("native_defaults")
+    assert "native_defaults" in native
+    assert "fallbacks remain on" not in native
+    assert "fallbacks OFF" not in native
 
 
 def test_provider_prefs_strict_vs_best_effort():

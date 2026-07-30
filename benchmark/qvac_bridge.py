@@ -549,6 +549,7 @@ def iter_tokens(
     prompt: str,
     timeout: float = 300.0,
     messages: Optional[list] = None,
+    sampling: Optional[Dict[str, Any]] = None,
 ) -> Iterator[Dict[str, Any]]:
     """Yield {type: token|done|error, ...} for UI live updates on the main thread.
 
@@ -560,6 +561,8 @@ def iter_tokens(
     payload: Dict[str, Any] = {"prompt": prompt, "stream": True}
     if messages:
         payload["messages"] = messages
+    if sampling:
+        payload.update({k: v for k, v in sampling.items() if v is not None})
     body = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(
         url,

@@ -11,7 +11,7 @@ from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from typing import Any, Callable, Dict, List, Optional
 
 from benchmark import openrouter
-from benchmark.gold import load_confirmed_gold
+from benchmark.gold import load_confirmed_gold, uses_controlled_sampling
 from benchmark.run_control import is_cancelled
 from benchmark.prompts import judge_system, judge_user
 from benchmark.schema import (
@@ -1453,7 +1453,7 @@ class PipelinedJudge:
             verifier_model="",
             allowed_providers=(
                 self.judge_allowed_providers
-                if self.benchmark_track == "controlled"
+                if uses_controlled_sampling(self.benchmark_track)
                 else None
             ),
             require_parameters=False,
@@ -1955,7 +1955,7 @@ class PipelinedJudge:
                 verifier_model="",
                 allowed_providers=(
                     self.judge_allowed_providers
-                    if self.benchmark_track == "controlled"
+                    if uses_controlled_sampling(self.benchmark_track)
                     else None
                 ),
                 require_parameters=False,

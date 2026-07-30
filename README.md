@@ -32,12 +32,14 @@ Repository: https://github.com/FrancescoAloe91/qvac-vs-cloud-llms-health-test
 5. Run a track: **`controlled`** (default best-effort: temp 0.2 + preferred
    provider, OpenRouter fallbacks **on**), **`strict_controlled`** (opt-in: no
    fallback, `require_parameters`, route miss → technical N/A), or
-   **`native_defaults`**. Tracks never pool. History “rebuild last N” prefers
-   `execution_cohort_id` (actual routed models/providers + GGUF digests + QVAC
-   runtime) when present; otherwise legacy `cohort_id` (requested recipe +
-   scoring gold contract **without** display-only section summaries). Pasting
-   the same raw case/reference alone is not enough: a new Prepare that changes
-   claim splits starts a new cohort. The UI can **restore** an exact prior
+   **`native_defaults`**. Tracks never pool. Multi/Rebuild same-case means pool
+   only on matching `cohort_id` (requested recipe + scoring gold contract
+   **without** display-only section summaries). `execution_cohort_id` (actual
+   routed models/providers + GGUF digests + QVAC runtime) is audit metadata and
+   does **not** split batch means. Default install is cloud-only until GGUFs +
+   sidecar are present; if the QVAC sidecar is down, Compare is cloud-only.
+   Pasting the same raw case/reference alone is not enough: a new Prepare that
+   changes claim splits starts a new cohort. The UI can **restore** an exact prior
    confirmed gold from History when the pasted case+raw reference match a case
    family. Confirm supports add/split/delete/move of claims; summaries are
    display-only. Active protocol is gold-only; strings under `OLD/` are archived.
@@ -171,7 +173,8 @@ History can rebuild last-N means with **zero API cost**:
 - Re-validate stored judge JSON with current local salvage; presentation/schema
   salvageable N/A rows may recover offline.
 - **Same case** means require five valid observations from one immutable cohort.
-  Controlled and native-default runs never mix.
+  Controlled and native-default runs never mix. Rebuild succeeds once any model
+  reaches N≥5 even if the History button appears earlier.
 - **Portfolio** (optional scope next to Rebuild) averages the last N complete
   runs chronologically across cases for the same roster, track, and
   `scoring_version` — exploratory cross-case mean, not clinical validation;

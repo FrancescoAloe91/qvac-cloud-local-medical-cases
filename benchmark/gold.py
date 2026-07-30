@@ -543,6 +543,30 @@ def uses_controlled_sampling(benchmark_track: str) -> bool:
     }
 
 
+def track_ui_routing_blurb(benchmark_track: str) -> str:
+    """Roster caption fragment: fallbacks + sampling by track (no Streamlit)."""
+    track = str(benchmark_track or "").strip() or "controlled"
+    if is_strict_track(track):
+        return (
+            "pinned prefer-order; OpenRouter fallbacks OFF "
+            "(strict · route miss → N/A) · not bit-identical backends. "
+            f"Track **{track}** · temp 0.2 (strict_controlled sampling)."
+        )
+    if uses_controlled_sampling(track):
+        return (
+            "pinned prefer-order; OpenRouter fallbacks remain on · "
+            "not bit-identical backends. "
+            f"Track **{track}** · temp 0.2 "
+            "(controlled ≠ stock web/API defaults)."
+        )
+    return (
+        "pinned prefer-order; native provider defaults · "
+        "not bit-identical backends. "
+        f"Track **{track}** · native_defaults "
+        "(separate cohort; never pooled with controlled)."
+    )
+
+
 def _accumulate_extract_meta(
     prior: ModelCallMeta, nxt: ModelCallMeta, *, role: str
 ) -> ModelCallMeta:

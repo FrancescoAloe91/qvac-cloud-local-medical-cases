@@ -20,6 +20,7 @@ from benchmark.gold import (
     cohort_id as build_cohort_id,
     execution_cohort_id as build_execution_cohort_id,
     load_confirmed_gold,
+    uses_controlled_sampling,
 )
 from benchmark.judge import (
     build_ranking,
@@ -148,10 +149,10 @@ def build_run_artifact(
         ),
         "blind_seed": blind_seed,
         "benchmark_track": track,
-        "candidate_temperature": 0.2 if track == "controlled" else None,
+        "candidate_temperature": 0.2 if uses_controlled_sampling(track) else None,
         "candidate_sampling": (
             "controlled_temperature_0.2"
-            if track == "controlled"
+            if uses_controlled_sampling(track)
             else "provider_parameters_omitted_where_supported"
         ),
         "candidate_max_output_tokens": CANDIDATE_MAX_OUTPUT_TOKENS,
@@ -1021,7 +1022,7 @@ def iter_collect_live(
                     gguf,
                     sampling=(
                         {"temp": 0.2, "top_k": 20, "top_p": 0.95}
-                        if benchmark_track == "controlled"
+                        if uses_controlled_sampling(benchmark_track)
                         else {}
                     ),
                 )
@@ -1451,7 +1452,9 @@ def run_once(
             ),
             "blind_seed": seed,
             "benchmark_track": benchmark_track,
-            "candidate_temperature": 0.2 if benchmark_track == "controlled" else None,
+            "candidate_temperature": (
+                0.2 if uses_controlled_sampling(benchmark_track) else None
+            ),
             "judge_temperature": judge_temp,
         },
     )

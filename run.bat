@@ -1,14 +1,9 @@
 @echo off
+REM Prefer launch_dashboard.bat — it starts the QVAC sidecar + Streamlit.
+REM This file redirects so double-clicking run.bat still gets local GGUF support.
 cd /d "%~dp0"
-if not exist ".venv" (
-  python -m venv .venv
-)
-call ".venv\Scripts\activate.bat"
-pip install -q -r requirements.txt
-set STREAMLIT_BROWSER_GATHER_USAGE_STATS=false
-set STREAMLIT_SERVER_SHOW_EMAIL_PROMPT=false
 echo.
-echo Starting QVAC vs Cloud LLMs - Health Test...
-echo Open http://localhost:8501 if the browser does not open.
+echo run.bat now launches launch_dashboard.bat (QVAC sidecar + Streamlit).
+echo For Streamlit-only without sidecar, run: streamlit run app.py
 echo.
-streamlit run app.py --server.showEmailPrompt=false
+call "%~dp0launch_dashboard.bat"

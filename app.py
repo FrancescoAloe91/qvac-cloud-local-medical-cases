@@ -29,6 +29,8 @@ from benchmark.gold import (
     gold_json,
     load_confirmed_gold,
     source_quote_is_verbatim,
+    track_ui_routing_blurb,
+    uses_controlled_sampling,
 )
 from benchmark.schema import GoldSection
 from benchmark.workspace import (
@@ -424,6 +426,11 @@ def _hard_abort_run(*, flash: bool = True) -> None:
                 run_status="cancelled",
                 benchmark_track=str(
                     _snapshot.get("benchmark_track") or "controlled"
+                ),
+                cohort_id=str(
+                    st.session_state.get("_restored_cohort_id")
+                    or st.session_state.get("_active_cohort_id")
+                    or ""
                 ),
             )
             _persist_run_artifact(_artifact, WORKSPACE_DIR)
@@ -2120,13 +2127,7 @@ st.caption(
         else "**Cloud API excluded** · "
     )
     + "**On-device** Gemma / Llama / Phi + three MedPsy GGUFs · "
-    "pinned prefer-order; OpenRouter fallbacks remain on · not bit-identical backends. "
-    f"Track **{benchmark_track}**"
-    + (
-        " · temp 0.2 (controlled ≠ stock web/API defaults)."
-        if benchmark_track == "controlled"
-        else " · native_defaults (separate cohort; never pooled with controlled)."
-    )
+    + track_ui_routing_blurb(benchmark_track)
 )
 _chip_n = 3 if n_models >= 6 else min(3, max(1, n_models))
 chip_cols = st.columns(_chip_n)
@@ -3612,16 +3613,16 @@ if st.session_state.get("confirmed_run"):
                     qkey = slot["key"]
                     qlabel = slot.get("display_label") or slot.get("label") or qkey
                     gguf = slot.get("gguf_path")
+                    _sampling: dict = (
+                        {"temp": 0.2, "top_k": 20, "top_p": 0.95}
+                        if uses_controlled_sampling(benchmark_track)
+                        else {}
+                    )
                     status_boxes[qkey].markdown(
                         _status_pill("wait", "Loading GGUF…" if gguf else "Streaming…"),
                         unsafe_allow_html=True,
                     )
                     if gguf:
-                        _sampling = (
-                            {"temp": 0.2, "top_k": 20, "top_p": 0.95}
-                            if benchmark_track == "controlled"
-                            else {}
-                        )
                         loaded = qvac_load_model(gguf, sampling=_sampling)
                         if not loaded.get("ok"):
                             # A hot-swap can fail while the previous GGUF unloads;
@@ -3667,7 +3668,11 @@ if st.session_state.get("confirmed_run"):
                         n_tok_ = 0
                         t0_ = _time_live.time()
                         ttft_ = None
-                        for evt in qvac_iter_tokens(prompt, messages=_chat_msgs):
+                        for evt in qvac_iter_tokens(
+                            prompt,
+                            messages=_chat_msgs,
+                            sampling=_sampling or None,
+                        ):
                             et = evt.get("type")
                             if et == "token":
                                 tok = evt.get("token") or ""
@@ -4095,6 +4100,7 @@ if st.session_state.get("confirmed_run"):
                         },
                         benchmark_track=benchmark_track,
                     )
+                    st.session_state["_active_cohort_id"] = _local_cohort
                     artifact = build_run_artifact(
                         config_snapshot=cfg,
                         judge_temperature=judge_temp,
@@ -4153,7 +4159,9 @@ if st.session_state.get("confirmed_run"):
                         reproducibility={
                             "benchmark_track": benchmark_track,
                             "candidate_temperature": (
-                                0.2 if benchmark_track == "controlled" else None
+                                0.2
+                                if uses_controlled_sampling(benchmark_track)
+                                else None
                             ),
                             "judge_temperature": judge_temp,
                             "blind_map": {
@@ -5170,6 +5178,7 @@ if st.session_state.get("confirmed_run"):
                 },
                 benchmark_track=benchmark_track,
             )
+            st.session_state["_active_cohort_id"] = _full_cohort
             artifact = build_run_artifact(
                 config_snapshot=prep["cfg"],
                 judge_temperature=judge_temp,
@@ -5213,7 +5222,7 @@ if st.session_state.get("confirmed_run"):
                 reproducibility={
                     "benchmark_track": benchmark_track,
                     "candidate_temperature": (
-                        0.2 if benchmark_track == "controlled" else None
+                        0.2 if uses_controlled_sampling(benchmark_track) else None
                     ),
                     "judge_temperature": judge_temp,
                     "blind_map": blind_map,
@@ -5778,10 +5787,24 @@ if st.session_state.get("confirmed_run"):
             f"{type(exc).__name__}</div>",
             unsafe_allow_html=True,
         )
+        _saved_n = len(artifact_paths) if artifact_paths else 0
+        if _saved_n:
+            _hint_paths = ", ".join(str(p) for p in artifact_paths[:3])
+            if _saved_n > 3:
+                _hint_paths += f", … (+{_saved_n - 3} more)"
+            st.warning(
+                f"**{_saved_n}** artifact(s) already saved before the failure — "
+                f"check History / private folder. Paths: `{_hint_paths}`"
+            )
         st.error(
             f"Run failed after {elapsed}s — the clock is stopped. "
             f"**{type(exc).__name__}:** {exc}\n\n"
             "Models that already finished may still have used OpenRouter credits."
+            + (
+                f"\n\n{_saved_n} run(s) were persisted before abort."
+                if _saved_n
+                else ""
+            )
         )
         st.stop()
 
