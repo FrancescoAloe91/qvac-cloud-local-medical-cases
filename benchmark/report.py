@@ -851,11 +851,13 @@ def list_portfolio_runs(
     model_ids: Optional[Sequence[str]] = None,
     preloaded: Optional[Sequence[RunArtifact]] = None,
 ) -> List[Tuple[Optional[Path], RunArtifact]]:
-    """Newest-first complete runs across all cases matching protocol filters.
+    """Newest-first complete runs across cases matching protocol filters.
 
-    Filters: same scoring_version, track, model roster keys, complete + valid
-    judgments. Does **not** require the same gold/cohort. Chronological by
-    finished_at (then started_at), newest first. Cap at ``n`` (1–30).
+    Filters: same scoring_version, track, complete + valid judgments.
+    Roster shapes may differ: a run is kept when its keys intersect
+    ``model_ids`` (or any current-roster key if omitted). Per-model means
+    later use only observations that exist (different N is OK). Chronological
+    by finished_at (then started_at), newest first. Cap at ``n`` (1–30).
     """
     n = max(1, min(int(n), 30))
     want_keys = frozenset(model_ids) if model_ids is not None else frozenset(
@@ -884,7 +886,9 @@ def list_portfolio_runs(
             continue
         if not art.cohort_id:
             continue
-        if artifact_roster_keys(art) != want_keys:
+        art_keys = artifact_roster_keys(art)
+        # Heterogeneous rosters OK — keep any run that shares ≥1 wanted key.
+        if not (art_keys & want_keys):
             continue
         if not _has_valid_judged_scores(art):
             continue
@@ -1064,8 +1068,9 @@ def rebuild_portfolio_from_history(
 ) -> Dict[str, Any]:
     """Offline exploratory mean across last N complete runs (all cases).
 
-    Same roster / track / scoring_version only. Never merges incompatible
-    scoring versions. Zero API cost. Not clinical validation.
+    Same track + scoring_version. Roster shapes may differ — each model keeps
+    its own valid N / failures. Never merges incompatible scoring versions.
+    Zero API cost. Not clinical validation.
     """
     n = max(5, min(int(n), 30))
     want_keys = list(model_ids) if model_ids is not None else list(CURRENT_ROSTER_KEYS)
@@ -1086,8 +1091,9 @@ def rebuild_portfolio_from_history(
             "reason": (
                 f"Need at least 5 complete portfolio-eligible runs "
                 f"(found {len(pairs)}; {n_cases} distinct case(s)). "
-                "Filters: same model roster, track, scoring_version, "
-                "complete + valid judgments. Different scoring versions are never pooled."
+                "Filters: same track + scoring_version, complete + valid "
+                "judgments; roster shapes may differ (per-model N). "
+                "Different scoring versions are never pooled."
             ),
             "available": len(all_eligible),
             "n_cases": n_cases,
@@ -1119,8 +1125,8 @@ def rebuild_portfolio_from_history(
         "summary": summary,
         "per_run": per_run,
         "formula": (
-            "exploratory cross-case mean · reference-relative scores per case · "
-            "not clinical validation"
+            "exploratory cross-case mean · mixed roster shapes OK · "
+            "per-model valid N · reference-relative scores · not clinical validation"
         ),
         "api_cost_usd": 0.0,
         "official": False,

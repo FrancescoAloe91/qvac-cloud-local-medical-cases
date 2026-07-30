@@ -6363,12 +6363,9 @@ else:
         if str(a.run_status or "") == "complete"
     )
 
-# Portfolio eligibility: same roster keys as current session toggle, track, v4.
-_portfolio_model_ids = (
-    list(CURRENT_ROSTER_KEYS)
-    if include_cloud
-    else [c["key"] for c in roster if c.get("key")]
-)
+# Portfolio eligibility: same track + v4; roster shapes may differ (per-model N).
+# Intersect against the full current-roster key set so 6-/9-/12-slot runs can pool.
+_portfolio_model_ids = list(CURRENT_ROSTER_KEYS)
 _portfolio_probe = list_portfolio_runs(
     WORKSPACE_DIR,
     n=30,

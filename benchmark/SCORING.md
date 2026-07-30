@@ -222,8 +222,10 @@ Saved artifacts can be rescored without API calls:
   prior confirmed gold (case-family key = normalized stem + raw reference);
   different Confirm contracts stay separate and are never auto-merged.
 - Optional **Portfolio** scope averages the last N complete runs across cases
-  (same roster + track + `scoring_version` only). Scores remain
-  reference-relative per case; the cross-case mean is exploratory, not
+  (same track + `scoring_version`; **roster shapes may differ**). Each model
+  keeps its own valid N / failures — a 6-slot medical-only run and a 12-slot
+  full run both contribute observations for the models they share. Scores
+  remain reference-relative per case; the cross-case mean is exploratory, not
   clinical validation, and never auto-merges incompatible scoring versions.
 - Prior rankings are stamped under `reproducibility.offline_rescore.stored_ranking`
   so old vs new comparisons remain possible.

@@ -266,3 +266,60 @@ def test_summarize_mixed_cohorts_opt_in(tmp_path: Path):
     summary = summarize_runs(arts, allow_mixed_cohorts=True)
     assert summary.case_id == "portfolio"
     assert summary.n >= 5
+
+
+def test_portfolio_pools_heterogeneous_roster_shapes(tmp_path: Path):
+    """6-slot medical-style runs + full-roster runs both enter Portfolio."""
+    medical_six = [
+        "qvac_1_7b",
+        "qvac",
+        "qvac_4b_q8",
+        "local_medgemma",
+        "local_biomistral",
+        "local_openbiollm",
+    ]
+    # Prefer keys that exist in CURRENT_ROSTER_KEYS; fall back to subset of ROSTER.
+    medical_six = [k for k in medical_six if k in ROSTER] or ROSTER[:6]
+    for i in range(3):
+        _write(
+            tmp_path,
+            run_id=f"med{i}",
+            case_id="caseMed",
+            finished_at=f"2026-03-01T1{i}:00:00Z",
+            roster=medical_six,
+            cohort_id=f"cohort-med-{i}",
+            acc=72.0 + i,
+        )
+    for i in range(3):
+        _write(
+            tmp_path,
+            run_id=f"full{i}",
+            case_id="caseFull",
+            finished_at=f"2026-03-02T1{i}:00:00Z",
+            roster=ROSTER,
+            cohort_id=f"cohort-full-{i}",
+            acc=78.0 + i,
+        )
+    pairs = list_portfolio_runs(
+        tmp_path, n=10, scoring_version="graded-clinical-v4", track="controlled"
+    )
+    assert len(pairs) == 6
+    ids = {a.run_id for _, a in pairs}
+    assert any(r.startswith("med") for r in ids)
+    assert any(r.startswith("full") for r in ids)
+
+    built = rebuild_portfolio_from_history(
+        tmp_path, n=5, scoring_version="graded-clinical-v4", track="controlled"
+    )
+    assert built["ok"] is True
+    assert built["n_used"] == 5
+    summary = built["summary"]
+    # Shared keys appear in ranking; cloud-only keys need ≥5 obs from full runs only.
+    shared = {row["key"] for row in summary.ranking_mean}
+    assert medical_six[0] in shared or any(
+        summary.candidate_stats.get(k, {}).get("n_valid", 0) >= 1 for k in medical_six
+    )
+    # At least one medical key has observations from both shapes (≥3 from med + some full).
+    med_key = medical_six[1]
+    n_valid = int(summary.candidate_stats.get(med_key, {}).get("n_valid") or 0)
+    assert n_valid >= 3

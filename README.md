@@ -185,9 +185,10 @@ History can rebuild last-N means with **zero API cost**:
   Controlled and native-default runs never mix. Rebuild succeeds once any model
   reaches N≥5 even if the History button appears earlier.
 - **Portfolio** (optional scope next to Rebuild) averages the last N complete
-  runs chronologically across cases for the same roster, track, and
-  `scoring_version` — exploratory cross-case mean, not clinical validation;
-  incompatible scoring versions are never pooled.
+  runs chronologically across cases for the same track and `scoring_version`
+  — roster shapes may differ; each model keeps its own valid N. Exploratory
+  cross-case mean, not clinical validation; incompatible scoring versions are
+  never pooled.
 - Prior rankings are preserved under `reproducibility.offline_rescore`.
 
 A local utility script `scripts/_offline_rescore_all.py` can batch-rescore an
