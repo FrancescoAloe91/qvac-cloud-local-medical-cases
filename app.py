@@ -4034,6 +4034,7 @@ if st.session_state.get("confirmed_run"):
                         ),
                     )
                     # Same format-repair / section recovery as the CLI collector.
+                    # Always clear Recovering status (timeout / exception / success).
                     if not error_text and missing_section_ids(
                         live_case, cand_row.answers or {}
                     ):
@@ -4042,13 +4043,26 @@ if st.session_state.get("confirmed_run"):
                                 _status_pill("wait", "Recovering sections…"),
                                 unsafe_allow_html=True,
                             )
-                        cand_row = maybe_retry_candidate(
-                            live_case,
-                            cand_row,
-                            slot_cfg,
-                            blind_id_,
-                            benchmark_track=benchmark_track,
-                        )
+                        try:
+                            cand_row = maybe_retry_candidate(
+                                live_case,
+                                cand_row,
+                                slot_cfg,
+                                blind_id_,
+                                benchmark_track=benchmark_track,
+                            )
+                        except Exception:
+                            # Leave first-pass answers; missing sections stay N/A.
+                            pass
+                        finally:
+                            if key_ in status_boxes:
+                                status_boxes[key_].markdown(
+                                    _status_pill(
+                                        "done",
+                                        "Done · $0 · judge queued",
+                                    ),
+                                    unsafe_allow_html=True,
+                                )
                     submitted_local.add(key_)
                     label_by_key[key_] = cand_row.display_label or cand_row.label
                     if key_ not in started_keys:

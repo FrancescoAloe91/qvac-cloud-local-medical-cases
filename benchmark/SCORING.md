@@ -149,7 +149,9 @@ a required section has no content at all.
 Candidate collection spends at most one retry, on a retryable transport fault, a
 local sidecar/GGUF fault, explicit truncation, or sections the model left
 unwritten. Truncation and unwritten sections regenerate only the affected
-questions and retain already parsed sections verbatim.
+questions (one multi-gap targeted call) and retain already parsed sections
+verbatim. Local (qvac) recovery is the same ≤1-call cap: one format-repair **or**
+one targeted fill — never sequential per-section regenerations.
 
 ### What remains N/A
 

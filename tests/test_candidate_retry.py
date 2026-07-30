@@ -10,13 +10,20 @@ from benchmark.runner import _collect_candidate
 from benchmark.schema import CandidateAnswer, ModelCallMeta
 
 
-def _candidate(*, error=None, finish_reason="", answers=None, provider="openrouter"):
+def _candidate(
+    *, error=None, finish_reason="", answers=None, provider="openrouter", raw=None
+):
+    ans = answers if answers is not None else {}
+    if raw is None:
+        raw_response = "response" if ans else ""
+    else:
+        raw_response = raw
     return CandidateAnswer(
         candidate_key="candidate",
         label="Candidate",
         blind_id="Candidate 1",
-        answers=answers or {},
-        raw_response="response" if answers else "",
+        answers=ans,
+        raw_response=raw_response,
         meta=ModelCallMeta(
             model="model",
             provider=provider,
@@ -76,17 +83,23 @@ def test_candidate_missing_sections_trigger_one_targeted_regeneration(monkeypatc
     assert result.meta.retry_count == 1
 
 
-def test_local_missing_sections_recover_one_question_at_a_time(monkeypatch):
+def test_local_missing_sections_one_multi_gap_targeted_call(monkeypatch):
+    """Local recovery is ≤1 generate: one multi-gap call, never N sequential."""
     case = load_case("caseC")
     responses = [
         _candidate(
             answers={"diagnosis": "only one section"},
             provider="qvac",
         ),
-        _candidate(answers={"tests": "labs"}, provider="qvac"),
-        _candidate(answers={"urgency": "high"}, provider="qvac"),
-        _candidate(answers={"safety": "hold ACE"}, provider="qvac"),
-        _candidate(answers={"plan": "fluids"}, provider="qvac"),
+        _candidate(
+            answers={
+                "tests": "labs",
+                "urgency": "high",
+                "safety": "hold ACE",
+                "plan": "fluids",
+            },
+            provider="qvac",
+        ),
     ]
     requested_sections = []
 
@@ -102,9 +115,93 @@ def test_local_missing_sections_recover_one_question_at_a_time(monkeypatch):
     )
 
     assert requested_sections[0] == [q.id for q in case.questions]
-    assert requested_sections[1:] == [["tests"], ["urgency"], ["safety"], ["plan"]]
+    assert requested_sections[1] == ["tests", "urgency", "safety", "plan"]
+    assert len(requested_sections) == 2
     assert missing_section_ids(case, result.answers) == []
     assert result.answers["plan"] == "fluids"
+    assert result.meta.retry_count == 1
+
+
+def test_local_format_repair_does_not_stack_targeted(monkeypatch):
+    """Local honesty: format-repair XOR targeted — never both."""
+    case = load_case("caseC")
+    # Long unlabeled prose → format-repair path; repair still leaves gaps.
+    prose = "Clinical impression of AKI with hyperkalemia and volume depletion. " * 3
+    first = _candidate(answers={}, provider="qvac", raw=prose)
+    repaired = _candidate(answers={"diagnosis": "AKI"}, provider="qvac")
+    responses = [first, repaired]
+    calls = []
+
+    def fake_once(case_arg, *args, **kwargs):
+        calls.append(
+            {
+                "ids": [q.id for q in case_arg.questions],
+                "has_messages": bool(kwargs.get("messages")),
+            }
+        )
+        return responses.pop(0)
+
+    monkeypatch.setattr("benchmark.runner._collect_candidate_once", fake_once)
+    # Bypass timed wrapper so the fake is invoked directly under local policy.
+    def fake_recover(
+        case_arg,
+        cand_cfg,
+        blind_id,
+        on_event=None,
+        benchmark_track="controlled",
+        api_key=None,
+        *,
+        messages=None,
+        timeout=None,
+        template=None,
+    ):
+        return fake_once(case_arg, messages=messages)
+
+    monkeypatch.setattr("benchmark.runner._recover_collect_once", fake_recover)
+    result = _collect_candidate(
+        case,
+        {"key": "local_biomistral", "provider": "qvac", "model": "biomistral-7b-q4"},
+        "Candidate 1",
+    )
+
+    assert len(calls) == 2  # first collect + one format-repair only
+    assert calls[1]["has_messages"] is True
+    assert result.answers.get("diagnosis") == "AKI"
+    assert missing_section_ids(case, result.answers) == [
+        q.id for q in case.questions[1:]
+    ]
+
+
+def test_local_recovery_timeout_leaves_gaps_as_na(monkeypatch):
+    case = load_case("caseC")
+    first = _candidate(
+        answers={"diagnosis": "only one section"},
+        provider="qvac",
+    )
+    calls = {"n": 0}
+
+    def slow_once(*args, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return first
+        import time
+
+        time.sleep(5)
+        return _candidate(answers={"tests": "late"}, provider="qvac")
+
+    monkeypatch.setattr("benchmark.runner._collect_candidate_once", slow_once)
+    monkeypatch.setattr("benchmark.runner.LOCAL_RECOVERY_TIMEOUT_S", 0.05)
+    result = _collect_candidate(
+        case,
+        {"key": "local_biomistral", "provider": "qvac", "model": "biomistral-7b-q4"},
+        "Candidate 1",
+    )
+
+    assert result.answers.get("diagnosis") == "only one section"
+    assert "tests" not in (result.answers or {})
+    assert missing_section_ids(case, result.answers) == [
+        q.id for q in case.questions[1:]
+    ]
 
 
 def test_candidate_retry_budget_stops_after_one_attempt(monkeypatch):

@@ -601,6 +601,11 @@ def dry_run_estimate(
     }
 
 
+# Local section recovery must fail fast — sequential per-gap regenerations can
+# hang the live UI on "Recovering sections…" for BioMistral-class GGUFs.
+LOCAL_RECOVERY_TIMEOUT_S = 90.0
+
+
 def _collect_candidate_once(
     case: Case,
     cand_cfg: Dict[str, Any],
@@ -609,6 +614,7 @@ def _collect_candidate_once(
     benchmark_track: str = "controlled",
     api_key: Optional[str] = None,
     messages: Optional[List[Dict[str, str]]] = None,
+    timeout: Optional[float] = None,
 ) -> CandidateAnswer:
     key = cand_cfg["key"]
     label = cand_cfg.get("label") or key
@@ -734,13 +740,15 @@ def _collect_candidate_once(
             else candidate_user(case)
         )
         prompt = sys_p + "\n\n" + user_p
-        raw, meta = qvac_bridge.generate(
-            prompt,
-            on_token=on_token,
-            display_label=display,
-            messages=messages,
-            sampling=sampling or None,
-        )
+        gen_kwargs: Dict[str, Any] = {
+            "on_token": on_token,
+            "display_label": display,
+            "messages": messages,
+            "sampling": sampling or None,
+        }
+        if timeout is not None:
+            gen_kwargs["timeout"] = float(timeout)
+        raw, meta = qvac_bridge.generate(prompt, **gen_kwargs)
         digest = str(loaded.get("gguf_sha256") or "")
         updates = {}
         if digest:
@@ -849,8 +857,9 @@ def _collect_candidate(
     truncation, or sections the model left unwritten. When the first reply has
     content but almost no parseable A# markers, one format-repair pass asks the
     same model to re-label that text (no new clinical facts). Otherwise missing
-    sections regenerate only the affected questions. Local GGUFs that early-stop
-    after one section recover remaining gaps one question at a time.
+    sections regenerate only the affected questions in one targeted call.
+    Local (qvac) recovery is hard-capped at one extra generate — format-repair
+    XOR one multi-gap targeted call — never N sequential per-section regenerations.
     """
     first = _collect_candidate_once(
         case,
@@ -871,6 +880,84 @@ def _collect_candidate(
     )
 
 
+def _empty_recovery_candidate(
+    template: CandidateAnswer, *, error: str
+) -> CandidateAnswer:
+    """Synthetic empty recovery result used when a timed recovery call fails."""
+    return template.model_copy(
+        update={
+            "answers": {},
+            "raw_response": "",
+            "meta": template.meta.model_copy(
+                update={
+                    "error": error,
+                    "cost_usd": 0.0,
+                    "prompt_tokens": 0,
+                    "completion_tokens": 0,
+                    "latency_s": 0.0,
+                    "finish_reason": "recovery_timeout",
+                    "prior_attempts": [],
+                    "retry_count": 0,
+                }
+            ),
+        }
+    )
+
+
+def _recover_collect_once(
+    case: Case,
+    cand_cfg: Dict[str, Any],
+    blind_id: str,
+    on_event: EventCallback,
+    benchmark_track: str,
+    api_key: Optional[str],
+    *,
+    messages: Optional[List[Dict[str, str]]] = None,
+    timeout: Optional[float] = None,
+    template: CandidateAnswer,
+) -> CandidateAnswer:
+    """One recovery generate with optional hard wall-clock timeout (local)."""
+    if timeout is None:
+        return _collect_candidate_once(
+            case,
+            cand_cfg,
+            blind_id,
+            on_event,
+            benchmark_track,
+            api_key,
+            messages=messages,
+        )
+    # Wall-clock cap so a slow/hung GGUF cannot leave the UI on Recovering forever.
+    # urllib timeout alone can stall if tokens trickle; FuturesTimeout aborts wait.
+    # shutdown(wait=False) is required — default wait=True would re-hang on timeout.
+    pool = ThreadPoolExecutor(max_workers=1)
+    try:
+        fut = pool.submit(
+            _collect_candidate_once,
+            case,
+            cand_cfg,
+            blind_id,
+            on_event,
+            benchmark_track,
+            api_key,
+            messages,
+            timeout,
+        )
+        try:
+            # Wall clock ≈ recovery budget; small grace for thread scheduling only.
+            return fut.result(timeout=float(timeout) + 1.0)
+        except TimeoutError:
+            return _empty_recovery_candidate(
+                template, error="recovery_timeout: section recovery exceeded budget"
+            )
+        except Exception as exc:  # noqa: BLE001 — recovery must never hang the UI
+            return _empty_recovery_candidate(
+                template, error=f"recovery_failed: {exc}"[:200]
+            )
+    finally:
+        pool.shutdown(wait=False, cancel_futures=True)
+
+
 def maybe_retry_candidate(
     case: Case,
     first: CandidateAnswer,
@@ -884,7 +971,13 @@ def maybe_retry_candidate(
 
     Used by the CLI collector and by the live UI after the first streamed reply
     so both paths share the same gap-filling policy.
+
+    Local (qvac) honesty cap: at most one recovery generate total — either one
+    format-repair pass or one multi-gap targeted call (never both, never
+    sequential per-section). Remaining gaps stay missing / N/A.
     """
+    is_local = cand_cfg.get("provider") == "qvac"
+    recovery_timeout = LOCAL_RECOVERY_TIMEOUT_S if is_local else None
     error_text = first.meta.error or ""
     transport_failure = bool(
         error_text
@@ -916,7 +1009,7 @@ def maybe_retry_candidate(
                 "reason": "format repair",
             },
         )
-        repaired = _collect_candidate_once(
+        repaired = _recover_collect_once(
             case,
             cand_cfg,
             blind_id,
@@ -924,6 +1017,8 @@ def maybe_retry_candidate(
             benchmark_track,
             api_key,
             messages=format_repair_messages(case, raw_blob),
+            timeout=recovery_timeout,
+            template=first,
         )
         _merge_collect_meta(first, repaired)
         repaired.raw_response = (
@@ -933,8 +1028,25 @@ def maybe_retry_candidate(
         ).strip()
         if not missing_section_ids(case, repaired.answers or {}):
             return repaired
+        if is_local:
+            # Local budget spent: do not stack a second targeted call.
+            if repaired.answers:
+                return repaired
+            return first.model_copy(
+                update={
+                    "meta": first.meta.model_copy(
+                        update={
+                            "cost_usd": repaired.meta.cost_usd,
+                            "prompt_tokens": repaired.meta.prompt_tokens,
+                            "completion_tokens": repaired.meta.completion_tokens,
+                            "latency_s": repaired.meta.latency_s,
+                            "retry_count": repaired.meta.retry_count,
+                        }
+                    )
+                }
+            )
         if repaired.answers:
-            # Partial labels recovered — keep and try targeted fill for the rest.
+            # Cloud: partial labels recovered — keep and try one targeted fill.
             first = repaired
             missing = missing_section_ids(case, first.answers or {})
             section_gap = bool(missing) and not (first.meta.error or "")
@@ -974,13 +1086,15 @@ def maybe_retry_candidate(
     )
     targeted = (truncation or section_gap) and not transport_failure
     if not targeted:
-        second = _collect_candidate_once(
+        second = _recover_collect_once(
             case,
             cand_cfg,
             blind_id,
             on_event,
             benchmark_track,
             api_key,
+            timeout=recovery_timeout,
+            template=first,
         )
         _merge_collect_meta(first, second)
         return second
@@ -988,61 +1102,31 @@ def maybe_retry_candidate(
     target_questions = [
         question for question in case.questions if question.id in set(missing)
     ] or [case.questions[-1]]
-    # Local GGUFs (esp. BioMistral) often early-stop after one section. Asking for
-    # every gap in one call still yields a single block — recover one id at a time.
-    sequential_local = cand_cfg.get("provider") == "qvac" and len(target_questions) > 1
-    if sequential_local:
-        merged_answers = dict(first.answers or {})
-        raw_chunks: List[str] = []
-        latest = first
-        for question in target_questions:
-            if (merged_answers.get(question.id) or "").strip():
-                continue
-            _emit(
-                on_event,
-                {
-                    "type": "candidate_retry",
-                    "key": first.candidate_key,
-                    "reason": f"missing section:{question.id}",
-                },
-            )
-            one_case = case.model_copy(update={"questions": [question]})
-            part = _collect_candidate_once(
-                one_case,
-                cand_cfg,
-                blind_id,
-                on_event,
-                benchmark_track,
-                api_key,
-            )
-            _merge_collect_meta(latest, part)
-            latest = part
-            recovered = (part.answers or {}).get(question.id)
-            if (recovered or "").strip():
-                merged_answers[question.id] = recovered
-            if (part.raw_response or "").strip():
-                raw_chunks.append(part.raw_response.strip())
-        latest.answers = merged_answers
-        latest.raw_response = (
-            (first.raw_response or "").rstrip()
-            + "\n\n[TARGETED SECTION RECOVERY]\n"
-            + "\n\n".join(raw_chunks)
-        ).strip()
-        if not missing_section_ids(case, latest.answers):
-            latest.meta.finish_reason = first.meta.finish_reason
-        return latest
-
+    # One multi-gap targeted call for everyone (cloud and local). Sequential
+    # per-section local recovery was removed — it hung the UI on slow GGUFs and
+    # violated the ≤1-retry honesty disclosure.
     recovery_case = case.model_copy(update={"questions": target_questions})
     target_question_ids = {question.id for question in target_questions}
-    second = _collect_candidate_once(
+    second = _recover_collect_once(
         recovery_case,
         cand_cfg,
         blind_id,
         on_event,
         benchmark_track,
         api_key,
+        timeout=recovery_timeout,
+        template=first,
     )
     _merge_collect_meta(first, second)
+    # Timed-out / failed recovery: keep first answers; leave gaps as N/A.
+    if second.meta.error and not (second.answers or {}):
+        first.meta.cost_usd = second.meta.cost_usd
+        first.meta.prompt_tokens = second.meta.prompt_tokens
+        first.meta.completion_tokens = second.meta.completion_tokens
+        first.meta.latency_s = second.meta.latency_s
+        first.meta.retry_count = second.meta.retry_count
+        first.meta.prior_attempts = second.meta.prior_attempts
+        return first
     merged_answers = dict(first.answers or {})
     for question_id in target_question_ids:
         recovered = (second.answers or {}).get(question_id)
@@ -1056,6 +1140,9 @@ def maybe_retry_candidate(
     ).strip()
     if not missing_section_ids(case, second.answers):
         second.meta.finish_reason = first.meta.finish_reason
+    # Clear recovery transport error if we salvaged any sections from first.
+    if second.meta.error and merged_answers:
+        second.meta.error = None
     return second
 
 

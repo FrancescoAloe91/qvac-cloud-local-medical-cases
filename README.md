@@ -72,7 +72,8 @@ tokens on the primary call.
 Collection retries at most once for a retryable transport fault, a local
 sidecar/GGUF fault, explicit truncation, or sections the model left unwritten.
 Transport retries the call; truncation and unwritten sections request only the
-affected questions and retain everything already answered.
+affected questions in one targeted call (local: format-repair **or** one
+multi-gap fill — never N sequential) and retain everything already answered.
 
 ### 3. Reading answers (cloud vs local)
 
