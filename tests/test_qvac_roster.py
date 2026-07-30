@@ -99,8 +99,8 @@ def test_peer_key_helpers_distinguish_bands():
     assert not is_on_device_key("chatgpt")
 
 
-def test_solo_locali_medici_merge():
-    """Preset: cloud OFF, generic OFF, medical ON, triple MedPsy ON → 6."""
+def test_medical_on_device_only_merge():
+    """Medical on-device only preset: MedPsy ×3 + medical ×3, no cloud/generics."""
     roster = merge_roster(
         [],
         triple_qvac=True,

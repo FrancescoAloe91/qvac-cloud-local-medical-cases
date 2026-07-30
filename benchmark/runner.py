@@ -1218,6 +1218,8 @@ def prepare_run(
     require_qvac: bool = False,
     seed: Optional[int] = None,
     triple_qvac: bool = False,
+    include_local_peers: Optional[bool] = None,
+    include_medical_peers: Optional[bool] = None,
 ) -> Dict[str, Any]:
     """Resolve case + candidate list + blind map for UI-driven runs."""
     case = load_case(case_id)
@@ -1225,12 +1227,19 @@ def prepare_run(
     yaml_cands = list(cfg.get("candidates") or [])
     # Sidecar HTTP up is enough — /load can hot-swap GGUFs before generate.
     qvac_sidecar = qvac_bridge.reachable() or qvac_bridge.available()
-    include_qvac = (not skip_qvac) and qvac_sidecar
+    include_medpsy = (not skip_qvac) and qvac_sidecar
     candidates_cfg = merge_roster(
         yaml_cands,
-        triple_qvac=bool(triple_qvac) and include_qvac,
-        include_qvac=include_qvac,
+        triple_qvac=bool(triple_qvac) and include_medpsy,
+        include_qvac=include_medpsy,
+        include_local_peers=include_local_peers,
+        include_medical_peers=include_medical_peers,
     )
+    candidates_cfg = [
+        c
+        for c in candidates_cfg
+        if c.get("provider") != "qvac" or c.get("gguf_ready", True)
+    ]
     _validate_judge_separation(cfg, candidates_cfg)
     has_qvac_cfg = any(c.get("provider") == "qvac" for c in candidates_cfg)
 
@@ -1253,7 +1262,9 @@ def prepare_run(
         "candidates_cfg": candidates_cfg,
         "blind_map": blind_map,
         "has_qvac_cfg": has_qvac_cfg,
-        "triple_qvac": bool(triple_qvac) and include_qvac,
+        "triple_qvac": bool(triple_qvac) and include_medpsy,
+        "include_local_peers": include_local_peers,
+        "include_medical_peers": include_medical_peers,
     }
 
 

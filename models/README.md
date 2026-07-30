@@ -52,7 +52,7 @@ compare — **not** medical-specialized.
 ## Band medical_local · medical-specialized peers (Q4_K_M)
 
 Distinct from Band B generics. Toggle **Medical local peers** in the UI, or use
-preset **Solo locali medici** (3 MedPsy + 3 medical, cloud/generics off).
+preset **Medical on-device only** (3 MedPsy + 3 medical, cloud/generics off).
 
 | File (local name) | Role | HF repo · remote file |
 |-------------------|------|------------------------|

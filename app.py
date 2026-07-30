@@ -2021,78 +2021,124 @@ else:
 live_case = preset.model_copy(update={"stem": (case_stem or "").strip()})
 effective_gold = st.session_state.get("_confirmed_gold_json", "")
 
-# --- Models roster: Band A cloud + Band B generics + medical_local + MedPsy ---
-# Apply forced presets BEFORE toggle widgets exist (click → next rerun).
-if st.session_state.pop("_force_triple_qvac", False):
-    st.session_state.triple_qvac_toggle = True
-if st.session_state.pop("_force_solo_locali_medici", False):
+# --- Models roster: 4 bands × up to 3 = ≤12 ---
+# Preset shortcuts apply BEFORE toggle widgets (click → next rerun).
+if st.session_state.pop("_force_medical_on_device_only", False):
     st.session_state.include_cloud_models = False
     st.session_state.include_generic_peers = False
     st.session_state.include_medical_peers = True
-    st.session_state.triple_qvac_toggle = True
-# Default ON = all three MedPsy quants. One-time migrate older default-off
-# sessions (defer while a run is in flight so we don't touch live roster).
-if "triple_qvac_toggle" not in st.session_state:
-    st.session_state.triple_qvac_toggle = True
-    st.session_state["_triple_qvac_default_on_v1"] = True
-elif not st.session_state.get("_triple_qvac_default_on_v1"):
-    if not st.session_state.get("benchmark_running"):
-        st.session_state.triple_qvac_toggle = True
-        st.session_state["_triple_qvac_default_on_v1"] = True
+    st.session_state.include_medpsy_models = True
+if st.session_state.pop("_force_all_on_device", False):
+    st.session_state.include_cloud_models = False
+    st.session_state.include_generic_peers = True
+    st.session_state.include_medical_peers = True
+    st.session_state.include_medpsy_models = True
+if st.session_state.pop("_force_full_roster", False):
+    st.session_state.include_cloud_models = True
+    st.session_state.include_generic_peers = True
+    st.session_state.include_medical_peers = True
+    st.session_state.include_medpsy_models = True
+if st.session_state.pop("_force_cloud_only", False):
+    st.session_state.include_cloud_models = True
+    st.session_state.include_generic_peers = False
+    st.session_state.include_medical_peers = False
+    st.session_state.include_medpsy_models = False
+# Migrate legacy triple_qvac_toggle → include_medpsy_models once.
+if "include_medpsy_models" not in st.session_state:
+    st.session_state.include_medpsy_models = bool(
+        st.session_state.get("triple_qvac_toggle", True)
+    )
 
-include_qvac = bool(qvac_ok or qvac_up)
+sidecar_up = bool(qvac_ok or qvac_up)
+include_qvac = sidecar_up  # legacy name: sidecar available for on-device loads
 skip_qvac = False
 _med_ready = medical_peers_ready()
 if "include_medical_peers" not in st.session_state:
-    st.session_state.include_medical_peers = bool(_med_ready and include_qvac)
+    st.session_state.include_medical_peers = bool(_med_ready and sidecar_up)
 if "include_generic_peers" not in st.session_state:
-    st.session_state.include_generic_peers = bool(include_qvac)
+    st.session_state.include_generic_peers = bool(sidecar_up)
 
+st.markdown('<div class="sec-label">Roster bands (max 12)</div>', unsafe_allow_html=True)
 include_cloud = st.toggle(
-    "Include 3 Cloud API models · OpenAI / Claude / Gemini",
+    "Include 3 cloud API models · ChatGPT / Claude / Gemini (OpenRouter)",
     value=True,
     key="include_cloud_models",
+    help="OpenRouter API routes — not ChatGPT/Claude/Gemini consumer web apps.",
+)
+include_medpsy = st.toggle(
+    "Include 3 QVAC MedPsy models · 1.7B / 4B Q4 / 4B Q8",
+    key="include_medpsy_models",
+    disabled=not sidecar_up,
+    help="MedPsy GGUFs on the QVAC sidecar (serial load). Requires sidecar up.",
 )
 include_generic = st.toggle(
-    "Include 3 generic local peers · Gemma / Llama / Phi",
+    "Include 3 generic local LLMs · Gemma / Llama / Phi",
     key="include_generic_peers",
-    disabled=not include_qvac,
-    help="Band B open GGUFs (not medical-specialized). Same QVAC sidecar.",
+    disabled=not sidecar_up,
+    help="Band B open GGUFs — not medical-specialized. Same QVAC sidecar.",
 )
 include_medical = st.toggle(
-    "Include 3 medical local peers · MedGemma / BioMistral / OpenBioLLM",
+    "Include 3 medical local LLMs · MedGemma / BioMistral / OpenBioLLM",
     key="include_medical_peers",
-    disabled=not include_qvac,
-    help="Band medical_local specialized GGUFs. Download with "
+    disabled=not sidecar_up,
+    help="Medical-specialized open GGUFs (not MedPsy). "
     "./scripts/download_medical_peers.sh when missing.",
 )
-if include_qvac and not _med_ready and include_medical:
+if sidecar_up and not _med_ready and include_medical:
     st.caption(
-        "Medical GGUFs missing under `models/` — toggle stays available but "
-        "slots drop until you run `./scripts/download_medical_peers.sh` "
-        "(or `./scripts/download_all_ggufs.sh`)."
+        "Medical GGUFs missing under `models/` — slots drop until you run "
+        "`./scripts/download_medical_peers.sh` (or `./scripts/download_all_ggufs.sh`)."
     )
-elif include_qvac and not _med_ready:
+elif sidecar_up and not _med_ready:
     st.caption(
-        "Medical peers OFF (GGUFs not ready). "
-        "`./scripts/download_medical_peers.sh` → then turn the toggle on."
+        "Medical local LLMs OFF (GGUFs not ready). "
+        "`./scripts/download_medical_peers.sh` → then enable the toggle."
     )
 
-_solo_med = st.button(
-    "Solo locali medici",
-    key="solo_locali_medici_btn",
-    help="Cloud OFF · generic OFF · medical ON · 3× MedPsy ON → 6 models "
-    "(medical-specialized on-device only).",
-    disabled=not include_qvac,
-)
-if _solo_med:
-    st.session_state["_force_solo_locali_medici"] = True
-    st.rerun()
+_preset_cols = st.columns(4, gap="small")
+with _preset_cols[0]:
+    if st.button(
+        "Medical on-device only",
+        key="preset_medical_on_device_btn",
+        use_container_width=True,
+        disabled=not sidecar_up,
+        help="Cloud OFF · generic OFF · medical ON · MedPsy ON → 6 models.",
+    ):
+        st.session_state["_force_medical_on_device_only"] = True
+        st.rerun()
+with _preset_cols[1]:
+    if st.button(
+        "All on-device",
+        key="preset_all_on_device_btn",
+        use_container_width=True,
+        disabled=not sidecar_up,
+        help="Cloud OFF · MedPsy + generic + medical → up to 9 models.",
+    ):
+        st.session_state["_force_all_on_device"] = True
+        st.rerun()
+with _preset_cols[2]:
+    if st.button(
+        "Full roster",
+        key="preset_full_roster_btn",
+        use_container_width=True,
+        help="All four bands ON → up to 12 models.",
+    ):
+        st.session_state["_force_full_roster"] = True
+        st.rerun()
+with _preset_cols[3]:
+    if st.button(
+        "Cloud only",
+        key="preset_cloud_only_btn",
+        use_container_width=True,
+        help="Cloud ON · all on-device bands OFF → 3 models.",
+    ):
+        st.session_state["_force_cloud_only"] = True
+        st.rerun()
 
 st.caption(
-    "Full grid ≤12 (3 Cloud + 3 generic + 3 medical + 3 MedPsy). "
-    "**Solo locali medici** = medical-specialized on-device only (6). "
-    "Generics ≠ medical band."
+    "Presets set the four toggles above. "
+    "**Medical on-device only** = 3 MedPsy + 3 medical local (6). "
+    "**All on-device** = 9 (no cloud). **Full roster** ≤12. Generics ≠ medical band."
 )
 with st.expander("Advanced · generation settings", expanded=False):
     st.caption(
@@ -2128,43 +2174,32 @@ n_multi = st.number_input(
     "1 = single pass. Not clinical validation.",
 )
 
-if not include_cloud and not st.session_state.get("benchmark_running"):
-    st.session_state.triple_qvac_toggle = True
-st.toggle(
-    "3× QVAC · 1.7B / 4B Q4 / 4B Q8",
-    key="triple_qvac_toggle",
-    disabled=not include_qvac,
-    help="On (default) = three MedPsy GGUFs. "
-    "Off = MedPsy-4B Q4 only. "
-    "Same prompt · on-device GGUFs load one after another on the QVAC sidecar. "
-    "Use **Solo locali medici** for medical-only bake-off.",
-)
-triple_qvac = bool(st.session_state.triple_qvac_toggle) and include_qvac
-# When cloud is off, force triple MedPsy for the on-device bake-off.
-_eff_triple = triple_qvac if include_cloud else True
-_eff_generic = bool(include_generic) and include_qvac
-_eff_medical = bool(include_medical) and include_qvac
+# Keep legacy name used downstream; MedPsy band ON ⇒ always all three quants.
+triple_qvac = bool(include_medpsy) and sidecar_up
+_eff_triple = triple_qvac
+_eff_generic = bool(include_generic) and sidecar_up
+_eff_medical = bool(include_medical) and sidecar_up
+_eff_medpsy = bool(include_medpsy) and sidecar_up
 
 roster = merge_roster(
     list(cfg.get("candidates") or []) if include_cloud else [],
     triple_qvac=_eff_triple,
-    include_qvac=include_qvac,
+    include_qvac=_eff_medpsy,
     include_local_peers=_eff_generic,
     include_medical_peers=_eff_medical,
 )
-# Default local roster: only slots with a ready GGUF (missing peers disabled).
+# Drop on-device slots whose GGUF is missing (toggle stays on; chip shows ready set).
 roster = [
     c
     for c in roster
     if c.get("provider") != "qvac" or c.get("gguf_ready", True)
 ]
 n_models = len(roster)
-_solo_medici_active = (
+_medical_on_device_only = (
     not include_cloud
     and not _eff_generic
     and _eff_medical
-    and _eff_triple
-    and include_qvac
+    and _eff_medpsy
 )
 
 with st.expander(
@@ -2179,20 +2214,20 @@ with st.expander(
 _band_bits = []
 if include_cloud:
     _band_bits.append("Cloud")
+if _eff_medpsy:
+    _band_bits.append("MedPsy")
 if _eff_generic:
     _band_bits.append("generic local")
 if _eff_medical:
     _band_bits.append("medical local")
-if include_qvac:
-    _band_bits.append("MedPsy")
 _band_label = " + ".join(_band_bits) if _band_bits else "no slots"
 st.markdown(
     f'<div class="sec-label">Models ({n_models} on the same case · {_band_label})</div>',
     unsafe_allow_html=True,
 )
-if _solo_medici_active:
+if _medical_on_device_only:
     st.caption(
-        "**Solo locali medici** · medical-specialized on-device only · "
+        "**Medical on-device only** · 3 MedPsy + 3 medical local · "
         + track_ui_routing_blurb(benchmark_track)
     )
 else:
@@ -2202,17 +2237,17 @@ else:
             if include_cloud
             else "**Cloud API excluded** · "
         )
+        + ("**MedPsy** ×3 · " if _eff_medpsy else "")
         + (
-            "**Generic** Gemma/Llama/Phi · "
+            "**Generic local** Gemma/Llama/Phi · "
             if _eff_generic
             else ""
         )
         + (
-            "**Medical** MedGemma/BioMistral/OpenBioLLM · "
+            "**Medical local** MedGemma/BioMistral/OpenBioLLM · "
             if _eff_medical
             else ""
         )
-        + ("**MedPsy** triple · " if include_qvac and _eff_triple else "")
         + track_ui_routing_blurb(benchmark_track)
     )
 _chip_n = 3 if n_models >= 6 else min(3, max(1, n_models))
@@ -2251,7 +2286,7 @@ if missing:
 bd = estimate_cost_breakdown(
     cfg,
     live_case,
-    include_qvac=include_qvac,
+    include_qvac=_eff_medpsy,
     gold_reference=effective_gold or gold_reference,
     n=1,
     triple_qvac=_eff_triple,
@@ -2261,7 +2296,7 @@ bd = estimate_cost_breakdown(
 bd_multi = estimate_cost_breakdown(
     cfg,
     live_case,
-    include_qvac=include_qvac,
+    include_qvac=_eff_medpsy,
     gold_reference=effective_gold or gold_reference,
     n=int(n_multi),
     triple_qvac=_eff_triple,
@@ -2271,7 +2306,7 @@ bd_multi = estimate_cost_breakdown(
 bd_local_only = estimate_cost_breakdown(
     cfg,
     live_case,
-    include_qvac=True,
+    include_qvac=_eff_medpsy or True,
     gold_reference=effective_gold or gold_reference,
     n=1,
     triple_qvac=True,
@@ -2282,7 +2317,7 @@ bd_local_only = estimate_cost_breakdown(
 bd_local_only_multi = estimate_cost_breakdown(
     cfg,
     live_case,
-    include_qvac=True,
+    include_qvac=_eff_medpsy or True,
     gold_reference=effective_gold or gold_reference,
     n=int(n_multi),
     triple_qvac=True,
@@ -2329,12 +2364,13 @@ def _fmt_cost_multi(breakdown: dict, n: int) -> str:
 
 
 st.markdown('<div class="sec-label">Step 3 · Run</div>', unsafe_allow_html=True)
-selected_bd = bd if include_cloud else bd_local_only
-selected_bd_multi = bd_multi if include_cloud else bd_local_only_multi
+selected_bd = bd
+selected_bd_multi = bd_multi
 selected_mode = "full" if include_cloud else "local_only"
 selected_scope = f"{n_models} models" if include_cloud else f"{n_models} on-device"
 selected_unavailable = (
     not has_key
+    or n_models < 1
     or (not include_cloud and not qvac_run_ok)
     or not bool(effective_gold)
 )
@@ -2368,39 +2404,33 @@ with _run_r1[1]:
 
 _run_r2 = st.columns([1, 1], gap="small")
 with _run_r2[0]:
-    _qvac_only_label = (
-        "Run 3× QVAC only · $0" if triple_qvac else "Run QVAC only · $0"
-    )
     qvac_only_clicked = st.button(
-        _qvac_only_label,
+        "Run MedPsy only · $0 collect",
         key="qvac_only_btn",
         use_container_width=True,
         disabled=not qvac_run_ok,
-        help="Local MedPsy only (cloud skipped). With 3× QVAC: KPI compare always; "
-        "clinical ranking via DeepSeek if an OpenRouter key is present (judge $ only).",
+        help="Force 3× MedPsy only for this run (cloud/generic/medical skipped). "
+        "KPI compare always; clinical ranking via DeepSeek if an OpenRouter key "
+        "is present (judge $ only).",
     )
     st.markdown(
-        (
-            '<div class="cost-compact cost-multi run-cost-cell"><b>$0 collect</b> · 3 MedPsy · '
-            "KPI compare · judge only if key</div>"
-            if triple_qvac
-            else '<div class="cost-compact cost-multi run-cost-cell"><b>$0</b> · MedPsy-4B Q4 · '
-            "KPI · judge if key</div>"
-        ),
+        '<div class="cost-compact cost-multi run-cost-cell"><b>$0 collect</b> · 3 MedPsy · '
+        "KPI compare · judge only if key</div>",
         unsafe_allow_html=True,
     )
 with _run_r2[1]:
     st.info(
         f"Roster now: **{n_models}** models (max 12). "
-        "Cloud / generic / medical / 3× MedPsy toggles above; "
-        "**Solo locali medici** = 6 medical-specialized on-device."
+        "Use the four band toggles or presets: "
+        "**Medical on-device only** (6) · **All on-device** (9) · "
+        "**Full roster** (≤12) · **Cloud only** (3)."
     )
 st.caption(
     "**Minimum aggregate:** 5 valid runs per model (exploratory cohort); "
     "N/A does not block other models. "
     "Multi N: 5 = quick look · ~10 = better CV stability · 20+ = diminishing returns. "
-    "Cloud OFF = on-device bake-off from the active toggles. "
-    "QVAC only = MedPsy rehearsal without cloud."
+    "Presets only set toggles — Single/Multi use the active roster. "
+    "MedPsy only = MedPsy rehearsal without other bands."
 )
 
 # Confirm flow via session state (rerun → spend modal AFTER Step 1/2 widgets render)
@@ -3031,9 +3061,9 @@ for row in _panel_rows:
                     text_boxes[key].markdown(
                         _stream_body_html(
                             (
-                                "Skipped — Only local (6 on-device)"
+                                f"Skipped — on-device bake-off ({n_models} models)"
                                 if _skip_cloud_local
-                                else "Skipped — QVAC-only (MedPsy) rehearsal"
+                                else "Skipped — MedPsy-only rehearsal"
                             ),
                             live=False,
                             panel_id=key,
@@ -3082,7 +3112,7 @@ for row in _panel_rows:
                     unsafe_allow_html=True,
                 )
             else:
-                on_device_out = is_on_device_key(key) and not include_qvac
+                on_device_out = is_on_device_key(key) and not sidecar_up
                 if on_device_out:
                     status_boxes[key].markdown(
                         _status_pill("skip", "Sidecar offline"),
@@ -4847,9 +4877,11 @@ if st.session_state.get("confirmed_run"):
     try:
         prep = prepare_run(
             case_id,
-            skip_qvac=not include_qvac,
+            skip_qvac=not _eff_medpsy,
             require_qvac=False,
-            triple_qvac=triple_qvac,
+            triple_qvac=_eff_triple,
+            include_local_peers=_eff_generic,
+            include_medical_peers=_eff_medical,
         )
     except RuntimeError as exc:
         _abort_run(str(exc))

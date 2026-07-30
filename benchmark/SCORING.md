@@ -179,7 +179,8 @@ no-fallback (judge + candidates); native-default runs never mix.
 
 On-device roster bands: Band B generics (Gemma/Llama/Phi) ≠ Band
 **medical_local** (MedGemma/BioMistral/OpenBioLLM); MedPsy is the QVAC brand
-triple. Cap ≤12 with all toggles on.
+triple. Cap ≤12 with all toggles on. UI presets (English): Medical on-device
+only (6), All on-device (9), Full roster (≤12), Cloud only (3).
 
 Multi runs continue when any valid judged results remain and abort early only
 when judge infrastructure is globally unavailable. The judge pipeline has a

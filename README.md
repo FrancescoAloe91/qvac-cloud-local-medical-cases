@@ -49,19 +49,20 @@ Demo cases and rubric scoring are not part of the active protocol.
 ### 2. Candidates collect answers
 
 Nine roster slots answer the same five questions under the same prompt (up to
-**12** when medical peers are enabled):
+**12** with all four bands enabled):
 
-- Cloud (OpenRouter API routes in [benchmark/models.yaml](benchmark/models.yaml)):
-  `openai/gpt-5.5`, `anthropic/claude-sonnet-5`, `google/gemini-3.5-flash`
-- Band B generic local GGUFs (toggle): Gemma 2 2B IT Q4, Llama 3.2 3B Instruct
-  Q4, Phi-3.5 Mini Instruct Q4
-- Band **medical_local** (toggle; default ON when GGUFs ready): MedGemma 4B IT
-  Q4, BioMistral 7B Q4, OpenBioLLM 8B Q4 — **not** the same band as generics
-- MedPsy via QVAC SDK: 1.7B Q4, 4B Q4, 4B Q8 (3× QVAC toggle)
+- **Cloud** (toggle): OpenRouter API routes in [benchmark/models.yaml](benchmark/models.yaml)
+  — `openai/gpt-5.5`, `anthropic/claude-sonnet-5`, `google/gemini-3.5-flash`
+- **QVAC MedPsy** (toggle): 1.7B Q4, 4B Q4, 4B Q8 via QVAC sidecar
+- **Generic local LLMs** (toggle): Gemma 2 2B IT Q4, Llama 3.2 3B Instruct Q4,
+  Phi-3.5 Mini Instruct Q4 — not medical-specialized
+- **Medical local LLMs** (toggle): MedGemma 4B IT Q4, BioMistral 7B Q4,
+  OpenBioLLM 8B Q4 — medical-specialized peers (not MedPsy)
 
-Preset **Solo locali medici**: cloud OFF, generics OFF, medical ON, 3× MedPsy →
-6 medical-specialized on-device models only. Download medical weights with
-`./scripts/download_medical_peers.sh` (or `./scripts/download_all_ggufs.sh`).
+Dashboard presets (English): **Medical on-device only** (6 = MedPsy + medical),
+**All on-device** (9), **Full roster** (≤12), **Cloud only** (3). Download
+medical weights with `./scripts/download_medical_peers.sh` (or
+`./scripts/download_all_ggufs.sh`).
 
 Candidate identities are blinded before judging. Every candidate keeps a hard
 **3000-token output budget** (cloud and local). That budget was **not** raised
