@@ -67,14 +67,12 @@ from benchmark.report import (
     artifacts_for_case,
     find_case_family_cohorts,
     list_portfolio_runs,
-    list_run_artifacts,
     load_artifact,
     rebuild_multi_from_history,
     rebuild_portfolio_from_history,
     reliability_caption,
     summarize_runs,
     write_artifact,
-    write_summary,
 )
 from benchmark.run_control import cancel_run, finish_run, is_cancelled, start_run
 from benchmark.runner import (
@@ -6397,11 +6395,7 @@ else:
                         )
 
         same_case = []
-        for pth in _hist_all:
-            try:
-                a = load_artifact(pth)
-            except Exception:
-                continue
+        for _pth, a in _hist_all_pairs:
             if a.case_id == hist.case_id and a.ranking:
                 same_case.append(a)
         if len(same_case) >= 2:

@@ -14,7 +14,7 @@ for audit; multi-run summaries add it once via ``batch_total_cost_usd``.
 
 from __future__ import annotations
 
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Union
+from typing import Any, Dict, Optional, Sequence
 
 from benchmark.schema import CandidateAnswer, JudgeResult, RunArtifact
 

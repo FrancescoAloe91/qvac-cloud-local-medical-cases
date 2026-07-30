@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import pytest
@@ -107,6 +106,6 @@ def test_reviewed_nontrivial_can_calibrate():
     }
     row = compare_fixture(fixture, obs)
     assert row["calibrated"] is True
-    summary = summarize_directory({"y": obs}, directory=None)
+    summarize_directory({"y": obs}, directory=None)
     # directory None with no fixtures → empty; just assert row path
     assert row["ok"] and row["reviewed"]
