@@ -390,7 +390,7 @@ def test_portfolio_pools_heterogeneous_roster_shapes(tmp_path: Path):
         "qvac_4b_q8",
         "local_medgemma",
         "local_med42",
-        "local_openbiollm",
+        "local_ultramedical",
     ]
     # Prefer keys that exist in CURRENT_ROSTER_KEYS; fall back to subset of ROSTER.
     medical_six = [k for k in medical_six if k in ROSTER] or ROSTER[:6]

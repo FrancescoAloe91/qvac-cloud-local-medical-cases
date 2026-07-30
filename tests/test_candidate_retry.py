@@ -217,9 +217,9 @@ def test_local_prompt_echo_skips_format_repair_uses_targeted(monkeypatch):
     result = _collect_candidate(
         case,
         {
-            "key": "local_openbiollm",
+            "key": "local_ultramedical",
             "provider": "qvac",
-            "model": "llama3-openbiollm-8b-q4",
+            "model": "llama3-ultramedical-8b-q4",
         },
         "Candidate 1",
     )

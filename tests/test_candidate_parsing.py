@@ -380,19 +380,24 @@ def test_llama3_chat_format_pre_renders_assistant_header():
     assert body.startswith("<|begin_of_text|>")
     assert "<|start_header_id|>system<|end_header_id|>" in body
     assert body.endswith("<|start_header_id|>assistant<|end_header_id|>\n\n")
-    # Med42 / MedGemma keep role messages untouched (GGUF/SDK template).
+    # Active medical peers keep role messages untouched (GGUF/SDK template).
     plain = local_chat_messages(messages, {"key": "local_med42"})
     assert plain == messages
     assert "assistant" in render_llama3_instruct(messages)
 
 
-def test_openbiollm_spec_requests_llama3_chat_format():
+def test_medical_peers_rely_on_embedded_chat_template():
     from benchmark.qvac_variants import MEDICAL_PEER_SPECS
 
     by_key = {s["key"]: s for s in MEDICAL_PEER_SPECS}
-    assert by_key["local_openbiollm"].get("chat_format") == "llama3"
-    assert "chat_format" not in by_key["local_med42"]
-    assert "chat_format" not in by_key["local_medgemma"]
+    assert set(by_key) == {
+        "local_medgemma",
+        "local_med42",
+        "local_ultramedical",
+    }
+    for key, spec in by_key.items():
+        assert "chat_format" not in spec
+    assert by_key["local_ultramedical"]["gguf"].startswith("Llama-3-8B-UltraMedical")
 
 
 def test_unterminated_reasoning_block_is_kept_as_the_only_output():

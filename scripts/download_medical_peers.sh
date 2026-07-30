@@ -21,11 +21,11 @@ pip install -q huggingface_hub
 # Filenames verified on Hugging Face (Q4_K_M):
 #   unsloth/medgemma-4b-it-GGUF → medgemma-4b-it-Q4_K_M.gguf
 #   mradermacher/Llama3-Med42-8B-GGUF → Llama3-Med42-8B.Q4_K_M.gguf
-#   QuantFactory/Llama3-OpenBioLLM-8B-GGUF → Llama3-OpenBioLLM-8B.Q4_K_M.gguf
+#   mradermacher/Llama-3-8B-UltraMedical-GGUF → Llama-3-8B-UltraMedical.Q4_K_M.gguf
 PEERS=(
   "unsloth/medgemma-4b-it-GGUF|medgemma-4b-it-Q4_K_M.gguf|medgemma-4b-it-Q4_K_M.gguf"
   "mradermacher/Llama3-Med42-8B-GGUF|Llama3-Med42-8B.Q4_K_M.gguf|Llama3-Med42-8B.Q4_K_M.gguf"
-  "QuantFactory/Llama3-OpenBioLLM-8B-GGUF|Llama3-OpenBioLLM-8B.Q4_K_M.gguf|Llama3-OpenBioLLM-8B.Q4_K_M.gguf"
+  "mradermacher/Llama-3-8B-UltraMedical-GGUF|Llama-3-8B-UltraMedical.Q4_K_M.gguf|Llama-3-8B-UltraMedical.Q4_K_M.gguf"
 )
 
 # Med42 fallback if primary HF file is missing
@@ -97,4 +97,4 @@ for row in "${PEERS[@]}"; do
 done
 
 echo "==> Medical-local peers ready under $MODELS_DIR"
-ls -lh "$MODELS_DIR"/*{medgemma,Med42,OpenBioLLM}* 2>/dev/null || true
+ls -lh "$MODELS_DIR"/*{medgemma,Med42,UltraMedical}* 2>/dev/null || true

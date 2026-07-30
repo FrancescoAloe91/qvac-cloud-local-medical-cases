@@ -116,18 +116,18 @@ MEDICAL_PEER_SPECS: List[Dict[str, Any]] = [
         "band": "medical_local",
     },
     {
-        "key": "local_openbiollm",
-        "label": "OpenBioLLM 8B",
-        "display_label": "Medical · Llama3-OpenBioLLM-8B Q4 · on-device",
-        "vendor": "Aaditya / QuantFactory (open)",
+        "key": "local_ultramedical",
+        "label": "UltraMedical 8B",
+        "display_label": "Medical · Llama-3-8B-UltraMedical Q4 · on-device",
+        "vendor": "Tsinghua C3I / mradermacher (open)",
         "site": "local (QVAC SDK)",
         "color": "#ec4899",
         "provider": "qvac",
-        "model": "llama3-openbiollm-8b-q4",
-        "gguf": "Llama3-OpenBioLLM-8B.Q4_K_M.gguf",
-        # QuantFactory GGUF omits tokenizer.chat_template; Med42 embeds the same
-        # Llama-3 Instruct Jinja. Equalize role packing via local_chat_messages.
-        "chat_format": "llama3",
+        "model": "llama3-ultramedical-8b-q4",
+        "gguf": "Llama-3-8B-UltraMedical.Q4_K_M.gguf",
+        # Replaces OpenBioLLM: QuantFactory OpenBio lacked chat_template; Llama-3
+        # pre-pack emptied QVAC SDK output; free-form replies missed all A1–A5.
+        # UltraMedical (mradermacher) embeds Llama-3 Instruct like Med42.
         "band": "medical_local",
     },
 ]

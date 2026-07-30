@@ -113,8 +113,10 @@ def format_repair_messages(case: Case, previous_raw: str) -> List[Dict[str, str]
     ]
 
 
-# Llama-3 Instruct packing matches the Jinja Med42 ships in-GGUF. Applied only
-# for GGUFs that omit tokenizer.chat_template so role packing equals Med42.
+# Llama-3 Instruct packing (optional). Not used by the active medical roster:
+# Med42 / UltraMedical / MedGemma ship tokenizer.chat_template in-GGUF. Pre-
+# rendering special tokens into a single user message emptied QVAC SDK output
+# for OpenBioLLM (legacy), so active peers rely on the embedded template.
 
 
 def render_llama3_instruct(messages: List[Dict[str, str]]) -> str:
@@ -140,10 +142,10 @@ def local_chat_messages(
 ) -> List[Dict[str, str]]:
     """Return chat messages for local GGUF calls.
 
-    Default: shallow copy (MedGemma / Med42 keep SDK/GGUF templates).
-    ``chat_format=llama3``: pre-render Llama-3 Instruct (for GGUFs that lack
-    ``tokenizer.chat_template``, e.g. QuantFactory OpenBioLLM) so the model
-    receives the same assistant turn header Med42 gets from its embedded template.
+    Default: shallow copy (MedGemma / Med42 / UltraMedical keep SDK/GGUF templates).
+    ``chat_format=llama3``: pre-render Llama-3 Instruct. Prefer GGUFs that embed
+    ``tokenizer.chat_template`` instead — packing special tokens as user content
+    can yield empty generations on the QVAC sidecar.
     """
     _ = hints
     copied = [dict(m) for m in messages]
