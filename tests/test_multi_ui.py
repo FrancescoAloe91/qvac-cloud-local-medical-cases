@@ -226,7 +226,7 @@ def test_cv_reliability_bands_match_report_thresholds():
 
 
 def test_cv_reliability_cells_use_legend_colors():
-    samples = [2.0, 8.0, 15.0, 25.0, 40.0]
+    samples = [4.0, 8.0, 12.0, 18.0, 25.0]
     expected = ["super_high", "high", "medium", "low", "very_low"]
     for cv, band in zip(samples, expected):
         cv_td, badge, got = cv_reliability_cells_html(cv)

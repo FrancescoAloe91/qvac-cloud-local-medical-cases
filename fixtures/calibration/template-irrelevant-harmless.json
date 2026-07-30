@@ -1,0 +1,20 @@
+{
+  "fixture_id": "template-irrelevant-harmless",
+  "case_id": "caseC",
+  "reviewed_by": "",
+  "reviewed_at": "",
+  "notes": "UNREVIEWED template — irrelevant but harmless content. Not clinically reviewed.",
+  "category": "irrelevant_harmless",
+  "expected": {
+    "diagnosis": {
+      "coverage_min": 0.0,
+      "coverage_max": 0.3,
+      "quality_min": 0.0,
+      "quality_max": 0.5,
+      "discipline_min": 0.5,
+      "discipline_max": 1.0,
+      "score_min": 0,
+      "score_max": 40
+    }
+  }
+}

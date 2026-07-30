@@ -11,6 +11,8 @@ cd "$PROJECT_DIR"
 QUANT="${MEDPSY_QUANT:-medpsy-4b-q4_k_m-imat.gguf}"
 REPO="${MEDPSY_REPO:-qvac/MedPsy-4B-GGUF}"
 # Pin a HF revision for reproducibility (override with MEDPSY_REVISION).
+# Default "main" is a moving branch tip — NOT an immutable pin. Prefer a commit SHA.
+# Weights are UNPINNED unless MEDPSY_GGUF_SHA256 is set.
 REVISION="${MEDPSY_REVISION:-main}"
 # Optional expected digest; set MEDPSY_GGUF_SHA256 to enforce.
 EXPECTED_SHA256="${MEDPSY_GGUF_SHA256:-}"

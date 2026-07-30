@@ -554,7 +554,7 @@ def client_toast_run_done(run_i: int, n_total: int, ranking: List[Dict[str, Any]
 
 
 # CV% band colors — same thresholds as benchmark.report.reliability_from_cv
-# Super High ≤3 · High ≤10 · Medium ≤20 · Low ≤30 · else Very Low
+# Super High ≤5 · High ≤10 · Medium ≤15 · Low ≤20 · else Very Low
 RELIABILITY_BAND_COLORS = {
     "super_high": ("#064e3b", "#6ee7b7", "Super High"),
     "high": ("#14532d", "#86efac", "High"),

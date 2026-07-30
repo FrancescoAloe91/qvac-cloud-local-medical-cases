@@ -1,10 +1,13 @@
 @echo off
-REM Start Streamlit dashboard + Ollama (Windows), open default browser.
+REM Start QVAC SDK sidecar + Streamlit dashboard (Windows). No Ollama.
 setlocal EnableExtensions
 cd /d "%~dp0"
 
 set PORT=8501
 set URL=http://localhost:%PORT%
+set SIDECAR_URL=http://127.0.0.1:8787
+set SIDECAR_LOG=%TEMP%\qvac-sidecar.log
+set SIDECAR_PID=%TEMP%\qvac-sidecar.pid
 
 if not exist ".venv" (
   echo First run: creating virtualenv...
@@ -15,27 +18,51 @@ if not exist ".venv" (
   call ".venv\Scripts\activate.bat"
 )
 
-where ollama >nul 2>&1
-if errorlevel 1 (
-  if exist "%LOCALAPPDATA%\Programs\Ollama\ollama.exe" (
-    set "OLLAMA_EXE=%LOCALAPPDATA%\Programs\Ollama\ollama.exe"
-  ) else (
-    echo.
-    echo MedPsy not installed yet. Run install.ps1 once.
-    echo.
-    goto start_streamlit
+if exist ".env" (
+  for /f "usebackq tokens=1* delims==" %%a in (".env") do (
+    if not "%%a"=="" if not "%%a"=="#" set "%%a=%%b"
   )
-) else (
-  for /f "delims=" %%i in ('where ollama') do set "OLLAMA_EXE=%%i"
 )
 
-set OLLAMA_HOST=127.0.0.1:11434
-set OLLAMA_MODELS=%CD%\.ollama-models
-curl -sf http://127.0.0.1:11434/api/version >nul 2>&1
-if errorlevel 1 (
-  start "" /B "%OLLAMA_EXE%" serve
-  timeout /t 3 /nobreak >nul
+if not defined QVAC_DEVICE set QVAC_DEVICE=gpu
+if not defined QVAC_GPU_LAYERS set QVAC_GPU_LAYERS=99
+if not defined QVAC_WARM_LOAD set QVAC_WARM_LOAD=1
+
+if not defined QVAC_MODEL_PATH (
+  if exist "models\medpsy-4b-q4_k_m-imat.gguf" (
+    set "QVAC_MODEL_PATH=%CD%\models\medpsy-4b-q4_k_m-imat.gguf"
+  )
 )
+
+where node >nul 2>&1
+if errorlevel 1 (
+  echo Node.js is required for the QVAC sidecar. Install Node 22+ then re-run.
+  goto start_streamlit
+)
+
+if not exist "sidecar\qvac_server.mjs" (
+  echo Sidecar missing. Run install.bat once.
+  goto start_streamlit
+)
+
+if not exist "sidecar\node_modules\@qvac\sdk" (
+  echo @qvac/sdk missing. Run: cd sidecar ^&^& npm ci
+  goto start_streamlit
+)
+
+curl -sf "%SIDECAR_URL%/health" >nul 2>&1
+if errorlevel 1 (
+  echo Starting QVAC sidecar on :8787 ...
+  start "" /B cmd /c "cd /d "%CD%\sidecar" && node qvac_server.mjs >> "%SIDECAR_LOG%" 2>&1"
+  for /l %%i in (1,1,60) do (
+    curl -sf "%SIDECAR_URL%/health" >nul 2>&1 && goto sidecar_ok
+    timeout /t 1 /nobreak >nul
+  )
+  echo WARNING: sidecar health not ready. Log: %SIDECAR_LOG%
+) else (
+  echo QVAC sidecar already healthy.
+)
+:sidecar_ok
 
 :start_streamlit
 set STREAMLIT_BROWSER_GATHER_USAGE_STATS=false

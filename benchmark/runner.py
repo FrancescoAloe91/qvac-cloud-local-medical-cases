@@ -15,7 +15,12 @@ from typing import Any, Callable, Dict, List, Optional, Sequence
 from benchmark import openrouter, qvac_bridge
 from benchmark.cases_loader import load_case
 from benchmark.config import load_models_config
-from benchmark.gold import SCORING_VERSION, cohort_id as build_cohort_id, load_confirmed_gold
+from benchmark.gold import (
+    SCORING_VERSION,
+    cohort_id as build_cohort_id,
+    execution_cohort_id as build_execution_cohort_id,
+    load_confirmed_gold,
+)
 from benchmark.judge import (
     build_ranking,
     judge_candidates_parallel,
@@ -196,13 +201,45 @@ def build_run_artifact(
                 "configuration_deviation": bool(
                     getattr(candidate.meta, "configuration_deviation", False)
                 ),
-                "device": platform.platform(),
+                # Real QVAC device (cpu/gpu/…); OS stays under reproducibility.platform
+                "device": str(getattr(candidate.meta, "device", "") or ""),
+                "gpu_layers": getattr(candidate.meta, "gpu_layers", None),
+                "ctx_size": getattr(candidate.meta, "ctx_size", None),
+                "predict": getattr(candidate.meta, "predict", None),
+                "seed": getattr(candidate.meta, "seed", None),
+                "temperature": getattr(candidate.meta, "temperature", None),
             }
             for candidate in candidates
         ],
     }
     manifest.update(existing)
     artifact_fields["reproducibility"] = manifest
+    # Fill execution_cohort_id when gold JSON is available and not already set.
+    if not artifact_fields.get("execution_cohort_id"):
+        gold_ref = str(models_config.get("gold_reference") or "")
+        case_stem = str(models_config.get("case_stem") or "")
+        if gold_ref.strip().startswith("{"):
+            try:
+                from benchmark.gold import (
+                    execution_cohort_id as _exec_cid,
+                    load_confirmed_gold as _load_g,
+                )
+
+                artifact_fields["execution_cohort_id"] = _exec_cid(
+                    case_stem=case_stem,
+                    gold=_load_g(gold_ref),
+                    prompt_version=str(
+                        artifact_fields.get("prompt_version") or "gold-only-v1"
+                    ),
+                    benchmark_track=track,
+                    candidates=candidates,
+                    judgments=judgments,
+                    scoring_version=str(
+                        artifact_fields.get("scoring_version") or "graded-clinical-v4"
+                    ),
+                )
+            except Exception:
+                pass
     return RunArtifact(**artifact_fields)
 
 
@@ -589,12 +626,15 @@ def _collect_candidate_once(
         ]
 
     if provider == "openrouter":
-        temperature = 0.2 if benchmark_track == "controlled" else None
+        from benchmark.gold import is_strict_track, uses_controlled_sampling
+
+        temperature = 0.2 if uses_controlled_sampling(benchmark_track) else None
         allowed = (
             list(cand_cfg.get("allowed_providers") or [])
-            if benchmark_track == "controlled"
+            if uses_controlled_sampling(benchmark_track)
             else None
         )
+        strict = is_strict_track(benchmark_track)
         raw, meta = openrouter.chat_stream(
             model_id,
             messages,
@@ -604,19 +644,37 @@ def _collect_candidate_once(
             display_label=display,
             api_key=api_key,
             allowed_providers=allowed,
-            require_parameters=False,
+            require_parameters=strict,
+            allow_fallbacks=not strict,
         )
+        if strict and getattr(meta, "configuration_deviation", False):
+            meta = meta.model_copy(
+                update={
+                    "error": (
+                        meta.error
+                        or "strict_controlled: routed provider outside allowed pin"
+                    )
+                }
+            )
+            raw = ""
     elif provider == "qvac":
+        from benchmark.gold import is_strict_track, uses_controlled_sampling
+
         gguf = cand_cfg.get("gguf_path")
         loaded: Dict[str, Any] = {}
+        sampling: Dict[str, Any] = {}
+        if uses_controlled_sampling(benchmark_track):
+            sampling = {"temp": 0.2, "top_k": 20, "top_p": 0.95}
+            if is_strict_track(benchmark_track):
+                # Deterministic recorded seed per candidate key within the run.
+                seed_basis = f"{blind_id}:{key}:{model_id}"
+                sampling["seed"] = int(
+                    hashlib.sha256(seed_basis.encode("utf-8")).hexdigest()[:8], 16
+                ) % (2**31 - 1)
         if gguf:
             loaded = qvac_bridge.load_model(
                 gguf,
-                sampling=(
-                    {"temp": 0.2, "top_k": 20, "top_p": 0.95}
-                    if benchmark_track == "controlled"
-                    else {}
-                ),
+                sampling=sampling,
             )
             if not loaded.get("ok"):
                 raw, meta = "", ModelCallMeta(
@@ -661,10 +719,16 @@ def _collect_candidate_once(
             on_token=on_token,
             display_label=display,
             messages=messages,
+            sampling=sampling or None,
         )
         digest = str(loaded.get("gguf_sha256") or "")
+        updates = {}
         if digest:
-            meta = meta.model_copy(update={"gguf_sha256": digest})
+            updates["gguf_sha256"] = digest
+        if sampling.get("seed") is not None and meta.seed is None:
+            updates["seed"] = sampling["seed"]
+        if updates:
+            meta = meta.model_copy(update=updates)
     else:
         raw, meta = "", ModelCallMeta(
             model=model_id,
@@ -1300,13 +1364,6 @@ def run_once(
             if m.gguf_mb is not None:
                 row["gguf_mb"] = m.gguf_mb
 
-    total_cost = 0.0
-    for c in collected:
-        if c.meta.cost_usd:
-            total_cost += c.meta.cost_usd
-    for j in judgments:
-        if j.judge_meta.cost_usd:
-            total_cost += j.judge_meta.cost_usd
     extraction_cost = 0.0
     try:
         if gold_reference and gold_reference.strip().startswith("{"):
@@ -1314,21 +1371,31 @@ def run_once(
             extraction_cost = float(getattr(gold_obj, "extraction_cost_usd", 0.0) or 0.0)
     except Exception:
         extraction_cost = 0.0
-    total_cost += extraction_cost
-    cost_breakdown = {
-        "candidates_usd": round(
-            sum(float(c.meta.cost_usd or 0.0) for c in collected), 6
-        ),
-        "judge_usd": round(
-            sum(float(j.judge_meta.cost_usd or 0.0) for j in judgments), 6
-        ),
-        "extractor_usd": round(extraction_cost, 6),
-        "total_usd": round(total_cost, 6),
-    }
+    from benchmark.costing import cost_breakdown_for_run, run_cost_usd
+
+    # Artifact total = run cost only; extraction is batch-shared (once per Prepare).
+    total_cost = run_cost_usd(collected, judgments)
+    cost_breakdown = cost_breakdown_for_run(
+        collected, judgments, extraction_cost_usd=extraction_cost
+    )
 
     notes = ""
     if has_qvac_cfg and not any(is_qvac_key(c.candidate_key) for c in collected):
         notes = "QVAC skipped (sidecar unavailable). Start sidecar for full compare."
+
+    exec_cohort = ""
+    try:
+        if gold_reference and gold_reference.strip().startswith("{"):
+            exec_cohort = build_execution_cohort_id(
+                case_stem=case.stem,
+                gold=load_confirmed_gold(gold_reference),
+                prompt_version="gold-only-v1",
+                benchmark_track=benchmark_track,
+                candidates=collected,
+                judgments=judgments,
+            )
+    except Exception:
+        exec_cohort = ""
 
     artifact = build_run_artifact(
         config_snapshot=cfg,
@@ -1356,6 +1423,7 @@ def run_once(
         cost_breakdown=cost_breakdown,
         notes=notes,
         cohort_id=cohort,
+        execution_cohort_id=exec_cohort,
         scoring_version=SCORING_VERSION,
         prompt_version="gold-only-v1",
         benchmark_track=benchmark_track,

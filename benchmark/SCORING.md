@@ -167,9 +167,12 @@ Each model enters the aggregate ranking when it has at least five valid
 observations from one immutable cohort. Models may therefore have different N:
 an N/A for one model neither removes nor delays valid data from another. Every
 mean exposes its own valid and failed counts, and no missing score is imputed. A
-cohort hash includes the case, confirmed reference, model configuration,
-prompt/scoring versions, and protocol track. Controlled and native-default runs
-never mix.
+cohort hash includes the case, confirmed reference **scoring contract** (claims
+only; section summaries are display-only), model configuration, prompt/scoring
+versions, and protocol track. When present, aggregation prefers
+`execution_cohort_id` (actual routed providers/models, GGUF SHA, QVAC device /
+ctx / seed, judge endpoint). `controlled` is best-effort preferred-provider;
+`strict_controlled` is opt-in no-fallback; native-default runs never mix.
 
 Multi runs continue when any valid judged results remain and abort early only
 when judge infrastructure is globally unavailable. The judge pipeline has a
@@ -225,6 +228,14 @@ rewrite old artifacts as v4 silently. It does not call OpenRouter.
 
 The LLM judge is **uncalibrated for public claims** until human-reviewed fixtures
 under `fixtures/calibration/` have been checked and the offline comparison
-helper passes. Treat scores as LLM-as-judge estimates until then. The whole-run
-verifier is an independent re-judge for systemic primary failure — it is **not**
-calibration.
+helper passes with **nontrivial** ranges (full-domain 0–1 / 0–100 constraints
+do not count). Missing expected sections/metrics fail. Unreviewed fixtures never
+set `calibrated=true` even if ranges pass. Treat scores as LLM-as-judge estimates
+until then. The whole-run verifier is an independent re-judge for systemic
+primary failure — it is **not** calibration.
+
+Extract observed metrics from a saved artifact:
+
+```bash
+python -m benchmark.calibration extract-observed path/to/run.json --candidate-key chatgpt
+```

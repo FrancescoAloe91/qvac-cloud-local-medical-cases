@@ -7,7 +7,7 @@ import json
 import re
 import unicodedata
 from datetime import datetime, timezone
-from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple
+from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from benchmark.schema import ConfirmedGold, GoldClaim, GoldSection, ModelCallMeta
 
@@ -300,18 +300,13 @@ def confirmed_gold(
     extraction_cost_usd: float = 0.0,
 ) -> ConfirmedGold:
     """Create the frozen contract; all five sections must be assessable."""
-    parsed: Dict[str, GoldSection] = {}
     for section_id in SECTION_IDS:
-        item = sections.get(section_id)
-        if item is None:
+        if sections.get(section_id) is None:
             raise ValueError(f"Complete and confirm section: {section_id}")
-        section = item if isinstance(item, GoldSection) else GoldSection.model_validate(item)
+    parsed = assign_deterministic_claim_ids(sections)
+    for section_id, section in parsed.items():
         if not section.summary.strip() or not section.claims:
             raise ValueError(f"Complete and confirm section: {section_id}")
-        for claim in section.claims:
-            claim.text = claim.source_quote.strip()
-            claim.critical = False
-        parsed[section_id] = section
     _validate_source_quotes(raw_text, parsed)
     return ConfirmedGold(
         raw_text=raw_text.strip(),
@@ -374,6 +369,63 @@ def case_family_key(*, case_stem: str, reference_raw: str) -> str:
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
+def scoring_contract_dump(gold: ConfirmedGold) -> Dict[str, Any]:
+    """Gold fields that affect scoring / cohort identity.
+
+    Section ``summary`` is display-only (never sent to the judge) and is
+    excluded so editing summaries cannot silently split cohorts.
+    ``extraction_cost_usd`` is also excluded — cost metadata must not change
+    scoring identity.
+    """
+    sections: Dict[str, Any] = {}
+    for section_id in SECTION_IDS:
+        section = gold.sections[section_id]
+        # Sort claims by id so reorder-without-id-change is identity-stable;
+        # confirm assigns deterministic ids from quote order.
+        claims = sorted(
+            (
+                {
+                    "id": c.id,
+                    "text": (c.source_quote or c.text or "").strip(),
+                    "source_quote": (c.source_quote or "").strip(),
+                    "critical": False,
+                }
+                for c in section.claims
+            ),
+            key=lambda row: row["id"],
+        )
+        sections[section_id] = {"claims": claims}
+    return {
+        "raw_text": _normalized(gold.raw_text),
+        "sections": sections,
+        "extraction_model": gold.extraction_model,
+        "extraction_prompt_version": gold.extraction_prompt_version,
+    }
+
+
+def assign_deterministic_claim_ids(
+    sections: Mapping[str, GoldSection | Mapping[str, Any]],
+) -> Dict[str, GoldSection]:
+    """Assign stable ``{section}-{n}`` ids at Confirm (final contract only)."""
+    out: Dict[str, GoldSection] = {}
+    for section_id in SECTION_IDS:
+        item = sections[section_id]
+        section = item if isinstance(item, GoldSection) else GoldSection.model_validate(item)
+        renumbered = []
+        for index, claim in enumerate(section.claims, 1):
+            renumbered.append(
+                claim.model_copy(
+                    update={
+                        "id": f"{section_id}-{index}",
+                        "text": claim.source_quote.strip(),
+                        "critical": False,
+                    }
+                )
+            )
+        out[section_id] = section.model_copy(update={"claims": renumbered})
+    return out
+
+
 def cohort_id(
     *,
     case_stem: str,
@@ -385,7 +437,7 @@ def cohort_id(
     canonical = json.dumps(
         {
             "case_stem": _normalized(case_stem),
-            "gold": gold.model_dump(mode="json", exclude={"confirmed_at"}),
+            "gold": scoring_contract_dump(gold),
             "scoring_version": SCORING_VERSION,
             "prompt_version": prompt_version,
             "models": model_config,
@@ -396,6 +448,99 @@ def cohort_id(
         separators=(",", ":"),
     )
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def execution_cohort_id(
+    *,
+    case_stem: str,
+    gold: ConfirmedGold,
+    prompt_version: str,
+    benchmark_track: str,
+    candidates: Sequence[Any],
+    judgments: Sequence[Any],
+    scoring_version: str = SCORING_VERSION,
+) -> str:
+    """Hash result-affecting execution facts (actual routes + digests)."""
+    cand_rows = []
+    for c in candidates:
+        meta = getattr(c, "meta", None)
+        attempts = list(getattr(meta, "paid_attempts", None) or [])
+        cand_rows.append(
+            {
+                "key": getattr(c, "candidate_key", ""),
+                "requested_model": getattr(meta, "requested_model", None)
+                or getattr(meta, "model", ""),
+                "routed_model": getattr(meta, "routed_model", None)
+                or getattr(meta, "model", ""),
+                "routed_provider": getattr(meta, "routed_provider", None)
+                or getattr(meta, "provider", ""),
+                "temperature": getattr(meta, "temperature", None),
+                "top_k": getattr(meta, "top_k", None),
+                "top_p": getattr(meta, "top_p", None),
+                "seed": getattr(meta, "seed", None),
+                "gguf_sha256": getattr(meta, "gguf_sha256", "") or "",
+                "device": getattr(meta, "device", "") or "",
+                "gpu_layers": getattr(meta, "gpu_layers", None),
+                "ctx_size": getattr(meta, "ctx_size", None),
+                "predict": getattr(meta, "predict", None),
+                "configuration_deviation": bool(
+                    getattr(meta, "configuration_deviation", False)
+                ),
+                "paid_attempts": [
+                    {
+                        "model": a.get("model"),
+                        "provider": a.get("provider") or a.get("routed_provider"),
+                        "routed_model": a.get("routed_model"),
+                    }
+                    for a in attempts
+                    if isinstance(a, dict)
+                ],
+            }
+        )
+    cand_rows.sort(key=lambda r: str(r.get("key") or ""))
+    judge_rows = []
+    for j in judgments:
+        meta = getattr(j, "judge_meta", None)
+        judge_rows.append(
+            {
+                "key": getattr(j, "candidate_key", ""),
+                "judge_model": getattr(j, "judge_model", ""),
+                "primary_judge_model": getattr(j, "primary_judge_model", ""),
+                "routed_model": getattr(meta, "routed_model", None)
+                or getattr(meta, "model", ""),
+                "routed_provider": getattr(meta, "routed_provider", None)
+                or getattr(meta, "provider", ""),
+            }
+        )
+    judge_rows.sort(key=lambda r: str(r.get("key") or ""))
+    canonical = json.dumps(
+        {
+            "case_stem": _normalized(case_stem),
+            "gold": scoring_contract_dump(gold),
+            "scoring_version": scoring_version,
+            "prompt_version": prompt_version,
+            "track": benchmark_track,
+            "candidates": cand_rows,
+            "judges": judge_rows,
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
+    )
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def is_strict_track(benchmark_track: str) -> bool:
+    return str(benchmark_track or "").strip() == "strict_controlled"
+
+
+def uses_controlled_sampling(benchmark_track: str) -> bool:
+    return str(benchmark_track or "").strip() in {
+        "controlled",
+        "strict_controlled",
+        "best_effort",
+    }
 
 
 def _accumulate_extract_meta(

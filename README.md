@@ -29,18 +29,18 @@ Repository: https://github.com/FrancescoAloe91/qvac-vs-cloud-llms-health-test
    The schema `critical` flag is forced off / ignored — all claims share equal
    weight. Prepare may invent-then-repair segmentation; Confirm locks the
    verbatim quotes you approve.
-5. Run either the `controlled` or `native_defaults` track. They are separate
-   cohorts and are never pooled. History “rebuild last N” uses the newest
-   immutable `cohort_id` (normalized case stem + confirmed gold excluding
-   `confirmed_at` + scoring/prompt versions + model roster + track). Pasting the
-   same raw case/reference alone is not enough: a new Prepare that changes claim
-   splits (or extraction cost metadata) starts a new cohort even when the text
-   looks identical. The UI can **restore** an exact prior confirmed gold from
-   local History when the pasted case+raw reference match a case family — that
-   reopens the same `cohort_id` for Rebuild. Different Confirm versions are
-   listed separately and never auto-merged. Active protocol is gold-only;
-   strings under `OLD/` and legacy i18n paste-web keys are archived, not the
-   live path.
+5. Run a track: **`controlled`** (default best-effort: temp 0.2 + preferred
+   provider, OpenRouter fallbacks **on**), **`strict_controlled`** (opt-in: no
+   fallback, `require_parameters`, route miss → technical N/A), or
+   **`native_defaults`**. Tracks never pool. History “rebuild last N” prefers
+   `execution_cohort_id` (actual routed models/providers + GGUF digests + QVAC
+   runtime) when present; otherwise legacy `cohort_id` (requested recipe +
+   scoring gold contract **without** display-only section summaries). Pasting
+   the same raw case/reference alone is not enough: a new Prepare that changes
+   claim splits starts a new cohort. The UI can **restore** an exact prior
+   confirmed gold from History when the pasted case+raw reference match a case
+   family. Confirm supports add/split/delete/move of claims; summaries are
+   display-only. Active protocol is gold-only; strings under `OLD/` are archived.
 
 Demo cases and rubric scoring are not part of the active protocol.
 
@@ -303,6 +303,15 @@ covers cloud candidates, the gold extractor, and the primary judge at its 16k
 completion cap; the upper bound also includes possible section repair (up to
 5×4k per candidate) and an optional whole-run verifier. Actual billed spend
 comes from OpenRouter usage.
+
+**Actual cost model** (`benchmark/costing.py`): each artifact stores
+`run_cost_usd` (candidates + judge/repair/verifier for that iteration only).
+Gold extraction is `batch_shared_cost_usd` and is charged **once** per Prepare,
+never ×N. Multi-run / batch totals = sum(run costs) + shared extraction.
+Estimates remain separate from billed usage.
+
+Windows: `launch_dashboard.bat` / `stop_dashboard.bat` start and stop the
+**QVAC SDK sidecar** (not Ollama). Legacy Ollama setup lives under `OLD/legacy/`.
 
 ## Live judging UI
 

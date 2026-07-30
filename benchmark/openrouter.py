@@ -174,24 +174,21 @@ def _provider_prefs(
     *,
     allowed_providers: Optional[List[str]] = None,
     require_parameters: bool = False,
+    allow_fallbacks: bool = True,
 ) -> Optional[Dict[str, Any]]:
-    """OpenRouter provider routing prefs for controlled reproducibility.
+    """OpenRouter provider routing prefs.
 
-    Prefer the pinned provider order, but keep fallbacks enabled. Hard-failing
-    with allow_fallbacks=false + require_parameters was zeroing OpenAI/Anthropic
-    collects while Gemini still worked (account/routing variance).
-    Deviations are recorded on ModelCallMeta when the routed provider differs.
+    - best-effort / ``controlled``: prefer order, allow_fallbacks=True
+    - ``strict_controlled``: allow_fallbacks=False + require_parameters when asked
     """
     if not allowed_providers and not require_parameters:
         return None
     prefs: Dict[str, Any] = {}
     if allowed_providers:
         prefs["order"] = list(allowed_providers)
-        # Prefer pin, do not abort the collect if that vendor is briefly unavailable.
-        prefs["allow_fallbacks"] = True
-    # require_parameters is intentionally unused for hard routing: many frontier
-    # endpoints skip/ignore unsupported knobs and OpenRouter then returns no
-    # endpoints when require_parameters=true. Temperature is still sent in-body.
+        prefs["allow_fallbacks"] = bool(allow_fallbacks)
+    if require_parameters:
+        prefs["require_parameters"] = True
     return prefs or None
 
 
@@ -283,6 +280,7 @@ def _chat_once(
     api_key: Optional[str] = None,
     allowed_providers: Optional[List[str]] = None,
     require_parameters: bool = False,
+    allow_fallbacks: bool = True,
 ) -> Tuple[str, ModelCallMeta]:
     key = (api_key or "").strip() or openrouter_api_key()
     payload: Dict[str, Any] = {
@@ -297,6 +295,7 @@ def _chat_once(
     prefs = _provider_prefs(
         allowed_providers=allowed_providers,
         require_parameters=require_parameters,
+        allow_fallbacks=allow_fallbacks,
     )
     if prefs:
         payload["provider"] = prefs
@@ -341,6 +340,7 @@ def chat(
     api_key: Optional[str] = None,
     allowed_providers: Optional[List[str]] = None,
     require_parameters: bool = False,
+    allow_fallbacks: bool = True,
 ) -> Tuple[str, ModelCallMeta]:
     """Non-streaming chat (used by judge). Retries truncated / empty transport."""
     last: Tuple[str, ModelCallMeta] = ("", ModelCallMeta(model=model, provider="openrouter"))
@@ -358,6 +358,7 @@ def chat(
             api_key=api_key,
             allowed_providers=allowed_providers,
             require_parameters=require_parameters,
+            allow_fallbacks=allow_fallbacks,
         )
         last = (text, meta)
         ok_text = bool((text or "").strip())
@@ -387,6 +388,7 @@ def chat_stream(
     api_key: Optional[str] = None,
     allowed_providers: Optional[List[str]] = None,
     require_parameters: bool = False,
+    allow_fallbacks: bool = True,
 ) -> Tuple[str, ModelCallMeta]:
     """Streaming chat — measures TTFT and TPS from first token."""
     key = (api_key or "").strip() or openrouter_api_key()
@@ -401,6 +403,7 @@ def chat_stream(
     prefs = _provider_prefs(
         allowed_providers=allowed_providers,
         require_parameters=require_parameters,
+        allow_fallbacks=allow_fallbacks,
     )
     if prefs:
         payload["provider"] = prefs

@@ -23,11 +23,11 @@ from benchmark.scoring import (
 from lib.model_labels import CURRENT_ROSTER_KEYS, is_current_roster_key
 
 # Multi-run mean reliability from CV% = 100 × std / mean
-# Five bands (ceilings): Super High ≤3 · High ≤10 · Medium ≤20 · Low ≤30 · else Very Low
-CV_SUPER_HIGH_MAX = 3.0
+# Five bands (ceilings): Super High ≤5 · High ≤10 · Medium ≤15 · Low ≤20 · else Very Low
+CV_SUPER_HIGH_MAX = 5.0
 CV_HIGH_MAX = 10.0
-CV_MEDIUM_MAX = 20.0
-CV_LOW_MAX = 30.0
+CV_MEDIUM_MAX = 15.0
+CV_LOW_MAX = 20.0
 
 
 def reliability_from_cv(cv_pct: float) -> str:
@@ -80,13 +80,23 @@ def summarize_runs(
 ) -> MultiRunSummary:
     if not artifacts:
         return MultiRunSummary(case_id="", n=0)
+    # Prefer execution_cohort_id when present (actual routes); else legacy cohort_id.
+    exec_ids = {(getattr(a, "execution_cohort_id", None) or "") for a in artifacts}
     cohort_ids = {(a.cohort_id or "") for a in artifacts}
-    if "" in cohort_ids:
-        raise ValueError("Cannot summarize runs with empty cohort_id")
-    if len(cohort_ids) > 1 and not allow_mixed_cohorts:
-        raise ValueError("Cannot summarize mixed cohorts")
+    if any(exec_ids) and "" not in exec_ids:
+        mix_ids = exec_ids
+        empty_msg = "Cannot summarize runs with empty execution_cohort_id"
+        mix_msg = "Cannot summarize mixed execution cohorts"
+    else:
+        mix_ids = cohort_ids
+        empty_msg = "Cannot summarize runs with empty cohort_id"
+        mix_msg = "Cannot summarize mixed cohorts"
+    if "" in mix_ids:
+        raise ValueError(empty_msg)
+    if len(mix_ids) > 1 and not allow_mixed_cohorts:
+        raise ValueError(mix_msg)
     case_ids = {a.case_id for a in artifacts}
-    if allow_mixed_cohorts and (len(cohort_ids) > 1 or len(case_ids) > 1):
+    if allow_mixed_cohorts and (len(mix_ids) > 1 or len(case_ids) > 1):
         case_id = "portfolio"
     else:
         case_id = artifacts[0].case_id
@@ -308,7 +318,10 @@ def summarize_runs(
                 last_rank = index
             row["rank"] = last_rank
 
-    total_cost = sum(a.total_cost_usd for a in artifacts)
+    from benchmark.costing import batch_total_cost_usd
+
+    # Sum of per-run costs + extraction once (not ×N).
+    total_cost = batch_total_cost_usd(artifacts)
     excluded = sorted(all_keys - eligible_keys)
     return MultiRunSummary(
         case_id=case_id,
@@ -694,10 +707,25 @@ def rescore_artifact_current_formula(art: RunArtifact) -> Dict[str, Any]:
 
 
 def artifacts_for_case(
-    out_dir: Path, case_id: str, *, limit: Optional[int] = None
-) -> List[Tuple[Path, RunArtifact]]:
+    out_dir: Path,
+    case_id: str,
+    *,
+    limit: Optional[int] = None,
+    preloaded: Optional[Sequence[RunArtifact]] = None,
+) -> List[Tuple[Optional[Path], RunArtifact]]:
     """Newest-first artifacts for one case that have judgments/ranking."""
-    out: List[Tuple[Path, RunArtifact]] = []
+    out: List[Tuple[Optional[Path], RunArtifact]] = []
+    if preloaded is not None:
+        # Newest-first assumption: caller passes newest-first or we reverse append order
+        for art in preloaded:
+            if art.case_id != case_id:
+                continue
+            if not art.judgments and not art.ranking:
+                continue
+            out.append((None, art))
+            if limit is not None and len(out) >= limit:
+                break
+        return out
     for p in list_run_artifacts(out_dir):
         try:
             art = load_artifact(p)
@@ -811,7 +839,8 @@ def list_portfolio_runs(
     scoring_version: str = "graded-clinical-v4",
     track: str = "controlled",
     model_ids: Optional[Sequence[str]] = None,
-) -> List[Tuple[Path, RunArtifact]]:
+    preloaded: Optional[Sequence[RunArtifact]] = None,
+) -> List[Tuple[Optional[Path], RunArtifact]]:
     """Newest-first complete runs across all cases matching protocol filters.
 
     Filters: same scoring_version, track, model roster keys, complete + valid
@@ -824,12 +853,19 @@ def list_portfolio_runs(
     )
     want_sv = str(scoring_version or "").strip()
     want_track = str(track or "").strip()
-    matched: List[Tuple[Path, RunArtifact, str]] = []
-    for path in list_run_artifacts(out_dir):
-        try:
-            art = load_artifact(path)
-        except Exception:
-            continue
+    matched: List[Tuple[Optional[Path], RunArtifact, str]] = []
+    if preloaded is not None:
+        source: List[Tuple[Optional[Path], RunArtifact]] = [
+            (None, a) for a in preloaded
+        ]
+    else:
+        source = []
+        for path in list_run_artifacts(out_dir):
+            try:
+                source.append((path, load_artifact(path)))
+            except Exception:
+                continue
+    for path, art in source:
         if str(art.run_status or "") != "complete":
             continue
         if str(art.scoring_version or "").strip() != want_sv:
@@ -849,7 +885,7 @@ def list_portfolio_runs(
 
 
 def _offline_rescore_pair(
-    path: Path, art: RunArtifact
+    path: Optional[Path], art: RunArtifact
 ) -> Tuple[RunArtifact, Dict[str, Any]]:
     """Rescore one artifact offline; return clone + per-run row dict."""
     scored = rescore_artifact_current_formula(art)
@@ -886,7 +922,7 @@ def _offline_rescore_pair(
     if stamp and not scored.get("preserved_stored_ranking"):
         clone.scoring_version = str(stamp)
     per_run = {
-        "path": str(path),
+        "path": str(path) if path else f"memory:{art.run_id}",
         "run_id": art.run_id,
         "case_id": art.case_id,
         "finished_at": art.finished_at,
@@ -921,6 +957,7 @@ def rebuild_multi_from_history(
     *,
     n: int = 5,
     cohort_id: Optional[str] = None,
+    preloaded: Optional[Sequence[RunArtifact]] = None,
 ) -> Dict[str, Any]:
     """
     Offline Multi×N: take the N newest runs for case_id, rescore with the
@@ -931,7 +968,9 @@ def rebuild_multi_from_history(
     rebuild that immutable cohort instead of the newest case cohort.
     """
     n = max(5, min(int(n), 30))
-    all_pairs = artifacts_for_case(out_dir, case_id, limit=None)
+    all_pairs = artifacts_for_case(
+        out_dir, case_id, limit=None, preloaded=preloaded
+    )
     if not all_pairs:
         return {
             "ok": False,
@@ -1006,6 +1045,7 @@ def rebuild_portfolio_from_history(
     scoring_version: str = "graded-clinical-v4",
     track: str = "controlled",
     model_ids: Optional[Sequence[str]] = None,
+    preloaded: Optional[Sequence[RunArtifact]] = None,
 ) -> Dict[str, Any]:
     """Offline exploratory mean across last N complete runs (all cases).
 
@@ -1021,6 +1061,7 @@ def rebuild_portfolio_from_history(
         scoring_version=scoring_version,
         track=track,
         model_ids=want_keys,
+        preloaded=preloaded,
     )
     pairs = all_eligible[:n]
     n_cases = len({a.case_id for _, a in pairs})

@@ -85,6 +85,15 @@ class ModelCallMeta(BaseModel):
     ram_mb: Optional[float] = None
     gguf_mb: Optional[float] = None
     gguf_sha256: str = ""
+    # Real sidecar runtime (not OS platform string)
+    device: str = ""
+    gpu_layers: Optional[int] = None
+    ctx_size: Optional[int] = None
+    predict: Optional[int] = None
+    temperature: Optional[float] = None
+    top_k: Optional[int] = None
+    top_p: Optional[float] = None
+    seed: Optional[int] = None
     display_label: str = ""
     retry_count: int = 0
     error: Optional[str] = None
@@ -168,9 +177,12 @@ class RunArtifact(BaseModel):
     cohort_id: str = ""
     scoring_version: str = "graded-clinical-v4"
     prompt_version: str = "gold-only-v1"
-    benchmark_track: Literal["controlled", "native_defaults", "legacy"] = "controlled"
+    benchmark_track: Literal[
+        "controlled", "native_defaults", "legacy", "strict_controlled"
+    ] = "controlled"
     run_status: Literal["complete", "partial", "cancelled", "failed"] = "complete"
     reproducibility: Dict[str, Any] = Field(default_factory=dict)
+    execution_cohort_id: str = ""
 
 
 class MultiRunSummary(BaseModel):

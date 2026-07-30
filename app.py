@@ -321,16 +321,36 @@ if (
     except Exception as _sync_exc:
         st.session_state["_account_sync_error"] = str(_sync_exc)
 
+from lib.run_store import HostedRunStore, LocalRunStore
+
+if _HOSTED_NO_PLAINTEXT:
+    RUN_STORE = HostedRunStore(
+        memory=list(st.session_state.get("_account_artifacts_memory") or []),
+        memory_setter=lambda arts: st.session_state.__setitem__(
+            "_account_artifacts_memory", arts
+        ),
+        account_session=_account_session,
+        save_cloud=account_save_artifact,
+        summaries=list(st.session_state.get("_account_summaries_memory") or []),
+        summaries_setter=lambda s: st.session_state.__setitem__(
+            "_account_summaries_memory", s
+        ),
+    )
+else:
+    RUN_STORE = LocalRunStore(WORKSPACE_DIR)
+
 
 def _persist_run_artifact(artifact, workspace: Path):
-    """Write plaintext locally; on hosted+account keep memory/encrypted cloud only."""
-    mem = list(st.session_state.get("_account_artifacts_memory") or [])
-    mem.append(artifact)
-    st.session_state["_account_artifacts_memory"] = mem[-200:]
-    if _HOSTED_NO_PLAINTEXT:
-        return None
-    workspace.mkdir(parents=True, exist_ok=True)
-    return write_artifact(artifact, workspace)
+    """Persist via LocalRunStore or HostedRunStore (no plaintext on hosted)."""
+    return RUN_STORE.persist_artifact(artifact)
+
+
+def _preloaded_artifacts():
+    return [a for _, a in RUN_STORE.list_artifacts()]
+
+
+def _persist_summary(summary):
+    return RUN_STORE.persist_summary(summary)
 
 # --- Startup dialogs: every browser refresh starts a new session → show again ---
 # Within one session: API key popup first, then QVAC status (good for screen recordings).
@@ -935,15 +955,26 @@ def _fmt_gguf_mb(gguf_mb) -> str:
 
 def _render_saved_run_panel(path_str: str, *, key_prefix: str = "saved") -> None:
     """In-page review of a past artifact (sidebar History / Run tabs). No st.dialog."""
-    _hp = Path(path_str)
-    if not assert_path_in_workspace(_hp, WORKSPACE_DIR):
-        st.error("That run is not in your private history (API key mismatch).")
-        return
-    try:
-        hist = load_artifact(_hp)
-    except Exception as exc:
-        st.error(f"Could not load run: {exc}")
-        return
+    hist = None
+    if str(path_str).startswith("memory:"):
+        rid = str(path_str).split(":", 1)[1]
+        for _p, _a in RUN_STORE.list_artifacts():
+            if _a.run_id == rid:
+                hist = _a
+                break
+        if hist is None:
+            st.error("That in-memory run is no longer available.")
+            return
+    else:
+        _hp = Path(path_str)
+        if not assert_path_in_workspace(_hp, WORKSPACE_DIR):
+            st.error("That run is not in your private history (API key mismatch).")
+            return
+        try:
+            hist = load_artifact(_hp)
+        except Exception as exc:
+            st.error(f"Could not load run: {exc}")
+            return
 
     when = (hist.finished_at or hist.started_at or "")[:19].replace("T", " ")
     if hist.schema_version != "2.0" or not hist.cohort_id:
@@ -1155,11 +1186,11 @@ def _reliability_table_html(ranking_mean: list) -> str:
         + "".join(rows_html)
         + "</tbody></table></div>"
         "<div style='font-size:0.78rem;color:#94a3b8;margin-bottom:0.5rem'>"
-        f"{reliability_badge('super_high')} CV ≤ 3% &nbsp; "
+        f"{reliability_badge('super_high')} CV ≤ 5% &nbsp; "
         f"{reliability_badge('high')} CV ≤ 10% &nbsp; "
-        f"{reliability_badge('medium')} CV ≤ 20% &nbsp; "
-        f"{reliability_badge('low')} CV ≤ 30% &nbsp; "
-        f"{reliability_badge('very_low')} CV &gt; 30% &nbsp;·&nbsp; "
+        f"{reliability_badge('medium')} CV ≤ 15% &nbsp; "
+        f"{reliability_badge('low')} CV ≤ 20% &nbsp; "
+        f"{reliability_badge('very_low')} CV &gt; 20% &nbsp;·&nbsp; "
         "cell color = CV band · lower CV = stabler mean · "
         "<b>CV band ≠ clinical validation</b> · "
         "<b>Runs</b> = scored passes for that model/version "
@@ -1339,7 +1370,7 @@ def scoring_guide_dialog():
 |-------|------|
 | **Section weights** | Diagnosis 30% · Safety 25% · Plan 20% · Tests 15% · Urgency 10% |
 | **Ties** | Same unrounded score → same rank (no forced tie-break) |
-| **Multi reliability** | CV% · Super High ≤3% · High ≤10% · Med ≤20% · Low ≤30% · else Very Low · N=5 exploratory · ~10 better for CV |
+| **Multi reliability** | CV% · Super High ≤5% · High ≤10% · Med ≤15% · Low ≤20% · else Very Low · N=5 exploratory · ~10 better for CV |
 
 **Flow:** same prompt → answers → blind graded judge → host formula → ranking.
 """
@@ -1759,30 +1790,135 @@ if isinstance(_prepared, dict) and _prepared:
         unsafe_allow_html=True,
     )
     st.caption(
-        "Extractor may invent-then-repair segmentation — only Confirm locks scored claims. "
-        "`source_quote` = author-supplied verbatim substring (reference-relative, not clinical truth). "
-        "`critical` flag is ignored · equal claim weights."
+        "Add / split / delete / move claims between sections — Confirm locks scored claims. "
+        "Section summary is display-only (not scored, not in cohort identity). "
+        "Extractor may invent-then-repair segmentation. "
+        "`source_quote` = author-supplied verbatim substring (reference-relative). "
+        "`critical` ignored · equal claim weights."
     )
     raw_norm_check = gold_reference or ""
+
+    # Handle deferred claim mutations before widgets bind keys.
+    _claim_action = st.session_state.pop("_gold_claim_action", None)
+    if isinstance(_claim_action, dict) and _claim_action.get("op"):
+        _op = str(_claim_action.get("op") or "")
+        _sid = str(_claim_action.get("section") or "")
+        _idx = int(_claim_action.get("index") or 0)
+        _mut = {
+            sid: {
+                "summary": str((_prepared.get(sid) or {}).get("summary") or ""),
+                "claims": [
+                    dict(c) for c in list((_prepared.get(sid) or {}).get("claims") or [])
+                ],
+            }
+            for sid in SECTION_IDS
+        }
+        if _op == "add" and _sid in _mut:
+            _mut[_sid]["claims"].append(
+                {
+                    "id": f"{_sid}-new",
+                    "text": "",
+                    "source_quote": "",
+                    "critical": False,
+                }
+            )
+        elif _op == "delete" and _sid in _mut:
+            claims = _mut[_sid]["claims"]
+            if 0 <= _idx < len(claims):
+                claims.pop(_idx)
+        elif _op == "split" and _sid in _mut:
+            claims = _mut[_sid]["claims"]
+            if 0 <= _idx < len(claims):
+                src = dict(claims[_idx])
+                claims[_idx] = {
+                    **src,
+                    "source_quote": "",
+                    "text": "",
+                }
+                claims.insert(
+                    _idx + 1,
+                    {
+                        "id": f"{_sid}-split",
+                        "text": "",
+                        "source_quote": "",
+                        "critical": False,
+                    },
+                )
+        elif _op == "move" and _sid in _mut:
+            _dest = str(_claim_action.get("dest") or "")
+            claims = _mut[_sid]["claims"]
+            if _dest in _mut and 0 <= _idx < len(claims) and _dest != _sid:
+                moved = claims.pop(_idx)
+                _mut[_dest]["claims"].append(moved)
+        st.session_state["_prepared_gold_sections"] = _mut
+        _prepared = _mut
+
     edited_sections: dict = {}
     quote_ok = True
     for section_id in SECTION_IDS:
         sec = _prepared.get(section_id) or {}
         with st.expander(f"{section_id}", expanded=section_id == "diagnosis"):
             summary = st.text_input(
-                f"{section_id} summary",
+                f"{section_id} summary (display-only)",
                 value=str(sec.get("summary") or ""),
                 key=f"prep_sum_{section_id}",
+                help="Not scored and not part of cohort identity.",
             )
             claims_in = list(sec.get("claims") or [])
             claims_out = []
             for ci, claim in enumerate(claims_in):
-                quote = st.text_area(
-                    f"{section_id} claim {ci + 1} source_quote",
-                    value=str(claim.get("source_quote") or ""),
-                    key=f"prep_q_{section_id}_{ci}",
-                    height=68,
-                )
+                c1, c2, c3, c4 = st.columns([6, 1, 1, 2])
+                with c1:
+                    quote = st.text_area(
+                        f"{section_id} claim {ci + 1} source_quote",
+                        value=str(claim.get("source_quote") or ""),
+                        key=f"prep_q_{section_id}_{ci}",
+                        height=68,
+                    )
+                with c2:
+                    if st.button(
+                        "Del",
+                        key=f"prep_del_{section_id}_{ci}",
+                        help="Delete this claim",
+                    ):
+                        st.session_state["_gold_claim_action"] = {
+                            "op": "delete",
+                            "section": section_id,
+                            "index": ci,
+                        }
+                        st.rerun()
+                with c3:
+                    if st.button(
+                        "Split",
+                        key=f"prep_split_{section_id}_{ci}",
+                        help="Split into two claims (paste two verbatim quotes)",
+                    ):
+                        st.session_state["_gold_claim_action"] = {
+                            "op": "split",
+                            "section": section_id,
+                            "index": ci,
+                        }
+                        st.rerun()
+                with c4:
+                    _move_opts = [s for s in SECTION_IDS if s != section_id]
+                    _dest = st.selectbox(
+                        "Move",
+                        options=["—"] + _move_opts,
+                        key=f"prep_mv_{section_id}_{ci}",
+                        label_visibility="collapsed",
+                    )
+                    if _dest != "—":
+                        if st.button(
+                            f"→ {_dest[:4]}",
+                            key=f"prep_mvgo_{section_id}_{ci}",
+                        ):
+                            st.session_state["_gold_claim_action"] = {
+                                "op": "move",
+                                "section": section_id,
+                                "index": ci,
+                                "dest": _dest,
+                            }
+                            st.rerun()
                 if quote.strip() and not source_quote_is_verbatim(
                     raw_norm_check, quote
                 ):
@@ -1803,6 +1939,16 @@ if isinstance(_prepared, dict) and _prepared:
                         "critical": False,
                     }
                 )
+            if st.button(
+                f"+ Add claim to {section_id}",
+                key=f"prep_add_{section_id}",
+            ):
+                st.session_state["_gold_claim_action"] = {
+                    "op": "add",
+                    "section": section_id,
+                    "index": 0,
+                }
+                st.rerun()
             edited_sections[section_id] = {
                 "summary": summary.strip(),
                 "claims": [c for c in claims_out if c["source_quote"]],
@@ -1838,7 +1984,9 @@ if isinstance(_prepared, dict) and _prepared:
                 effective = gold_json(contract)
                 st.session_state["_confirmed_gold_json"] = effective
                 st.session_state["_gold_confirmed_at"] = contract.confirmed_at
-                st.session_state["_gold_sections"] = edited_sections
+                st.session_state["_gold_sections"] = {
+                    sid: contract.sections[sid].model_dump() for sid in SECTION_IDS
+                }
                 st.session_state.pop("_restored_cohort_id", None)
                 st.success(
                     f"Reference confirmed at {contract.confirmed_at} · "
@@ -1893,17 +2041,22 @@ st.caption(
 )
 with st.expander("Advanced · generation settings", expanded=False):
     st.caption(
-        "Controlled (temp 0.2) is recommended for comparable runs. "
+        "Best-effort controlled (temp 0.2 + preferred provider, fallbacks on) is the default. "
+        "Strict controlled is opt-in (no fallback; route miss → N/A). "
         "Provider defaults is a separate cohort — never pooled with controlled. "
         "Declare the track in any public screenshot."
     )
     benchmark_track = st.radio(
         "Generation settings",
-        options=["controlled", "native_defaults"],
+        options=["controlled", "strict_controlled", "native_defaults"],
         format_func=lambda value: (
-            "Controlled · same low temperature"
+            "Best-effort · temp 0.2 · preferred provider"
             if value == "controlled"
-            else "Provider defaults · ecological"
+            else (
+                "Strict controlled · no fallback (opt-in)"
+                if value == "strict_controlled"
+                else "Provider defaults · ecological"
+            )
         ),
         horizontal=True,
         key="benchmark_track",
@@ -2625,18 +2778,17 @@ def _run_timer_stop(
 # --- Sidebar: History first, Run clock pinned at the very bottom of the left column ---
 with st.sidebar:
     st.markdown("---")
-    _hist_paths = list_run_artifacts(WORKSPACE_DIR)[:12]
+    _hist_pairs = RUN_STORE.list_artifacts()[:12]
     st.caption(
         f"Private history · {short_owner_label()}"
         + (" · enter API key to unlock" if not has_key else "")
     )
-    if _hist_paths:
+    if _hist_pairs:
         st.markdown("**History**")
         _placeholder = "— select a run —"
         _opts = {_placeholder: None}
-        for p in _hist_paths:
+        for p, art in _hist_pairs:
             try:
-                art = load_artifact(p)
                 when = (art.finished_at or art.started_at or "")[5:16].replace("T", " ")
                 top = ""
                 if art.ranking:
@@ -2646,13 +2798,13 @@ with st.sidebar:
                     f"${art.total_cost_usd:.2f}{top}"
                 )
             except Exception:
-                label = p.stem
+                label = getattr(p, "stem", None) or art.run_id
             base = label
             n = 2
             while label in _opts:
                 label = f"{base} ·{n}"
                 n += 1
-            _opts[label] = str(p)
+            _opts[label] = str(p) if p is not None else f"memory:{art.run_id}"
         st.session_state["_hist_sidebar_opts"] = _opts
 
         _hist_locked = bool(
@@ -3903,7 +4055,20 @@ if st.session_state.get("confirmed_run"):
                     last_judgments = judgments
                     last_collected = collected
 
-                    judge_cost = sum((j.judge_meta.cost_usd or 0) for j in judgments)
+                    from benchmark.costing import cost_breakdown_for_run, run_cost_usd
+
+                    _extract_fee = float(
+                        getattr(
+                            load_confirmed_gold(effective_gold),
+                            "extraction_cost_usd",
+                            0.0,
+                        )
+                        or 0.0
+                    ) if effective_gold else 0.0
+                    judge_cost = run_cost_usd(collected, judgments)
+                    _local_cost_bd = cost_breakdown_for_run(
+                        collected, judgments, extraction_cost_usd=_extract_fee
+                    )
                     abort_multi = n_local > 1 and systemic_judge_failure(judgments)
                     notes = ""
                     if abort_multi:
@@ -3970,6 +4135,7 @@ if st.session_state.get("confirmed_run"):
                         judgments=judgments,
                         ranking=ranking,
                         total_cost_usd=round(judge_cost, 6),
+                        cost_breakdown=_local_cost_bd,
                         notes=notes,
                         cohort_id=_local_cohort,
                         scoring_version=SCORING_VERSION,
@@ -4210,7 +4376,7 @@ if st.session_state.get("confirmed_run"):
                 unsafe_allow_html=True,
             )
             summary = summarize_runs(all_artifacts)
-            write_summary(summary, WORKSPACE_DIR)
+            _persist_summary(summary)
             st.session_state["last_multi_summary"] = summary.model_dump()
             st.session_state["last_multi_paths"] = list(artifact_paths)
             st.session_state["multi_progress"] = finished_multi_progress(
@@ -4963,8 +5129,19 @@ if st.session_state.get("confirmed_run"):
                     if cand.meta.gguf_mb is not None:
                         row["gguf_mb"] = cand.meta.gguf_mb
 
-            total_cost = sum((c.meta.cost_usd or 0) for c in collected) + sum(
-                (j.judge_meta.cost_usd or 0) for j in judgments
+            from benchmark.costing import cost_breakdown_for_run, run_cost_usd
+
+            _extract_fee = float(
+                getattr(
+                    load_confirmed_gold(effective_gold),
+                    "extraction_cost_usd",
+                    0.0,
+                )
+                or 0.0
+            ) if effective_gold else 0.0
+            total_cost = run_cost_usd(collected, judgments)
+            _run_cost_bd = cost_breakdown_for_run(
+                collected, judgments, extraction_cost_usd=_extract_fee
             )
             abort_multi = n_runs > 1 and systemic_judge_failure(judgments)
             notes = ""
@@ -5009,6 +5186,7 @@ if st.session_state.get("confirmed_run"):
                 judgments=judgments,
                 ranking=ranking,
                 total_cost_usd=round(total_cost, 6),
+                cost_breakdown=_run_cost_bd,
                 notes=notes,
                 cohort_id=_full_cohort,
                 scoring_version=SCORING_VERSION,
@@ -5134,9 +5312,12 @@ if st.session_state.get("confirmed_run"):
             if abort_multi
             else f"Done · N={len(all_artifacts)}"
         )
+        from benchmark.costing import batch_total_cost_usd
+
+        _batch_spend = batch_total_cost_usd(all_artifacts)
         phase_slot.markdown(
             f'<div class="phase-banner">{_completion_label} · '
-            f"actual spend ≈ ${sum(a.total_cost_usd for a in all_artifacts):.4f} · "
+            f"actual spend ≈ ${_batch_spend:.4f} · "
             f"wall {total_s}s</div>",
             unsafe_allow_html=True,
         )
@@ -5210,7 +5391,7 @@ if st.session_state.get("confirmed_run"):
         # -------- Multi ×N: official = mean KPIs; per-run via tabs/popups --------
         if len(all_artifacts) > 1:
             summary = summarize_runs(all_artifacts)
-            write_summary(summary, WORKSPACE_DIR)
+            _persist_summary(summary)
             st.session_state["last_multi_summary"] = summary.model_dump()
             st.session_state["last_multi_paths"] = list(artifact_paths)
             st.session_state["multi_progress"] = finished_multi_progress(
@@ -5994,6 +6175,7 @@ elif _do_rebuild:
             scoring_version=SCORING_VERSION,
             track=str(benchmark_track or "controlled"),
             model_ids=_portfolio_model_ids,
+            preloaded=_preloaded_artifacts() if _HOSTED_NO_PLAINTEXT else None,
         )
     else:
         _built = rebuild_multi_from_history(
@@ -6001,6 +6183,7 @@ elif _do_rebuild:
             case_id,
             n=_n_use,
             cohort_id=_rebuild_cohort_id,
+            preloaded=_preloaded_artifacts() if _HOSTED_NO_PLAINTEXT else None,
         )
     if not _built.get("ok"):
         st.warning(_built.get("reason") or "Rebuild failed.")
@@ -6065,21 +6248,20 @@ st.caption(
     "Other visitors with a different key cannot see your runs. "
     "Use **Rebuild mean** only across the same immutable cohort and protocol."
 )
-_hist_all = list_run_artifacts(WORKSPACE_DIR)
+_hist_all_pairs = RUN_STORE.list_artifacts()
 if not has_key:
     st.info(
         "Enter your OpenRouter API key (sidebar / welcome) to unlock **your** History. "
         "Without a key, cloud runs cannot start and History stays empty."
     )
-elif not _hist_all:
+elif not _hist_all_pairs:
     st.info("No saved runs for this API key yet — after a Single/Multi run they appear here.")
 else:
     _default_path = st.session_state.get("history_path")
     _labels = []
     _path_by_label = {}
-    for pth in _hist_all[:30]:
+    for pth, a in _hist_all_pairs[:30]:
         try:
-            a = load_artifact(pth)
             when = (a.finished_at or a.started_at or "")[:19].replace("T", " ")
             top = ""
             if a.ranking:
@@ -6087,12 +6269,13 @@ else:
                 top = f" · #1 {top_row.get('key')} {top_row.get('accuracy')}%"
             lab = (
                 f"{case_display_name(a.case_id)} · {when} · "
-                f"${a.total_cost_usd:.3f}{top} · {pth.name}"
+                f"${a.total_cost_usd:.3f}{top} · "
+                f"{pth.name if pth is not None else a.run_id}"
             )
         except Exception:
-            lab = pth.name
+            lab = a.run_id if hasattr(a, "run_id") else "run"
         _labels.append(lab)
-        _path_by_label[lab] = str(pth)
+        _path_by_label[lab] = str(pth) if pth is not None else f"memory:{a.run_id}"
 
     _idx = 0
     if _default_path:
@@ -6107,12 +6290,23 @@ else:
         index=_idx,
         key="history_main_pick",
     )
-    hist_path = Path(_path_by_label[chosen])
-    try:
-        hist = load_artifact(hist_path)
-    except Exception as exc:
-        st.error(f"Could not load {hist_path.name}: {exc}")
-        hist = None
+    _sel = _path_by_label[chosen]
+    hist = None
+    if str(_sel).startswith("memory:"):
+        _rid = str(_sel).split(":", 1)[1]
+        for _p, _a in RUN_STORE.list_artifacts():
+            if _a.run_id == _rid:
+                hist = _a
+                break
+        if hist is None:
+            st.error("In-memory run not found.")
+    else:
+        hist_path = Path(_sel)
+        try:
+            hist = load_artifact(hist_path)
+        except Exception as exc:
+            st.error(f"Could not load {hist_path.name}: {exc}")
+            hist = None
 
     if hist is not None:
         h1, h2, h3 = st.columns(3)

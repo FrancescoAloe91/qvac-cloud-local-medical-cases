@@ -32,6 +32,35 @@ def _opt_float(data: Dict[str, Any], key: str) -> Optional[float]:
         return None
 
 
+def _opt_int(data: Dict[str, Any], key: str) -> Optional[int]:
+    if data.get(key) is None:
+        return None
+    try:
+        return int(data[key])
+    except (TypeError, ValueError):
+        return None
+
+
+def _runtime_fields(data: Dict[str, Any]) -> Dict[str, Any]:
+    """Map real sidecar runtime fields onto ModelCallMeta kwargs."""
+    out: Dict[str, Any] = {
+        "device": str(data.get("device") or ""),
+        "gpu_layers": _opt_int(data, "gpu_layers"),
+        "ctx_size": _opt_int(data, "ctx_size"),
+        "predict": _opt_int(data, "predict"),
+        "gguf_sha256": str(data.get("gguf_sha256") or ""),
+    }
+    if data.get("temperature") is not None:
+        out["temperature"] = _opt_float(data, "temperature")
+    if data.get("top_k") is not None:
+        out["top_k"] = _opt_int(data, "top_k")
+    if data.get("top_p") is not None:
+        out["top_p"] = _opt_float(data, "top_p")
+    if data.get("seed") is not None:
+        out["seed"] = _opt_int(data, "seed")
+    return out
+
+
 def health(timeout: float = 1.5) -> Dict[str, Any]:
     url = f"{qvac_sidecar_url()}/health"
     try:
@@ -219,6 +248,7 @@ def generate(
     on_token: TokenCallback = None,
     display_label: str = "",
     messages: Optional[list] = None,
+    sampling: Optional[Dict[str, Any]] = None,
 ) -> Tuple[str, ModelCallMeta]:
     """Ask the QVAC sidecar to generate a completion (with timing KPIs)."""
     # Prefer NDJSON stream so on_token can fire live when the caller supports it
@@ -229,12 +259,15 @@ def generate(
             on_token=on_token,
             display_label=display_label,
             messages=messages,
+            sampling=sampling,
         )
 
     url = f"{qvac_sidecar_url()}/generate"
     payload: Dict[str, Any] = {"prompt": prompt}
     if messages:
         payload["messages"] = messages
+    if sampling:
+        payload.update({k: v for k, v in sampling.items() if v is not None})
     body = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(
         url,
@@ -273,6 +306,7 @@ def generate(
             error=str(data["error"]),
             latency_s=round(time.time() - t0, 2),
             cost_usd=0.0,
+            **_runtime_fields(data),
         )
 
     text = (data.get("content") or "").strip()
@@ -285,6 +319,16 @@ def generate(
     err = data.get("error")
     if not text and not err:
         err = "Empty generation (0 tokens)"
+
+    runtime = _runtime_fields(data)
+    if sampling:
+        if sampling.get("temp") is not None and runtime.get("temperature") is None:
+            runtime["temperature"] = float(sampling["temp"])
+        if sampling.get("temperature") is not None and runtime.get("temperature") is None:
+            runtime["temperature"] = float(sampling["temperature"])
+        for src, dst in (("top_k", "top_k"), ("top_p", "top_p"), ("seed", "seed")):
+            if sampling.get(src) is not None and runtime.get(dst) is None:
+                runtime[dst] = sampling[src]
 
     return text, ModelCallMeta(
         model=data.get("model") or "medpsy-4b",
@@ -300,6 +344,7 @@ def generate(
         gguf_mb=_opt_float(data, "gguf_mb"),
         display_label=display_label,
         error=str(err) if err else None,
+        **runtime,
     )
 
 
@@ -309,12 +354,15 @@ def generate_streaming(
     on_token: TokenCallback = None,
     display_label: str = "",
     messages: Optional[list] = None,
+    sampling: Optional[Dict[str, Any]] = None,
 ) -> Tuple[str, ModelCallMeta]:
     """Stream NDJSON tokens from the sidecar; call on_token for each chunk."""
     url = f"{qvac_sidecar_url()}/generate/stream"
     payload: Dict[str, Any] = {"prompt": prompt, "stream": True}
     if messages:
         payload["messages"] = messages
+    if sampling:
+        payload.update({k: v for k, v in sampling.items() if v is not None})
     body = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(
         url,
@@ -398,6 +446,16 @@ def generate_streaming(
     if not text and not err:
         err = "Empty generation (0 tokens)"
 
+    runtime = _runtime_fields(done_meta)
+    if sampling:
+        if sampling.get("temp") is not None and runtime.get("temperature") is None:
+            runtime["temperature"] = float(sampling["temp"])
+        if sampling.get("temperature") is not None and runtime.get("temperature") is None:
+            runtime["temperature"] = float(sampling["temperature"])
+        for src, dst in (("top_k", "top_k"), ("top_p", "top_p"), ("seed", "seed")):
+            if sampling.get(src) is not None and runtime.get(dst) is None:
+                runtime[dst] = sampling[src]
+
     return text, ModelCallMeta(
         model=done_meta.get("model") or "medpsy-4b",
         provider="qvac",
@@ -412,6 +470,7 @@ def generate_streaming(
         gguf_mb=_opt_float(done_meta, "gguf_mb"),
         display_label=display_label,
         error=str(err) if err else None,
+        **runtime,
     )
 
 

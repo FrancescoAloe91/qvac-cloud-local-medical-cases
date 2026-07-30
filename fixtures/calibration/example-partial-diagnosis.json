@@ -3,24 +3,17 @@
   "case_id": "caseC",
   "reviewed_by": "",
   "reviewed_at": "",
-  "notes": "Example only — not human-reviewed. Replace ranges after review.",
-  "candidate_answers": {
-    "diagnosis": "Probable migraine.",
-    "tests": "",
-    "urgency": "",
-    "safety": "",
-    "plan": ""
-  },
+  "notes": "Example only — not human-reviewed. Full-domain ranges removed; use nontrivial bounds after review.",
   "expected": {
     "diagnosis": {
-      "coverage_min": 0.0,
-      "coverage_max": 1.0,
-      "quality_min": 0.0,
-      "quality_max": 1.0,
-      "discipline_min": 0.0,
+      "coverage_min": 0.1,
+      "coverage_max": 0.6,
+      "quality_min": 0.2,
+      "quality_max": 0.8,
+      "discipline_min": 0.4,
       "discipline_max": 1.0,
-      "score_min": 0,
-      "score_max": 100
+      "score_min": 15,
+      "score_max": 70
     }
   }
 }
