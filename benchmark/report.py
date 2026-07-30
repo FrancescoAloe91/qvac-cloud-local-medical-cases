@@ -771,6 +771,8 @@ def find_case_family_cohorts(
             continue
         if not art.cohort_id:
             continue
+        if str(art.run_status or "") != "complete":
+            continue
         cfg = art.models_config or {}
         gold_ref = str(cfg.get("gold_reference") or "").strip()
         art_stem = str(cfg.get("case_stem") or "")
@@ -1000,8 +1002,13 @@ def rebuild_multi_from_history(
                 for _, artifact in legacy_pairs
             ],
         }
+    # Match portfolio: cancelled / partial / failed abort stamps must not enter
+    # official same-case means even when cohort_id was filled for audit.
     pairs = [
-        pair for pair in all_pairs if pair[1].cohort_id == target_cohort
+        pair
+        for pair in all_pairs
+        if pair[1].cohort_id == target_cohort
+        and str(pair[1].run_status or "") == "complete"
     ][:n]
     if len(pairs) < 5:
         return {

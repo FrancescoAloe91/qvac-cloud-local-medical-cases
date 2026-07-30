@@ -427,10 +427,11 @@ def _hard_abort_run(*, flash: bool = True) -> None:
                 benchmark_track=str(
                     _snapshot.get("benchmark_track") or "controlled"
                 ),
+                # Prefer restored cohort only. Do not reuse _active_cohort_id from a
+                # prior completed run — that stamp could mis-label a cancelled
+                # mid-batch artifact. Empty cohort_id stays non-poolable.
                 cohort_id=str(
-                    st.session_state.get("_restored_cohort_id")
-                    or st.session_state.get("_active_cohort_id")
-                    or ""
+                    st.session_state.get("_restored_cohort_id") or ""
                 ),
             )
             _persist_run_artifact(_artifact, WORKSPACE_DIR)
@@ -6046,10 +6047,17 @@ if not _rebuild_cohort_id and _hist_for_case and _hist_for_case[0][1].cohort_id:
     _rebuild_cohort_id = _hist_for_case[0][1].cohort_id
 if _rebuild_cohort_id:
     _avail_same = sum(
-        1 for _, a in _hist_for_case if a.cohort_id == _rebuild_cohort_id
+        1
+        for _, a in _hist_for_case
+        if a.cohort_id == _rebuild_cohort_id
+        and str(a.run_status or "") == "complete"
     )
 else:
-    _avail_same = len(_hist_for_case)
+    _avail_same = sum(
+        1
+        for _, a in _hist_for_case
+        if str(a.run_status or "") == "complete"
+    )
 
 # Portfolio eligibility: same roster keys as current session toggle, track, v4.
 _portfolio_model_ids = (

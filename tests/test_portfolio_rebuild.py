@@ -196,6 +196,56 @@ def test_same_case_rebuild_path_unchanged(tmp_path: Path):
     assert all(pr.get("case_id") == "caseC" for pr in built["per_run"])
 
 
+def test_same_case_rebuild_excludes_cancelled_even_with_cohort_id(tmp_path: Path):
+    """Abort stamps may share cohort_id; only complete runs enter official means."""
+    for i in range(5):
+        _write(
+            tmp_path,
+            run_id=f"ok{i}",
+            case_id="caseC",
+            finished_at=f"2026-01-01T1{i}:00:00Z",
+            cohort_id="cohort-same",
+            run_status="complete",
+        )
+    _write(
+        tmp_path,
+        run_id="abort-stale",
+        case_id="caseC",
+        finished_at="2026-01-01T19:00:00Z",
+        cohort_id="cohort-same",
+        run_status="cancelled",
+    )
+    built = rebuild_multi_from_history(
+        tmp_path, "caseC", n=5, cohort_id="cohort-same"
+    )
+    assert built["ok"] is True
+    assert built["n_used"] == 5
+    assert all(pr.get("run_id") != "abort-stale" for pr in built["per_run"])
+    # Four complete + one cancelled with same cohort → insufficient for n=5 if we drop completes.
+    for i in range(4):
+        _write(
+            tmp_path,
+            run_id=f"only4-{i}",
+            case_id="caseD",
+            finished_at=f"2026-02-01T1{i}:00:00Z",
+            cohort_id="cohort-d",
+            run_status="complete",
+        )
+    _write(
+        tmp_path,
+        run_id="only4-cancel",
+        case_id="caseD",
+        finished_at="2026-02-01T19:00:00Z",
+        cohort_id="cohort-d",
+        run_status="cancelled",
+    )
+    thin = rebuild_multi_from_history(
+        tmp_path, "caseD", n=5, cohort_id="cohort-d"
+    )
+    assert thin["ok"] is False
+    assert thin["available"] == 4
+
+
 def test_summarize_mixed_cohorts_opt_in(tmp_path: Path):
     arts = []
     for i in range(5):

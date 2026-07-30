@@ -510,7 +510,7 @@ _STRINGS = {
         "bench.family_other_cohorts": (
             "Other confirm versions of this case exist ({n} runs) — restore that "
             "reference to pool them. Different gold contracts are never auto-merged. "
-            "Cost metadata / claim-split changes start a new cohort."
+            "Re-Prepare or claim-split edits start a new cohort."
         ),
         "bench.rebuild_sec_label": "Rebuild mean across N runs · $0 API",
         "bench.rebuild_scope_label": "Scope",
@@ -1064,7 +1064,7 @@ _STRINGS = {
         "bench.family_other_cohorts": (
             "Esistono altre versioni Confirm di questo caso ({n} run) — ripristina "
             "quel riferimento per raggrupparle. Contratti gold diversi non vengono "
-            "mai uniti in automatico. Metadata di costo / split claim diversi "
+            "mai uniti in automatico. Re-Prepare o modifiche agli split dei claim "
             "aprono un nuovo cohort."
         ),
         "bench.rebuild_sec_label": "Ricostruisci media su N run · $0 API",
