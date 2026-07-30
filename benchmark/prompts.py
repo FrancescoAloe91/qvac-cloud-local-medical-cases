@@ -186,7 +186,7 @@ def is_unsubstantive_section(case: Case, question_id: str, body: str) -> bool:
         return False
     qtext = (question.text or "").strip()
     stripped = re.sub(
-        rf"(?is)^(?:q|a|answer|question)\s*\d+\s*(?:\[[^\]]*\])?\s*[:.\-)\]–—]\s*",
+        r"(?is)^(?:q|a|answer|question)\s*\d+\s*(?:\[[^\]]*\])?\s*[:.\-)\]–—]\s*",
         "",
         text,
     ).strip()
