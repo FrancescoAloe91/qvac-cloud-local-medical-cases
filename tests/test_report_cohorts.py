@@ -44,6 +44,23 @@ def test_mixed_cohorts_are_rejected():
         summarize_runs([_artifact(0), _artifact(1, cohort="cohort-b")])
 
 
+def test_mixed_execution_cohort_same_cohort_id_still_summarizes():
+    """Best-effort routing / per-run N/A may diverge execution_cohort_id; mean pools on cohort_id."""
+    artifacts = []
+    for i in range(5):
+        art = _artifact(i)
+        art = art.model_copy(
+            update={
+                "execution_cohort_id": "exec-gemini-na" if i == 2 else "exec-ok",
+            }
+        )
+        artifacts.append(art)
+    summary = summarize_runs(artifacts)
+    assert summary.n == 5
+    assert {row["key"] for row in summary.ranking_mean} == {"chatgpt", "claude"}
+    assert any("execution_cohort_id varied" in note for note in summary.outliers)
+
+
 def test_failure_excludes_only_under_threshold_model():
     artifacts = [_artifact(i) for i in range(5)]
     artifacts[2] = _artifact(2, failure=True)

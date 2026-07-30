@@ -4375,9 +4375,14 @@ if st.session_state.get("confirmed_run"):
                 f"mean ranking ready · judge wall {judge_s}s</div>",
                 unsafe_allow_html=True,
             )
-            summary = summarize_runs(all_artifacts)
-            _persist_summary(summary)
-            st.session_state["last_multi_summary"] = summary.model_dump()
+            try:
+                summary = summarize_runs(all_artifacts)
+            except ValueError as exc:
+                st.warning(
+                    f"Mean ranking unavailable: {exc}. "
+                    f"{len(all_artifacts)} run artifacts were saved — open per-run tabs below."
+                )
+                summary = None
             st.session_state["last_multi_paths"] = list(artifact_paths)
             st.session_state["multi_progress"] = finished_multi_progress(
                 completed_snaps,
@@ -4393,84 +4398,88 @@ if st.session_state.get("confirmed_run"):
                 height=160,
             )
 
-            st.markdown(
-                '<div class="sec-label">Only local · official ranking · mean across runs</div>',
-                unsafe_allow_html=True,
-            )
-            st.caption(reliability_caption(summary))
-            _lo_art = all_artifacts[-1] if all_artifacts else None
-            _lo_eff = (
-                ((_lo_art.reproducibility or {}).get("effective_judge") or "")
-                if _lo_art is not None
-                else ""
-            )
-            if _lo_eff:
-                st.caption(f"Effective judge (last run) · `{_lo_eff}`")
-            st.markdown("##### Ranking table")
-            st.markdown(
-                _reliability_table_html(summary.ranking_mean), unsafe_allow_html=True
-            )
-            st.markdown("##### Chart (mean %; whiskers = ±1 std)")
-            st.plotly_chart(
-                fig_judge_mean_accuracy_bars(
-                    summary.ranking_mean,
-                    title="Only local · mean Clinical Composite Score",
-                    height=280,
-                ),
-                use_container_width=True,
-                key="rank_chart_local_only_mean",
-            )
-            if summary.outliers:
-                st.caption("Notes · " + " · ".join(summary.outliers[:4]))
+            if summary is not None:
+                _persist_summary(summary)
+                st.session_state["last_multi_summary"] = summary.model_dump()
 
-            # Mean on-device KPIs (TTFT / TPS / latency / RAM)
-            import statistics as _stats_lo
-
-            _kpi_acc: dict[str, dict[str, list]] = {}
-            for art in all_artifacts:
-                for c in art.candidates or []:
-                    k = c.candidate_key
-                    bucket = _kpi_acc.setdefault(
-                        k, {"ttft": [], "tps": [], "lat": [], "ram": [], "label": c.display_label or c.label}
-                    )
-                    if c.meta.ttft_s is not None:
-                        bucket["ttft"].append(float(c.meta.ttft_s))
-                    if c.meta.tps is not None:
-                        bucket["tps"].append(float(c.meta.tps))
-                    if c.meta.latency_s is not None:
-                        bucket["lat"].append(float(c.meta.latency_s))
-                    if c.meta.ram_mb is not None:
-                        bucket["ram"].append(float(c.meta.ram_mb))
-            _kpi_mean_rows = []
-            for k, b in _kpi_acc.items():
-                nm, ver = _nv(k, label=b.get("label"))
-                def _m(vals):
-                    return round(_stats_lo.fmean(vals), 2) if vals else None
-                _kpi_mean_rows.append(
-                    {
-                        "Name": nm,
-                        "Version": ver,
-                        "TTFT mean": _m(b["ttft"]),
-                        "TPS mean": _m(b["tps"]),
-                        "Latency mean": _m(b["lat"]),
-                        "RAM mean": _fmt_ram_mb(_m(b["ram"])) if b["ram"] else "—",
-                        "n": len(all_artifacts),
-                    }
-                )
-            if _kpi_mean_rows:
                 st.markdown(
-                    '<div class="sec-label">Only local · mean on-device KPIs</div>',
+                    '<div class="sec-label">Only local · official ranking · mean across runs</div>',
                     unsafe_allow_html=True,
                 )
-                st.dataframe(
-                    pd.DataFrame(_kpi_mean_rows),
+                st.caption(reliability_caption(summary))
+                _lo_art = all_artifacts[-1] if all_artifacts else None
+                _lo_eff = (
+                    ((_lo_art.reproducibility or {}).get("effective_judge") or "")
+                    if _lo_art is not None
+                    else ""
+                )
+                if _lo_eff:
+                    st.caption(f"Effective judge (last run) · `{_lo_eff}`")
+                st.markdown("##### Ranking table")
+                st.markdown(
+                    _reliability_table_html(summary.ranking_mean), unsafe_allow_html=True
+                )
+                st.markdown("##### Chart (mean %; whiskers = ±1 std)")
+                st.plotly_chart(
+                    fig_judge_mean_accuracy_bars(
+                        summary.ranking_mean,
+                        title="Only local · mean Clinical Composite Score",
+                        height=280,
+                    ),
                     use_container_width=True,
-                    hide_index=True,
+                    key="rank_chart_local_only_mean",
                 )
-                st.caption(
-                    f"$0 collect × {n_local} requested iterations · "
-                    f"judge spend ≈ ${summary.total_cost_usd:.4f}"
-                )
+                if summary.outliers:
+                    st.caption("Notes · " + " · ".join(summary.outliers[:4]))
+
+                # Mean on-device KPIs (TTFT / TPS / latency / RAM)
+                import statistics as _stats_lo
+
+                _kpi_acc: dict[str, dict[str, list]] = {}
+                for art in all_artifacts:
+                    for c in art.candidates or []:
+                        k = c.candidate_key
+                        bucket = _kpi_acc.setdefault(
+                            k, {"ttft": [], "tps": [], "lat": [], "ram": [], "label": c.display_label or c.label}
+                        )
+                        if c.meta.ttft_s is not None:
+                            bucket["ttft"].append(float(c.meta.ttft_s))
+                        if c.meta.tps is not None:
+                            bucket["tps"].append(float(c.meta.tps))
+                        if c.meta.latency_s is not None:
+                            bucket["lat"].append(float(c.meta.latency_s))
+                        if c.meta.ram_mb is not None:
+                            bucket["ram"].append(float(c.meta.ram_mb))
+                _kpi_mean_rows = []
+                for k, b in _kpi_acc.items():
+                    nm, ver = _nv(k, label=b.get("label"))
+                    def _m(vals):
+                        return round(_stats_lo.fmean(vals), 2) if vals else None
+                    _kpi_mean_rows.append(
+                        {
+                            "Name": nm,
+                            "Version": ver,
+                            "TTFT mean": _m(b["ttft"]),
+                            "TPS mean": _m(b["tps"]),
+                            "Latency mean": _m(b["lat"]),
+                            "RAM mean": _fmt_ram_mb(_m(b["ram"])) if b["ram"] else "—",
+                            "n": len(all_artifacts),
+                        }
+                    )
+                if _kpi_mean_rows:
+                    st.markdown(
+                        '<div class="sec-label">Only local · mean on-device KPIs</div>',
+                        unsafe_allow_html=True,
+                    )
+                    st.dataframe(
+                        pd.DataFrame(_kpi_mean_rows),
+                        use_container_width=True,
+                        hide_index=True,
+                    )
+                    st.caption(
+                        f"$0 collect × {n_local} requested iterations · "
+                        f"judge spend ≈ ${summary.total_cost_usd:.4f}"
+                    )
 
             st.markdown(
                 '<div class="sec-label">Per-run detail · open a tab</div>',
@@ -5390,9 +5399,14 @@ if st.session_state.get("confirmed_run"):
 
         # -------- Multi ×N: official = mean KPIs; per-run via tabs/popups --------
         if len(all_artifacts) > 1:
-            summary = summarize_runs(all_artifacts)
-            _persist_summary(summary)
-            st.session_state["last_multi_summary"] = summary.model_dump()
+            try:
+                summary = summarize_runs(all_artifacts)
+            except ValueError as exc:
+                st.warning(
+                    f"Mean ranking unavailable: {exc}. "
+                    f"{len(all_artifacts)} run artifacts were saved — open per-run tabs below."
+                )
+                summary = None
             st.session_state["last_multi_paths"] = list(artifact_paths)
             st.session_state["multi_progress"] = finished_multi_progress(
                 completed_snaps,
@@ -5408,67 +5422,71 @@ if st.session_state.get("confirmed_run"):
                 height=160,
             )
 
-            st.markdown(
-                '<div class="sec-label">Official ranking · mean across runs</div>',
-                unsafe_allow_html=True,
-            )
-            st.caption(reliability_caption(summary))
-            _last_art = all_artifacts[-1] if all_artifacts else None
-            _eff_multi = (
-                ((_last_art.reproducibility or {}).get("effective_judge") or "")
-                if _last_art is not None
-                else ""
-            )
-            if _eff_multi:
-                st.caption(
-                    f"Effective judge (last run) · `{_eff_multi}`"
-                    + (
-                        " · verifier may replace primary on systemic failure"
-                        if (_last_art.reproducibility or {}).get("verifier_activated")
-                        else ""
-                    )
+            if summary is not None:
+                _persist_summary(summary)
+                st.session_state["last_multi_summary"] = summary.model_dump()
+
+                st.markdown(
+                    '<div class="sec-label">Official ranking · mean across runs</div>',
+                    unsafe_allow_html=True,
                 )
-            st.markdown("##### Ranking table")
-            st.markdown(
-                _reliability_table_html(summary.ranking_mean), unsafe_allow_html=True
-            )
-            st.markdown("##### Chart (mean %; whiskers = ±1 std)")
-            st.plotly_chart(
-                fig_judge_mean_accuracy_bars(
-                    summary.ranking_mean,
-                    title="Mean Clinical Composite Score",
-                    height=280,
-                ),
-                use_container_width=True,
-                key="rank_chart_multi_mean",
-            )
-            st.markdown("##### Paired sensitivity ranking")
-            if summary.paired_ranking:
-                st.dataframe(
-                    pd.DataFrame(
-                        [
-                            {
-                                "Rank": row.get("rank"),
-                                "Model": short_model(str(row.get("key"))),
-                                "Paired mean %": row.get("accuracy_mean"),
-                                "Coverage %": row.get("coverage_mean"),
-                                "Quality %": row.get("quality_mean"),
-                                "Discipline %": row.get("discipline_mean"),
-                                "Paired N": summary.paired_n,
-                            }
-                            for row in summary.paired_ranking
-                        ]
+                st.caption(reliability_caption(summary))
+                _last_art = all_artifacts[-1] if all_artifacts else None
+                _eff_multi = (
+                    ((_last_art.reproducibility or {}).get("effective_judge") or "")
+                    if _last_art is not None
+                    else ""
+                )
+                if _eff_multi:
+                    st.caption(
+                        f"Effective judge (last run) · `{_eff_multi}`"
+                        + (
+                            " · verifier may replace primary on systemic failure"
+                            if (_last_art.reproducibility or {}).get("verifier_activated")
+                            else ""
+                        )
+                    )
+                st.markdown("##### Ranking table")
+                st.markdown(
+                    _reliability_table_html(summary.ranking_mean), unsafe_allow_html=True
+                )
+                st.markdown("##### Chart (mean %; whiskers = ±1 std)")
+                st.plotly_chart(
+                    fig_judge_mean_accuracy_bars(
+                        summary.ranking_mean,
+                        title="Mean Clinical Composite Score",
+                        height=280,
                     ),
                     use_container_width=True,
-                    hide_index=True,
+                    key="rank_chart_multi_mean",
                 )
-            else:
-                st.caption(
-                    f"Paired N={summary.paired_n}; at least 5 complete iterations "
-                    "are required. Missing scores are never imputed."
-                )
-            if summary.outliers:
-                st.caption("Notes · " + " · ".join(summary.outliers[:4]))
+                st.markdown("##### Paired sensitivity ranking")
+                if summary.paired_ranking:
+                    st.dataframe(
+                        pd.DataFrame(
+                            [
+                                {
+                                    "Rank": row.get("rank"),
+                                    "Model": short_model(str(row.get("key"))),
+                                    "Paired mean %": row.get("accuracy_mean"),
+                                    "Coverage %": row.get("coverage_mean"),
+                                    "Quality %": row.get("quality_mean"),
+                                    "Discipline %": row.get("discipline_mean"),
+                                    "Paired N": summary.paired_n,
+                                }
+                                for row in summary.paired_ranking
+                            ]
+                        ),
+                        use_container_width=True,
+                        hide_index=True,
+                    )
+                else:
+                    st.caption(
+                        f"Paired N={summary.paired_n}; at least 5 complete iterations "
+                        "are required. Missing scores are never imputed."
+                    )
+                if summary.outliers:
+                    st.caption("Notes · " + " · ".join(summary.outliers[:4]))
 
             st.markdown(
                 '<div class="sec-label">Per-run detail · open a tab</div>',
@@ -5506,10 +5524,11 @@ if st.session_state.get("confirmed_run"):
                     )
                 st.dataframe(pd.DataFrame(cost_rows), use_container_width=True, hide_index=True)
 
-            # Ranking for persist view = mean order mapped to accuracy_mean
-            st.session_state["last_ranking"] = _mean_rows_to_last_ranking(
-                summary.ranking_mean
-            )
+            if summary is not None:
+                # Ranking for persist view = mean order mapped to accuracy_mean
+                st.session_state["last_ranking"] = _mean_rows_to_last_ranking(
+                    summary.ranking_mean
+                )
         else:
             # -------- Single run: classic results --------
             if last_judgments:

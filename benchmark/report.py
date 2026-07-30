@@ -80,23 +80,15 @@ def summarize_runs(
 ) -> MultiRunSummary:
     if not artifacts:
         return MultiRunSummary(case_id="", n=0)
-    # Prefer execution_cohort_id when present (actual routes); else legacy cohort_id.
-    exec_ids = {(getattr(a, "execution_cohort_id", None) or "") for a in artifacts}
+    # Pool only on cohort_id (requested recipe + scoring gold). execution_cohort_id
+    # is audit metadata — best-effort routing / per-run N/A must not abort Multi means.
     cohort_ids = {(a.cohort_id or "") for a in artifacts}
-    if any(exec_ids) and "" not in exec_ids:
-        mix_ids = exec_ids
-        empty_msg = "Cannot summarize runs with empty execution_cohort_id"
-        mix_msg = "Cannot summarize mixed execution cohorts"
-    else:
-        mix_ids = cohort_ids
-        empty_msg = "Cannot summarize runs with empty cohort_id"
-        mix_msg = "Cannot summarize mixed cohorts"
-    if "" in mix_ids:
-        raise ValueError(empty_msg)
-    if len(mix_ids) > 1 and not allow_mixed_cohorts:
-        raise ValueError(mix_msg)
+    if "" in cohort_ids:
+        raise ValueError("Cannot summarize runs with empty cohort_id")
+    if len(cohort_ids) > 1 and not allow_mixed_cohorts:
+        raise ValueError("Cannot summarize mixed cohorts")
     case_ids = {a.case_id for a in artifacts}
-    if allow_mixed_cohorts and (len(mix_ids) > 1 or len(case_ids) > 1):
+    if allow_mixed_cohorts and (len(cohort_ids) > 1 or len(case_ids) > 1):
         case_id = "portfolio"
     else:
         case_id = artifacts[0].case_id
@@ -323,6 +315,15 @@ def summarize_runs(
     # Sum of per-run costs + extraction once (not ×N).
     total_cost = batch_total_cost_usd(artifacts)
     excluded = sorted(all_keys - eligible_keys)
+    exec_ids = {
+        (getattr(a, "execution_cohort_id", None) or "") for a in artifacts
+    }
+    exec_ids_present = {e for e in exec_ids if e}
+    if len(exec_ids_present) > 1:
+        outliers.append(
+            "execution_cohort_id varied across runs (audit only; mean still same "
+            "cohort_id — e.g. per-run N/A or best-effort routing)."
+        )
     return MultiRunSummary(
         case_id=case_id,
         n=min((len(scores.get(key, [])) for key in eligible_keys), default=0),

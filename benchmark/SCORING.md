@@ -169,9 +169,10 @@ an N/A for one model neither removes nor delays valid data from another. Every
 mean exposes its own valid and failed counts, and no missing score is imputed. A
 cohort hash includes the case, confirmed reference **scoring contract** (claims
 only; section summaries are display-only), model configuration, prompt/scoring
-versions, and protocol track. When present, aggregation prefers
-`execution_cohort_id` (actual routed providers/models, GGUF SHA, QVAC device /
-ctx / seed, judge endpoint). `controlled` is best-effort preferred-provider;
+versions, and protocol track. Multi/Rebuild same-case means pool only on matching
+`cohort_id`; `execution_cohort_id` (actual routed providers/models, GGUF SHA,
+QVAC device / ctx / seed, judge endpoint) is audit metadata and does not split
+the batch mean. `controlled` is best-effort preferred-provider;
 `strict_controlled` is opt-in no-fallback; native-default runs never mix.
 
 Multi runs continue when any valid judged results remain and abort early only
