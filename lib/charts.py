@@ -558,11 +558,16 @@ def fig_judge_mean_accuracy_bars(
     *,
     title: str = "Mean Clinical Composite Score ± std",
     height: int = 280,
+    hide_partial_labels: bool = False,
 ) -> go.Figure:
-    """Mean Clinical Composite Score with ±1 std error bars."""
+    """Mean Clinical Composite Score with ±1 std error bars.
+
+    ``hide_partial_labels`` (Rebuild mean): never append the yellow ``partial``
+    chart suffix — pool is successful scored runs only.
+    """
     ranking_mean_rows = filter_current_roster_rows(ranking_mean_rows)
-    # Mean bars include partial models (ranked by mean of scored runs). Rows with
-    # zero scored observations stay table-only (Failed column / #—).
+    # Mean bars include models with ≥1 scored observation. Rows with zero scored
+    # observations stay table-only on live Multi (Failed column / #—).
     ranking_mean_rows = [
         r
         for r in ranking_mean_rows
@@ -585,7 +590,7 @@ def fig_judge_mean_accuracy_bars(
                 "model": r.get("model"),
             }
         )
-        if r.get("partial"):
+        if (not hide_partial_labels) and r.get("partial"):
             label = f"{label}\npartial"
         labels.append(label)
     means = [float(r.get("accuracy_mean") or 0) for r in rows]

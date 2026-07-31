@@ -4,11 +4,17 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from lib.model_labels import CURRENT_ROSTER_KEYS
+from lib.model_labels import (
+    CURRENT_ROSTER_KEYS,
+    DEFAULT_ACTIVE_ROSTER_KEYS,
+    OPTIONAL_LEGACY_SLOT_KEYS,
+)
 from benchmark.report import (
     list_portfolio_runs,
+    rebuild_model_ids,
     rebuild_multi_from_history,
     rebuild_portfolio_from_history,
+    reliability_caption,
     summarize_runs,
     write_artifact,
 )
@@ -247,13 +253,13 @@ def test_same_case_rebuild_excludes_cancelled_even_with_cohort_id(tmp_path: Path
     assert thin["n_used"] == 4
 
 
-def test_partial_technical_na_counts_in_failed_pct_same_case_and_portfolio(
+def test_rebuild_mean_omits_na_and_never_marks_partial(
     tmp_path: Path,
 ):
-    """partial runs (per-model N/A) enter means; Failed % > 0; model stays listed.
+    """Rebuild mean = successful scored only; no Failed%/partial theater.
 
-    Regression: run_status=partial used to be excluded like cancelled, so every
-    mean table showed Failed 0% while History still showed N/A rows.
+    run_status=partial docs may still contribute *successful* peer scores, but
+    per-model N/A rows are dropped from the mean pool. Cancelled stay out.
     """
     cohort = "cohort-partial-na"
     keys = ["chatgpt", "claude"]
@@ -309,7 +315,6 @@ def test_partial_technical_na_counts_in_failed_pct_same_case_and_portfolio(
         )
         write_artifact(art, tmp_path)
 
-    # 4 complete + 1 partial with chatgpt N/A
     for i in range(4):
         _write_mixed(
             run_id=f"ok{i}",
@@ -326,32 +331,32 @@ def test_partial_technical_na_counts_in_failed_pct_same_case_and_portfolio(
         tmp_path, "caseC", n=5, cohort_id=cohort
     )
     assert same["ok"] is True
-    assert same["n_used"] == 5
+    assert same["successful_only"] is True
     by_key = {r["key"]: r for r in same["summary"].ranking_mean}
     assert "chatgpt" in by_key
-    assert by_key["chatgpt"]["n_failed"] == 1
-    assert by_key["chatgpt"]["n_requested"] == 5
     assert by_key["chatgpt"]["n_runs"] == 4
-    assert by_key["chatgpt"]["failure_rate"] == 0.2
-    assert by_key["chatgpt"]["partial"] is True
+    assert by_key["chatgpt"]["n_failed"] == 0
+    assert by_key["chatgpt"]["n_requested"] == 4
+    assert by_key["chatgpt"]["failure_rate"] == 0.0
+    assert by_key["chatgpt"]["partial"] is False
     assert by_key["chatgpt"]["eligible"] is True
     assert by_key["chatgpt"]["rank"] is not None
     assert by_key["chatgpt"]["accuracy_mean"] is not None
     assert by_key["claude"]["n_failed"] == 0
     assert by_key["claude"]["failure_rate"] == 0.0
     assert by_key["claude"]["partial"] is False
+    assert all(not r.get("partial") for r in same["summary"].ranking_mean)
 
     port = rebuild_portfolio_from_history(
         tmp_path, n=5, scoring_version="graded-clinical-v4", track="controlled"
     )
     assert port["ok"] is True
-    assert port["n_used"] == 5
+    assert port["successful_only"] is True
     p_by = {r["key"]: r for r in port["summary"].ranking_mean}
-    assert p_by["chatgpt"]["n_failed"] >= 1
-    assert float(p_by["chatgpt"]["failure_rate"] or 0) > 0.0
-    assert p_by["chatgpt"]["partial"] is True
+    assert p_by["chatgpt"]["n_failed"] == 0
+    assert float(p_by["chatgpt"]["failure_rate"] or 0) == 0.0
+    assert p_by["chatgpt"]["partial"] is False
     assert p_by["chatgpt"]["rank"] is not None
-    # Cancelled still excluded from portfolio
     _write(
         tmp_path,
         run_id="cancel-noise",
@@ -366,6 +371,7 @@ def test_partial_technical_na_counts_in_failed_pct_same_case_and_portfolio(
     )
     assert all(a.run_id != "cancel-noise" for _, a in pairs)
     assert any(a.run_id == "na-partial" for _, a in pairs)
+
 
 def test_summarize_mixed_cohorts_opt_in(tmp_path: Path):
     arts = []
@@ -518,11 +524,11 @@ def test_portfolio_per_model_n_includes_older_cloud_history(tmp_path: Path):
 
 
 def test_trim_n_skips_technical_na_and_uses_older_scored(tmp_path: Path):
-    """N = scored quota: interleaved N/A must not shrink a model's scored mean.
+    """N = successful scored quota: interleaved N/A must not shrink the mean.
 
     Newest runs fail for chatgpt; older History still has scored rows. Rebuild
-    with N=5 must pull five scored chatgpt observations (and keep the N/A seen
-    while scanning for Failed %), not stop after five raw ranking rows.
+    with N=5 must pull five successful chatgpt observations and omit the N/A
+    (no Failed%/partial), not stop after five raw ranking rows.
     """
     cohort = "cohort-na-interleave"
     keys = ["chatgpt", "claude"]
@@ -578,7 +584,6 @@ def test_trim_n_skips_technical_na_and_uses_older_scored(tmp_path: Path):
         )
         write_artifact(art, tmp_path)
 
-    # Older: 5 fully scored (chatgpt accuracy 60..64).
     for i in range(5):
         _write_row(
             run_id=f"old-ok-{i}",
@@ -586,7 +591,6 @@ def test_trim_n_skips_technical_na_and_uses_older_scored(tmp_path: Path):
             chatgpt_ok=True,
             acc=60.0 + i,
         )
-    # Newer: 3 technical N/A for chatgpt (would fill a raw last-5 window).
     for i in range(3):
         _write_row(
             run_id=f"new-na-{i}",
@@ -601,15 +605,14 @@ def test_trim_n_skips_technical_na_and_uses_older_scored(tmp_path: Path):
     assert same["ok"] is True
     by_key = {r["key"]: r for r in same["summary"].ranking_mean}
     assert by_key["chatgpt"]["n_runs"] == 5
-    assert by_key["chatgpt"]["n_failed"] == 3
-    assert by_key["chatgpt"]["n_requested"] == 8
-    # Mean of the five older scored rows (60..64), not a 2-scored truncated window.
+    assert by_key["chatgpt"]["n_failed"] == 0
+    assert by_key["chatgpt"]["n_requested"] == 5
     assert by_key["chatgpt"]["accuracy_mean"] == 62.0
-    assert by_key["chatgpt"]["partial"] is True
+    assert by_key["chatgpt"]["partial"] is False
     assert by_key["chatgpt"]["rank"] is not None
-    # Claude always scored; newest ≤5 scored, no N/A in its window once filled.
     assert by_key["claude"]["n_runs"] == 5
     assert by_key["claude"]["n_failed"] == 0
+    assert by_key["claude"]["partial"] is False
 
     port = rebuild_portfolio_from_history(
         tmp_path, n=5, scoring_version="graded-clinical-v4", track="controlled"
@@ -617,8 +620,9 @@ def test_trim_n_skips_technical_na_and_uses_older_scored(tmp_path: Path):
     assert port["ok"] is True
     p_by = {r["key"]: r for r in port["summary"].ranking_mean}
     assert int(p_by["chatgpt"]["n_runs"]) == 5
-    assert int(p_by["chatgpt"]["n_failed"]) == 3
+    assert int(p_by["chatgpt"]["n_failed"]) == 0
     assert float(p_by["chatgpt"]["accuracy_mean"]) == 62.0
+    assert p_by["chatgpt"]["partial"] is False
 
 
 def test_rebuild_accepts_per_model_n_40_50_and_100(tmp_path: Path):
@@ -648,3 +652,125 @@ def test_rebuild_accepts_per_model_n_40_50_and_100(tmp_path: Path):
     )
     assert over["ok"] is True
     assert over["n_per_model_cap"] == 100
+
+
+def test_rebuild_model_ids_default_nine_plus_optional():
+    assert rebuild_model_ids() == list(DEFAULT_ACTIVE_ROSTER_KEYS)
+    assert set(OPTIONAL_LEGACY_SLOT_KEYS).isdisjoint(rebuild_model_ids())
+    with_opt = rebuild_model_ids(["local_gemma", "qvac_4b_q8"])
+    assert "local_gemma" in with_opt
+    assert "qvac_4b_q8" in with_opt
+    assert "local_llama" not in with_opt
+    assert with_opt[: len(DEFAULT_ACTIVE_ROSTER_KEYS)] == list(
+        DEFAULT_ACTIVE_ROSTER_KEYS
+    )
+
+
+def test_rebuild_hides_optional_legacy_unless_in_model_ids(tmp_path: Path):
+    """Default Rebuild viz is 9-roster; optional legacy only when toggled in."""
+    for i in range(3):
+        _write(
+            tmp_path,
+            run_id=f"full{i}",
+            case_id="caseA",
+            finished_at=f"2026-07-01T1{i}:00:00Z",
+            roster=ROSTER,
+            cohort_id=f"cohort-opt-{i}",
+            acc=70.0 + i,
+        )
+    default = rebuild_portfolio_from_history(
+        tmp_path, n=5, scoring_version="graded-clinical-v4", track="controlled"
+    )
+    assert default["ok"] is True
+    keys_default = {r["key"] for r in default["summary"].ranking_mean}
+    for legacy in OPTIONAL_LEGACY_SLOT_KEYS:
+        assert legacy not in keys_default, legacy
+    for key in ("chatgpt", "claude", "qvac", "local_phi"):
+        assert key in keys_default
+
+    with_legacy = rebuild_portfolio_from_history(
+        tmp_path,
+        n=5,
+        scoring_version="graded-clinical-v4",
+        track="controlled",
+        model_ids=rebuild_model_ids(["local_gemma", "local_llama", "qvac_4b_q8"]),
+    )
+    assert with_legacy["ok"] is True
+    keys_on = {r["key"] for r in with_legacy["summary"].ranking_mean}
+    for legacy in OPTIONAL_LEGACY_SLOT_KEYS:
+        assert legacy in keys_on, legacy
+
+
+def test_rebuild_omits_failure_only_models(tmp_path: Path):
+    """Models with only technical N/A never appear in Rebuild mean ranking."""
+    cohort = "cohort-fail-only"
+    keys = ["chatgpt", "claude"]
+
+    def _write_row(*, run_id: str, finished_at: str, chatgpt_ok: bool):
+        ranking = []
+        for i, key in enumerate(keys):
+            if key == "chatgpt" and not chatgpt_ok:
+                ranking.append(
+                    {
+                        "key": key,
+                        "accuracy": None,
+                        "status": "n/a",
+                        "status_note": "collect_error",
+                        "rank": None,
+                    }
+                )
+            else:
+                ranking.append(
+                    {
+                        "key": key,
+                        "accuracy": 75.0 + i,
+                        "status": "ok",
+                        "rank": i + 1,
+                        "coverage": 70.0,
+                        "quality": 80.0,
+                        "discipline": 90.0,
+                    }
+                )
+        write_artifact(
+            RunArtifact(
+                run_id=run_id,
+                case_id="caseC",
+                started_at=finished_at,
+                finished_at=finished_at,
+                n_index=1,
+                batch_id="batch-fail-only",
+                models_config={
+                    "candidates": [{"key": k, "model": f"test/{k}"} for k in keys],
+                    "judge": {"model": "deepseek/deepseek-r1"},
+                    "gold_reference": "{}",
+                    "case_stem": "stem-caseC",
+                },
+                ranking=ranking,
+                judgments=[],
+                cohort_id=cohort,
+                scoring_version="graded-clinical-v4",
+                prompt_version="gold-only-v1",
+                benchmark_track="controlled",
+                run_status="partial" if not chatgpt_ok else "complete",
+            ),
+            tmp_path,
+        )
+
+    for i in range(5):
+        _write_row(
+            run_id=f"fail-{i}",
+            finished_at=f"2026-07-01T1{i}:00:00Z",
+            chatgpt_ok=False,
+        )
+
+    built = rebuild_multi_from_history(
+        tmp_path, "caseC", n=5, cohort_id=cohort
+    )
+    assert built["ok"] is True
+    by_key = {r["key"]: r for r in built["summary"].ranking_mean}
+    assert "chatgpt" not in by_key
+    assert "claude" in by_key
+    assert by_key["claude"]["partial"] is False
+    caption = reliability_caption(built["summary"], successful_only=True)
+    assert "partial" not in caption.lower()
+    assert "successful" in caption.lower()

@@ -90,6 +90,7 @@ from benchmark.report import (
     is_mean_poolable_run,
     list_portfolio_runs,
     load_artifact,
+    rebuild_model_ids,
     rebuild_multi_from_history,
     rebuild_portfolio_from_history,
     reliability_caption,
@@ -136,6 +137,7 @@ from lib.deployment import is_local_install, is_streamlit_cloud
 from lib.i18n import t
 from lib.model_labels import (
     CURRENT_ROSTER_KEYS,
+    OPTIONAL_LEGACY_SLOT_KEYS,
     filter_current_roster_rows,
     name_and_version,
     rerank_rows,
@@ -1269,14 +1271,32 @@ def _partial_badge_html() -> str:
     )
 
 
-def _reliability_table_html(ranking_mean: list) -> str:
-    """Mean ranking table: CV% + Reliability cells tinted by CV band (legend)."""
+def _reliability_table_html(
+    ranking_mean: list, *, successful_only: bool = False
+) -> str:
+    """Mean ranking table: CV% + Reliability cells tinted by CV band (legend).
+
+    ``successful_only`` (Rebuild mean): no yellow partial badge/banner, no Failed
+    column theater — pool is already clean successful scored observations.
+    """
     rows_html = []
     ranking_mean = _current_ranking(
         ranking_mean or [], score_field="accuracy_mean"
     )
+    if successful_only:
+        ranking_mean = [
+            r
+            for r in ranking_mean
+            if r.get("eligible", True)
+            and r.get("accuracy_mean") is not None
+            and r.get("rank") is not None
+        ]
     _td = "padding:0.45rem 0.55rem;border-bottom:1px solid #1e293b"
-    n_partial = sum(1 for r in ranking_mean if r.get("partial"))
+    n_partial = (
+        0
+        if successful_only
+        else sum(1 for r in ranking_mean if r.get("partial"))
+    )
 
     def _fmt_pct(value, *, digits: int = 1, suffix: str = "%") -> str:
         if value is None:
@@ -1296,13 +1316,17 @@ def _reliability_table_html(ranking_mean: list) -> str:
         nm, ver = _nv(r.get("key"), label=r.get("label"), model=r.get("model"))
         n_runs = int(r.get("n_runs") or r.get("n") or 0)
         n_req = int(r.get("n_requested") or n_runs)
-        n_failed = int(r.get("n_failed") or 0)
+        n_failed = 0 if successful_only else int(r.get("n_failed") or 0)
         try:
-            fail_pct = 100.0 * float(r.get("failure_rate") or 0)
+            fail_pct = (
+                0.0
+                if successful_only
+                else 100.0 * float(r.get("failure_rate") or 0)
+            )
         except (TypeError, ValueError):
             fail_pct = 0.0
         rank = r.get("rank")
-        is_partial = bool(r.get("partial"))
+        is_partial = (not successful_only) and bool(r.get("partial"))
         if rank is None:
             rank_cell = "—"
         elif is_partial:
@@ -1335,6 +1359,25 @@ def _reliability_table_html(ranking_mean: list) -> str:
             "background:rgba(251,191,36,0.10);" if is_partial else ""
         )
         mean_color = "#f59e0b" if is_partial else "#fbbf24"
+        fail_cell = (
+            ""
+            if successful_only
+            else (
+                f"<td style='{_td};color:{fail_color};text-align:right'>"
+                f"{n_failed} ({fail_pct:.0f}%)</td>"
+            )
+        )
+        runs_cell = (
+            f"<td style='{_td};font-weight:700;color:#e2e8f0;text-align:right'>"
+            f"{n_runs}</td>"
+            if successful_only
+            else (
+                f"<td style='{_td};font-weight:700;color:#e2e8f0;text-align:right'>"
+                f"{n_runs}"
+                f"<span style='color:#64748b;font-weight:500;font-size:0.8rem'>"
+                f"/{n_req}</span></td>"
+            )
+        )
         rows_html.append(
             f"<tr style='{row_bg}'>"
             f"<td style='{_td}'>{rank_cell}</td>"
@@ -1352,12 +1395,8 @@ def _reliability_table_html(ranking_mean: list) -> str:
             f"{_fmt_pct(med)}</td>"
             f"<td style='{_td};color:#64748b;font-size:0.85rem'>"
             f"{range_cell}</td>"
-            f"<td style='{_td};font-weight:700;color:#e2e8f0;text-align:right'>"
-            f"{n_runs}"
-            f"<span style='color:#64748b;font-weight:500;font-size:0.8rem'>"
-            f"/{n_req}</span></td>"
-            f"<td style='{_td};color:{fail_color};text-align:right'>"
-            f"{n_failed} ({fail_pct:.0f}%)</td>"
+            f"{runs_cell}"
+            f"{fail_cell}"
             "</tr>"
         )
     banner = ""
@@ -1373,6 +1412,53 @@ def _reliability_table_html(ranking_mean: list) -> str:
             f"{'s' if n_partial != 1 else ''}). "
             "Failed % is not a clinical zero.</div>"
         )
+    fail_th = (
+        ""
+        if successful_only
+        else "<th style='padding:0.55rem;text-align:right'>Failed</th>"
+    )
+    runs_th = (
+        "<th style='padding:0.55rem;text-align:right'>Successful</th>"
+        if successful_only
+        else "<th style='padding:0.55rem;text-align:right'>Runs</th>"
+    )
+    footer = (
+        (
+            f"{reliability_badge('super_high')} CV ≤ 5% &nbsp; "
+            f"{reliability_badge('high')} CV ≤ 10% &nbsp; "
+            f"{reliability_badge('medium')} CV ≤ 15% &nbsp; "
+            f"{reliability_badge('low')} CV ≤ 20% &nbsp; "
+            f"{reliability_badge('very_low')} CV &gt; 20% &nbsp;·&nbsp; "
+            "cell color = CV band · lower CV = stabler mean · "
+            "<b>CV band ≠ clinical validation</b> · "
+            "<b>Successful</b> = last ≤N error-free scored runs per model "
+            "(technical N/A skipped; older successful History used) · "
+            "models with only failures are omitted · "
+            "N=5 exploratory · ~10 better for CV eye-check · 20–50 diminishing · 100 max · "
+            "<b>C/Q/D</b> = coverage / quality / discipline "
+            "(quality is independent of coverage; a high board % can still have low C)"
+        )
+        if successful_only
+        else (
+            f"{reliability_badge('super_high')} CV ≤ 5% &nbsp; "
+            f"{reliability_badge('high')} CV ≤ 10% &nbsp; "
+            f"{reliability_badge('medium')} CV ≤ 15% &nbsp; "
+            f"{reliability_badge('low')} CV ≤ 20% &nbsp; "
+            f"{reliability_badge('very_low')} CV &gt; 20% &nbsp;·&nbsp; "
+            "cell color = CV band · lower CV = stabler mean · "
+            "<b>CV band ≠ clinical validation</b> · "
+            "<b>Runs</b> = scored / requested for that model "
+            "(can differ across models) · "
+            "<b>Failed</b> = technical N/A rate "
+            "(collect / judge / timeout / partial / empty) — not clinical 0% · "
+            "<b>partial</b> = ranked by mean of scored runs despite incomplete coverage · "
+            "unranked rows (#—) have zero scored observations · "
+            "≤N scored obs/model; N/A skipped, older scored used · "
+            "N=5 exploratory · ~10 better for CV eye-check · 20–50 diminishing · 100 max · "
+            "<b>C/Q/D</b> = coverage / quality / discipline "
+            "(quality is independent of coverage; a high board % can still have low C)"
+        )
+    )
     return (
         banner
         + "<div style='overflow-x:auto;margin:0.35rem 0 0.75rem;border:1px solid #334155;"
@@ -1386,30 +1472,15 @@ def _reliability_table_html(ranking_mean: list) -> str:
         "<th style='padding:0.55rem'>C/Q/D</th><th style='padding:0.55rem'>± Std</th>"
         "<th style='padding:0.55rem'>CV %</th><th style='padding:0.55rem'>Reliability</th>"
         "<th style='padding:0.55rem'>Median</th><th style='padding:0.55rem'>Min–Max</th>"
-        "<th style='padding:0.55rem;text-align:right'>Runs</th>"
-        "<th style='padding:0.55rem;text-align:right'>Failed</th>"
+        f"{runs_th}"
+        f"{fail_th}"
         "</tr></thead><tbody>"
         + "".join(rows_html)
         + "</tbody></table></div>"
         "<div style='font-size:0.78rem;color:#94a3b8;margin-bottom:0.5rem'>"
-        f"{reliability_badge('super_high')} CV ≤ 5% &nbsp; "
-        f"{reliability_badge('high')} CV ≤ 10% &nbsp; "
-        f"{reliability_badge('medium')} CV ≤ 15% &nbsp; "
-        f"{reliability_badge('low')} CV ≤ 20% &nbsp; "
-        f"{reliability_badge('very_low')} CV &gt; 20% &nbsp;·&nbsp; "
-        "cell color = CV band · lower CV = stabler mean · "
-        "<b>CV band ≠ clinical validation</b> · "
-        "<b>Runs</b> = scored / requested for that model "
-        "(can differ across models) · "
-        "<b>Failed</b> = technical N/A rate "
-        "(collect / judge / timeout / partial / empty) — not clinical 0% · "
-        "<b>partial</b> = ranked by mean of scored runs despite incomplete coverage · "
-        "unranked rows (#—) have zero scored observations · "
-        "≤N scored obs/model; N/A skipped, older scored used · "
-        "N=5 exploratory · ~10 better for CV eye-check · 20–50 diminishing · 100 max · "
-        "<b>C/Q/D</b> = coverage / quality / discipline "
-        "(quality is independent of coverage; a high board % can still have low C)</div>"
+        f"{footer}</div>"
     )
+
 
 
 
@@ -1463,18 +1534,24 @@ def history_mean_rebuild_dialog():
             )
     else:
         st.success(
-            f"**{case_display_name(summary.case_id)}** · per-model valid N shown below · "
+            f"**{case_display_name(summary.case_id)}** · per-model successful N shown below · "
             f"same-cohort **reference-relative Clinical Composite Score** · "
             f"**$0 API** (no OpenRouter / DeepSeek calls)"
         )
-    st.caption(reliability_caption(summary))
+    _rebuild_clean = bool(payload.get("successful_only", True))
+    st.caption(reliability_caption(summary, successful_only=_rebuild_clean))
 
     st.markdown("##### Ranking table")
-    st.markdown(_reliability_table_html(summary.ranking_mean), unsafe_allow_html=True)
+    st.markdown(
+        _reliability_table_html(
+            summary.ranking_mean, successful_only=_rebuild_clean
+        ),
+        unsafe_allow_html=True,
+    )
 
     st.markdown("##### Chart (mean %; whiskers = ±1 std)")
     _chart_title = (
-        f"Mean Clinical Composite · Portfolio · ≤{payload.get('n_per_model_cap') or '?'} scored/model · "
+        f"Mean Clinical Composite · Portfolio · ≤{payload.get('n_per_model_cap') or '?'} successful/model · "
         f"{payload.get('n_used')} run docs · {payload.get('n_cases')} cases"
         if _scope == "portfolio"
         else f"Mean Clinical Composite Score · {case_display_name(summary.case_id)}"
@@ -1484,6 +1561,7 @@ def history_mean_rebuild_dialog():
             summary.ranking_mean,
             title=_chart_title,
             height=260,
+            hide_partial_labels=_rebuild_clean,
         ),
         use_container_width=True,
         key="hm_dlg_mean_chart",
@@ -3555,11 +3633,31 @@ st.markdown(
     f'<div class="sec-label">{t("bench.rebuild_sec_label", _ui_lang())}</div>',
     unsafe_allow_html=True,
 )
+# Rebuild viz follows the default 9-roster + optional/legacy session toggles
+# (History still resolves all CURRENT_ROSTER_KEYS labels when toggled back on).
+_rebuild_optional = [
+    k
+    for k in OPTIONAL_LEGACY_SLOT_KEYS
+    if st.session_state.get(
+        {
+            "local_gemma": "opt_legacy_local_gemma",
+            "local_llama": "opt_legacy_local_llama",
+            "qvac_4b_q8": "opt_legacy_qvac_4b_q8",
+        }[k]
+    )
+]
+_rebuild_model_ids = rebuild_model_ids(_rebuild_optional)
 st.caption(
     "Rebuild is always available here (before Live responses / run stop). "
-    "Pools all CURRENT_ROSTER_KEYS (9 default + 3 optional/legacy labels) "
-    "regardless of Step-2 toggles; per-model N; independent of Live responses "
-    "below. **No API calls**."
+    f"Mean chart/table = **{len(_rebuild_model_ids)}-model roster** "
+    "(default 9"
+    + (
+        f" + {len(_rebuild_optional)} optional/legacy"
+        if _rebuild_optional
+        else "; optional Gemma/Llama/Q8 hidden until toggled"
+    )
+    + ") · last ≤N **successful** scored runs per model · "
+    "technical N/A skipped · **No API calls**."
 )
 
 _hist_for_case = artifacts_for_case(WORKSPACE_DIR, case_id)
@@ -3631,8 +3729,8 @@ else:
     )
 
 # Portfolio eligibility: same track + v4; roster shapes may differ (per-model N).
-# Intersect against the full current-roster key set so 6-/9-/12-slot runs can pool.
-_portfolio_model_ids = list(CURRENT_ROSTER_KEYS)
+# Filter to active rebuild roster (9 default + opted-in optional/legacy).
+_portfolio_model_ids = list(_rebuild_model_ids)
 # All eligible docs — Rebuild N is per-model obs, not a global last-N slice.
 _portfolio_probe = list_portfolio_runs(
     WORKSPACE_DIR,
@@ -3712,7 +3810,7 @@ with _rb1:
         t("bench.rebuild_n_label", _ui_lang()),
         options=_n_options,
         format_func=lambda n: (
-            f"≤{n} scored / model"
+            f"≤{n} successful / model"
             + (" · exploratory" if n == 5 else "")
             + (" · better CV (suggested)" if n == 10 else "")
             + (" · diminishing returns" if n in (20, 30, 40, 50) else "")
@@ -3721,8 +3819,9 @@ with _rb1:
         ),
         key="history_rebuild_n_pick",
         on_change=_on_rebuild_n_pick_change,
-        help="N = max scored observations per model (newest first); technical "
-        "N/A skipped, older scored used — not a global last-N run slice. "
+        help="N = max successful scored observations per model (newest first); "
+        "technical N/A skipped, older successful History used — not a global "
+        "last-N run slice. Optional/legacy models appear only when toggled. "
         "Tiers: 5 exploratory · ~10 better for CV · 20–50 diminishing returns "
         "(100 max). Default stays 5. Selecting N alone does not open a popup — "
         "use Rebuild mean.",
@@ -3808,6 +3907,7 @@ elif _do_rebuild:
             case_id,
             n=_n_use,
             cohort_id=_rebuild_cohort_id,
+            model_ids=_rebuild_model_ids,
             preloaded=_same_preloaded,
         )
     if not _built.get("ok"):

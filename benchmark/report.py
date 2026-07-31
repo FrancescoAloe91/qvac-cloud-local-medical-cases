@@ -21,7 +21,11 @@ from benchmark.scoring import (
     semantic_item_score,
     soft_alignment_from_checklist,
 )
-from lib.model_labels import CURRENT_ROSTER_KEYS, is_current_roster_key
+from lib.model_labels import (
+    CURRENT_ROSTER_KEYS,
+    DEFAULT_ACTIVE_ROSTER_KEYS,
+    is_current_roster_key,
+)
 
 # Multi-run mean reliability from CV% = 100 × std / mean
 # Five bands (ceilings): Super High ≤5 · High ≤10 · Medium ≤15 · Low ≤20 · else Very Low
@@ -451,7 +455,9 @@ def print_summary_table(summary: MultiRunSummary) -> str:
     return "\n".join(lines)
 
 
-def reliability_caption(summary: MultiRunSummary) -> str:
+def reliability_caption(
+    summary: MultiRunSummary, *, successful_only: bool = False
+) -> str:
     """One-line plain-language guide for the multi-run mean."""
     ranked = [
         r
@@ -459,11 +465,25 @@ def reliability_caption(summary: MultiRunSummary) -> str:
         if r.get("rank") is not None and r.get("eligible", True)
     ]
     if not ranked:
+        if successful_only:
+            return (
+                "No model has a successful scored observation for Rebuild mean yet. "
+                "Means use only error-free scored runs (technical N/A skipped)."
+            )
         return (
             "No model has a scored observation for mean ranking yet. "
             "Failed % = share of pooled runs that are technical N/A "
             "(collect/judge/timeout/partial/empty) — not a clinical zero; "
             "means use only scored runs."
+        )
+    eligible = len(ranked)
+    if successful_only:
+        return (
+            f"Mean ranking for {eligible} model(s) with ≥1 successful scored run · "
+            "each mean is over its last ≤N successful runs (technical N/A skipped; "
+            "older successful History used) · models with only failures are omitted · "
+            "C/Q/D = coverage/quality/discipline (quality independent of coverage) · "
+            "sample SD + median/IQR do not measure clinical generalization."
         )
     n_partial = sum(1 for r in ranked if r.get("partial"))
     partial_bit = (
@@ -471,7 +491,6 @@ def reliability_caption(summary: MultiRunSummary) -> str:
         if n_partial
         else ""
     )
-    eligible = len(ranked)
     return (
         f"Mean ranking for {eligible} model(s) with ≥1 scored run{partial_bit} · "
         "each mean shows its own N; technical N/A never discard other models' data · "
@@ -1018,15 +1037,19 @@ def _trim_rescored_to_per_model_n(
     *,
     n: int,
     model_ids: Optional[Sequence[str]] = None,
+    keep_failures: bool = False,
 ) -> Tuple[List[RunArtifact], List[Dict[str, Any]], Dict[str, int]]:
     """Keep ≤N newest *scored* observations per model; N/A does not fill N.
 
     ``rescored_pairs`` must already be newest-first. Technical N/A / errors are
     skipped for the scored-N cap — the walk continues into older History until
-    each model has N scored rows (or history ends). N/A rows encountered while
-    seeking those scored obs are still kept so Failed % reflects failures in
-    the scan window. Run documents that retain no rows are omitted.
-    Returns (arts, per_run rows, per-model **scored** counts).
+    each model has N scored rows (or history ends).
+
+    Rebuild mean defaults to ``keep_failures=False``: only successful scored
+    rows enter the pool (clean comparison; no Failed%/partial theater). When
+    ``keep_failures=True``, N/A rows seen while filling the scored quota are
+    retained so Failed % can reflect the scan window. Run documents that retain
+    no rows are omitted. Returns (arts, per_run rows, per-model **scored** counts).
     """
     n = max(1, min(int(n), 100))
     want = (
@@ -1050,7 +1073,7 @@ def _trim_rescored_to_per_model_n(
             if _is_scored_ranking_row(r):
                 kept_ranking.append(r)
                 scored_counts[key] = scored_n + 1
-            else:
+            elif keep_failures:
                 # Technical N/A: keep for Failed %; do not advance scored cap.
                 kept_ranking.append(r)
         if not kept_ranking:
@@ -1062,6 +1085,68 @@ def _trim_rescored_to_per_model_n(
         trimmed_row["ranking"] = kept_ranking
         per_run.append(trimmed_row)
     return arts, per_run, scored_counts
+
+
+def _finalize_clean_rebuild_summary(summary: MultiRunSummary) -> MultiRunSummary:
+    """Rebuild mean view: only ≥1 successful score; never surface partial badges."""
+    cleaned: List[Dict[str, Any]] = []
+    for row in summary.ranking_mean or []:
+        if not row.get("eligible") or row.get("accuracy_mean_raw") is None:
+            continue
+        if row.get("accuracy_mean") is None:
+            continue
+        item = dict(row)
+        item["partial"] = False
+        item["n_failed"] = 0
+        item["failure_rate"] = 0.0
+        item["failure_reasons"] = {}
+        n_valid = int(item.get("n_runs") or item.get("n_valid") or 0)
+        item["n_requested"] = n_valid
+        cleaned.append(item)
+    cleaned.sort(
+        key=lambda r: (
+            -float(r.get("accuracy_mean_raw") or -1),
+            str(r.get("key") or ""),
+        )
+    )
+    last_mean: Optional[float] = None
+    last_rank = 0
+    for index, row in enumerate(cleaned, 1):
+        mean_value = float(row["accuracy_mean_raw"])
+        if last_mean is None or mean_value != last_mean:
+            last_mean = mean_value
+            last_rank = index
+        row["rank"] = last_rank
+    summary.ranking_mean = cleaned
+    kept_keys = {r.get("key") for r in cleaned}
+    for key, stats in list((summary.candidate_stats or {}).items()):
+        if key not in kept_keys:
+            continue
+        n_valid = int(stats.get("n_valid") or stats.get("n_runs") or stats.get("n") or 0)
+        stats["n_failed"] = 0.0
+        stats["failure_rate"] = 0.0
+        stats["failure_reasons"] = {}
+        stats["n_requested"] = float(n_valid)
+    summary.outliers = [
+        note
+        for note in (summary.outliers or [])
+        if "Partial (" not in note
+        and "unranked (no scored observations)" not in note
+        and " · partial" not in note
+    ]
+    return summary
+
+
+def rebuild_model_ids(
+    optional_legacy_keys: Optional[Sequence[str]] = None,
+) -> List[str]:
+    """Default 9-roster keys plus any opted-in optional/legacy slots."""
+    keys = list(DEFAULT_ACTIVE_ROSTER_KEYS)
+    for key in optional_legacy_keys or ():
+        k = str(key or "")
+        if k and k not in keys and is_current_roster_key(k):
+            keys.append(k)
+    return keys
 
 
 def _offline_rescore_pair(
@@ -1137,18 +1222,23 @@ def rebuild_multi_from_history(
     *,
     n: int = 5,
     cohort_id: Optional[str] = None,
+    model_ids: Optional[Sequence[str]] = None,
     preloaded: Optional[Sequence[RunArtifact]] = None,
 ) -> Dict[str, Any]:
     """
-    Offline Multi×N: same immutable cohort only; ``n`` = max **scored**
-    observations per model (newest first). Technical N/A does not fill N —
-    older scored rows are used. Rescore with the current formula; return
-    summarize_runs-compatible summary + per-run rows. Zero API cost.
+    Offline Multi×N: same immutable cohort only; ``n`` = max **successful**
+    scored observations per model (newest first). Technical N/A does not fill N
+    and is omitted from the Rebuild mean pool — older successful rows are used.
+    Rescore with the current formula; return summarize_runs-compatible summary +
+    per-run rows. Zero API cost. No partial badge theater.
 
     When ``cohort_id`` is set (e.g. after restoring a prior confirmed gold),
     rebuild that immutable cohort instead of the newest case cohort.
+    ``model_ids`` defaults to the active 9-roster (optional legacy only when
+    passed in by the UI).
     """
     n = max(1, min(int(n), 100))
+    want_keys = list(model_ids) if model_ids is not None else rebuild_model_ids()
     all_pairs = artifacts_for_case(
         out_dir, case_id, limit=None, preloaded=preloaded
     )
@@ -1180,9 +1270,10 @@ def rebuild_multi_from_history(
                 for _, artifact in legacy_pairs
             ],
         }
-    # Cancelled / failed abort stamps stay out. Partial runs (per-model technical
-    # N/A) stay in so Failed % is honest — same rule as portfolio.
-    # Load full cohort history; N caps observations per model (not global docs).
+    # Cancelled / failed abort stamps stay out. Runs with run_status=partial may
+    # still contribute *successful* per-model scores; N/A rows themselves are
+    # dropped by the clean trim. Load full cohort history; N caps successful
+    # observations per model (not global docs).
     pairs = [
         pair
         for pair in all_pairs
@@ -1208,21 +1299,24 @@ def rebuild_multi_from_history(
         rescored_pairs.append((clone, row))
 
     rescored_arts, per_run, _counts = _trim_rescored_to_per_model_n(
-        rescored_pairs, n=n
+        rescored_pairs, n=n, model_ids=want_keys, keep_failures=False
     )
     if not rescored_arts:
         return {
             "ok": False,
             "reason": (
-                "Need at least 1 same-cohort run (complete or partial with scores; "
-                "found 0 after per-model trim). Cancelled/failed aborts are excluded."
+                "Need at least 1 same-cohort successful scored observation "
+                "(found 0 after per-model trim). Cancelled/failed aborts and "
+                "technical N/A are excluded from Rebuild mean."
             ),
             "available": len(pairs),
             "cohort_id": target_cohort,
             "scope": "same_case",
         }
 
-    summary = summarize_runs(rescored_arts, min_valid_for_ranking=1)
+    summary = _finalize_clean_rebuild_summary(
+        summarize_runs(rescored_arts, min_valid_for_ranking=1)
+    )
     return {
         "ok": True,
         "available": len(pairs),
@@ -1232,7 +1326,7 @@ def rebuild_multi_from_history(
         "per_run": per_run,
         "formula": (
             "reference-relative Clinical Composite Score · same immutable cohort · "
-            "≤N scored obs/model; N/A skipped, older scored used"
+            "≤N successful scored obs/model; N/A skipped, older successful used"
         ),
         "api_cost_usd": 0.0,
         "cohort_id": target_cohort,
@@ -1240,6 +1334,8 @@ def rebuild_multi_from_history(
         "scope": "same_case",
         "n_cases": 1,
         "mean_rank": _mean_ranks_from_per_run(per_run),
+        "successful_only": True,
+        "model_ids": list(want_keys),
     }
 
 
@@ -1252,18 +1348,18 @@ def rebuild_portfolio_from_history(
     model_ids: Optional[Sequence[str]] = None,
     preloaded: Optional[Sequence[RunArtifact]] = None,
 ) -> Dict[str, Any]:
-    """Offline exploratory mean: ≤N **scored** observations per model across cases.
+    """Offline exploratory mean: ≤N **successful** scored obs per model across cases.
 
     Loads every eligible run (same track + scoring_version, complete|partial),
-    then for each roster key keeps that model's own newest ≤N *scored* ranking
-    rows. Technical N/A does not fill N — the walk continues into older History.
-    N/A seen while filling the scored quota still counts toward Failed %.
-    Cloud models with older history still appear when recent global runs were
-    medical-only. Never invents scores; never merges incompatible scoring
-    versions. Zero API cost. Not clinical validation.
+    then for each roster key keeps that model's own newest ≤N *successful*
+    ranking rows. Technical N/A does not fill N and is omitted from the Rebuild
+    mean pool — the walk continues into older History. Cloud models with older
+    history still appear when recent global runs were medical-only. Never
+    invents scores; never merges incompatible scoring versions. Zero API cost.
+    Not clinical validation. No partial badge theater.
     """
     n = max(1, min(int(n), 100))
-    want_keys = list(model_ids) if model_ids is not None else list(CURRENT_ROSTER_KEYS)
+    want_keys = list(model_ids) if model_ids is not None else rebuild_model_ids()
     # All eligible run documents — N is applied per model, not as a global slice.
     all_eligible = list_portfolio_runs(
         out_dir,
@@ -1283,7 +1379,7 @@ def rebuild_portfolio_from_history(
                 f"case stem(s)). "
                 "Filters: same track + scoring_version, complete|partial + "
                 "≥1 valid judgment; roster shapes may differ "
-                "(≤N observations per model). "
+                "(≤N successful observations per model). "
                 "Cancelled/failed aborts stay out. "
                 "Different scoring versions are never pooled. "
                 "Mixed-case portfolio means are exploratory — not clinical validation."
@@ -1301,14 +1397,15 @@ def rebuild_portfolio_from_history(
         rescored_pairs.append((clone, row))
 
     rescored_arts, per_run, _counts = _trim_rescored_to_per_model_n(
-        rescored_pairs, n=n, model_ids=want_keys
+        rescored_pairs, n=n, model_ids=want_keys, keep_failures=False
     )
     if not rescored_arts:
         return {
             "ok": False,
             "reason": (
-                "Need at least 1 portfolio-eligible observation after per-model "
-                "trim. Filters: same track + scoring_version, complete|partial."
+                "Need at least 1 portfolio-eligible successful observation after "
+                "per-model trim. Filters: same track + scoring_version, "
+                "complete|partial; technical N/A omitted from Rebuild mean."
             ),
             "available": len(all_eligible),
             "n_cases": n_cases_all,
@@ -1317,8 +1414,10 @@ def rebuild_portfolio_from_history(
             "track": track,
         }
 
-    summary = summarize_runs(
-        rescored_arts, allow_mixed_cohorts=True, min_valid_for_ranking=1
+    summary = _finalize_clean_rebuild_summary(
+        summarize_runs(
+            rescored_arts, allow_mixed_cohorts=True, min_valid_for_ranking=1
+        )
     )
     mean_rank = _mean_ranks_from_per_run(per_run)
     # Attach mean rank onto ranking_mean rows when present.
@@ -1338,7 +1437,7 @@ def rebuild_portfolio_from_history(
         "per_run": per_run,
         "formula": (
             "exploratory mixed-case portfolio mean · mixed roster shapes OK · "
-            "≤N scored obs/model; N/A skipped, older scored used · "
+            "≤N successful scored obs/model; N/A skipped, older successful used · "
             "reference-relative scores · not clinical validation · "
             "gold contracts are not merged"
         ),
@@ -1347,6 +1446,8 @@ def rebuild_portfolio_from_history(
         "scope": "portfolio",
         "scoring_version": scoring_version,
         "track": track,
+        "successful_only": True,
+        "model_ids": list(want_keys),
         "mean_rank": mean_rank,
         "case_ids": sorted({a.case_id for a in rescored_arts}),
         "mixed_case_exploratory": True,
