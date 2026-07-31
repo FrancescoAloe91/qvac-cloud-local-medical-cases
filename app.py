@@ -1401,7 +1401,7 @@ def _reliability_table_html(ranking_mean: list) -> str:
         "<b>partial</b> = ranked by mean of scored runs despite incomplete coverage · "
         "unranked rows (#—) have zero scored observations · "
         "≤N scored obs/model; N/A skipped, older scored used · "
-        "N=5 exploratory · ~10 better for CV eye-check · 20–50 diminishing returns · "
+        "N=5 exploratory · ~10 better for CV eye-check · 20–50 diminishing · 100 max · "
         "<b>C/Q/D</b> = coverage / quality / discipline "
         "(quality is independent of coverage; a high board % can still have low C)</div>"
     )
@@ -3578,7 +3578,7 @@ if _other_family_runs > 0 and _avail_n < 5 and _rebuild_scope == "same_case":
     )
 
 # Per-model valid N; N=5 remains exploratory.
-_n_options = [5, 10, 20, 30, 40, 50]
+_n_options = [5, 10, 20, 30, 40, 50, 100]
 _rb1, _rb2 = st.columns([1, 2])
 with _rb1:
     # Default once — value MUST stay inside options or Streamlit raises TypeError
@@ -3598,8 +3598,8 @@ with _rb1:
             f"≤{n} scored / model"
             + (" · exploratory" if n == 5 else "")
             + (" · better CV (suggested)" if n == 10 else "")
-            + (" · diminishing returns" if n in (20, 30, 40) else "")
-            + (" · max" if n == 50 else "")
+            + (" · diminishing returns" if n in (20, 30, 40, 50) else "")
+            + (" · max" if n == 100 else "")
             + (f"  (only {_avail_n} eligible runs)" if _avail_n < n else "")
         ),
         key="history_rebuild_n_pick",
@@ -3607,7 +3607,7 @@ with _rb1:
         help="N = max scored observations per model (newest first); technical "
         "N/A skipped, older scored used — not a global last-N run slice. "
         "Tiers: 5 exploratory · ~10 better for CV · 20–50 diminishing returns "
-        "(50 max). Default stays 5. Selecting N alone does not open a popup — "
+        "(100 max). Default stays 5. Selecting N alone does not open a popup — "
         "use Rebuild mean.",
     )
 with _rb2:

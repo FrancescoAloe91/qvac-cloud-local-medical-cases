@@ -1003,7 +1003,7 @@ def list_portfolio_runs(
     pairs = [(p, a) for p, a, _ in matched]
     if n is None:
         return pairs
-    cap = max(1, min(int(n), 50))
+    cap = max(1, min(int(n), 100))
     return pairs[:cap]
 
 
@@ -1028,7 +1028,7 @@ def _trim_rescored_to_per_model_n(
     the scan window. Run documents that retain no rows are omitted.
     Returns (arts, per_run rows, per-model **scored** counts).
     """
-    n = max(1, min(int(n), 50))
+    n = max(1, min(int(n), 100))
     want = (
         frozenset(str(k) for k in model_ids)
         if model_ids is not None
@@ -1148,7 +1148,7 @@ def rebuild_multi_from_history(
     When ``cohort_id`` is set (e.g. after restoring a prior confirmed gold),
     rebuild that immutable cohort instead of the newest case cohort.
     """
-    n = max(1, min(int(n), 50))
+    n = max(1, min(int(n), 100))
     all_pairs = artifacts_for_case(
         out_dir, case_id, limit=None, preloaded=preloaded
     )
@@ -1262,7 +1262,7 @@ def rebuild_portfolio_from_history(
     medical-only. Never invents scores; never merges incompatible scoring
     versions. Zero API cost. Not clinical validation.
     """
-    n = max(1, min(int(n), 50))
+    n = max(1, min(int(n), 100))
     want_keys = list(model_ids) if model_ids is not None else list(CURRENT_ROSTER_KEYS)
     # All eligible run documents — N is applied per model, not as a global slice.
     all_eligible = list_portfolio_runs(

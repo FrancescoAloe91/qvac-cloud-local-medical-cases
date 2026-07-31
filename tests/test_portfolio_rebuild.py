@@ -621,8 +621,8 @@ def test_trim_n_skips_technical_na_and_uses_older_scored(tmp_path: Path):
     assert float(p_by["chatgpt"]["accuracy_mean"]) == 62.0
 
 
-def test_rebuild_accepts_per_model_n_40_and_50(tmp_path: Path):
-    """UI selectbox offers 40/50; backend must not clamp those caps to 30."""
+def test_rebuild_accepts_per_model_n_40_50_and_100(tmp_path: Path):
+    """UI selectbox offers 40/50/100; backend must not clamp those caps to 30."""
     for i in range(3):
         _write(
             tmp_path,
@@ -631,7 +631,7 @@ def test_rebuild_accepts_per_model_n_40_and_50(tmp_path: Path):
             finished_at=f"2026-01-01T1{i}:00:00Z",
             cohort_id=f"cohort-p-{i}",
         )
-    for n in (40, 50):
+    for n in (40, 50, 100):
         port = rebuild_portfolio_from_history(
             tmp_path, n=n, scoring_version="graded-clinical-v4", track="controlled"
         )
@@ -644,7 +644,7 @@ def test_rebuild_accepts_per_model_n_40_and_50(tmp_path: Path):
         assert same["n_per_model_cap"] == n
     # Still hard-capped above the UI max.
     over = rebuild_portfolio_from_history(
-        tmp_path, n=99, scoring_version="graded-clinical-v4", track="controlled"
+        tmp_path, n=199, scoring_version="graded-clinical-v4", track="controlled"
     )
     assert over["ok"] is True
-    assert over["n_per_model_cap"] == 50
+    assert over["n_per_model_cap"] == 100
