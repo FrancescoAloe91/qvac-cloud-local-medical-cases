@@ -21,11 +21,14 @@ import streamlit.components.v1 as components
 
 from benchmark import openrouter
 from benchmark.case_slots import (
+    BASE_CASE_SLOTS,
+    SOFT_MAX_CASE_SLOTS,
     bind_stem_to_slot,
     count_distinct_stem_keys,
+    empty_slot,
     ensure_owner_slots,
     filter_artifacts_for_slot,
-    next_empty_slot,
+    open_new_case_slot,
     save_bindings,
     slot_label_for_artifact,
     validate_gold_for_restore,
@@ -777,7 +780,7 @@ def _clear_case_editor_state() -> None:
 
 
 def _select_case_slot(slot, *, as_new: bool = False) -> None:
-    """Activate a Case 1–5 slot and load stem+gold from History when filled."""
+    """Activate a Case slot and load stem+gold from History when filled."""
     st.session_state["active_case_slot"] = int(slot.index)
     if as_new or not slot.filled:
         _clear_case_editor_state()
@@ -1728,15 +1731,18 @@ case_id = "caseC"
 preset = load_case(case_id)
 is_custom_real = True
 
-# Case 1–5 slots (sticky stem_key bindings per API-key owner workspace)
+# Case slots (sticky stem_key bindings per API-key owner workspace).
+# Base Case 1–5 always shown; New case opens next empty or grows to Case 6+.
 _slot_arts = _preloaded_artifacts()
-_case_slots, _case_bindings = ensure_owner_slots(
+_case_slots, _case_bindings, _case_slot_count = ensure_owner_slots(
     WORKSPACE_DIR,
     _slot_arts,
     session_bindings=st.session_state.get("_case_slot_bindings") or {},
+    session_slot_count=st.session_state.get("_case_slot_count"),
     persist=bool(getattr(RUN_STORE, "writes_plaintext", True)),
 )
 st.session_state["_case_slot_bindings"] = dict(_case_bindings)
+st.session_state["_case_slot_count"] = int(_case_slot_count)
 if "active_case_slot" not in st.session_state:
     # Prefer first filled slot (migrated Case 1), else Case 1 empty.
     _first_filled = next((s.index for s in _case_slots if s.filled), 1)
@@ -1752,7 +1758,8 @@ if "active_case_slot" not in st.session_state:
 
 _active_slot_idx = int(st.session_state.get("active_case_slot") or 1)
 _active_slot = next(
-    (s for s in _case_slots if s.index == _active_slot_idx), _case_slots[0]
+    (s for s in _case_slots if s.index == _active_slot_idx),
+    _case_slots[0] if _case_slots else empty_slot(1),
 )
 _slots_locked = bool(
     st.session_state.get("benchmark_running") or st.session_state.get("confirmed_run")
@@ -1762,31 +1769,40 @@ st.markdown(
     f'<div class="sec-label">{t("bench.case_slots_label", _ui_lang())}</div>',
     unsafe_allow_html=True,
 )
-_slot_cols = st.columns([1, 1, 1, 1, 1, 1.2], gap="small")
-for _si, _slot in enumerate(_case_slots):
-    with _slot_cols[_si]:
-        _is_active = _slot.index == _active_slot_idx
-        _btn_label = t("bench.case_slot_btn", _ui_lang(), n=_slot.index)
-        if _slot.filled:
-            _btn_label += f" · {_slot.run_count}"
-        else:
-            _btn_label += f" · {t('bench.case_slot_empty', _ui_lang())}"
-        if st.button(
-            _btn_label,
-            key=f"case_slot_btn_{_slot.index}",
-            use_container_width=True,
-            type="primary" if _is_active else "secondary",
-            disabled=_slots_locked,
-            help=(
-                f"{_slot.stem[:120]}…"
-                if _slot.filled and len(_slot.stem) > 120
-                else (_slot.stem or t("bench.case_slot_ready_empty", _ui_lang(), n=_slot.index))
-            ),
-        ):
-            if not _slots_locked:
-                _select_case_slot(_slot)
-                st.rerun()
-with _slot_cols[5]:
+
+
+def _render_case_slot_button(slot, *, active_idx: int, locked: bool) -> None:
+    is_active = slot.index == active_idx
+    btn_label = t("bench.case_slot_btn", _ui_lang(), n=slot.index)
+    if slot.filled:
+        btn_label += f" · {slot.run_count}"
+    else:
+        btn_label += f" · {t('bench.case_slot_empty', _ui_lang())}"
+    if st.button(
+        btn_label,
+        key=f"case_slot_btn_{slot.index}",
+        use_container_width=True,
+        type="primary" if is_active else "secondary",
+        disabled=locked,
+        help=(
+            f"{slot.stem[:120]}…"
+            if slot.stem and len(slot.stem) > 120
+            else (
+                slot.stem
+                or t("bench.case_slot_ready_empty", _ui_lang(), n=slot.index)
+            )
+        ),
+    ):
+        if not locked:
+            _select_case_slot(slot)
+            st.rerun()
+
+
+# New case (yellow) first, then Case 1…N. Wrap after base row for readability.
+_base_slots = [s for s in _case_slots if s.index <= BASE_CASE_SLOTS]
+_extra_slots = [s for s in _case_slots if s.index > BASE_CASE_SLOTS]
+_row1_cols = st.columns([1.25] + [1] * len(_base_slots), gap="small")
+with _row1_cols[0]:
     if st.button(
         t("bench.new_case_btn", _ui_lang()),
         key="case_slot_new_btn",
@@ -1795,18 +1811,49 @@ with _slot_cols[5]:
         help=t("bench.new_case_help", _ui_lang()),
     ):
         if not _slots_locked:
-            _empty_idx = next_empty_slot(_case_slots)
-            if _empty_idx is None:
+            try:
+                _new_idx, _new_count = open_new_case_slot(
+                    _case_slots, slot_count=int(_case_slot_count)
+                )
+            except ValueError:
                 st.session_state["_case_slot_flash"] = "full"
             else:
-                _empty = next(s for s in _case_slots if s.index == _empty_idx)
-                _select_case_slot(_empty, as_new=True)
+                st.session_state["_case_slot_count"] = int(_new_count)
+                if getattr(RUN_STORE, "writes_plaintext", True):
+                    try:
+                        save_bindings(
+                            WORKSPACE_DIR,
+                            st.session_state.get("_case_slot_bindings") or {},
+                            slot_count=int(_new_count),
+                        )
+                    except OSError:
+                        pass
+                _target = next(
+                    (s for s in _case_slots if s.index == _new_idx),
+                    empty_slot(_new_idx),
+                )
+                _select_case_slot(_target, as_new=True)
                 st.session_state["_case_slot_flash"] = "empty"
             st.rerun()
+for _si, _slot in enumerate(_base_slots):
+    with _row1_cols[_si + 1]:
+        _render_case_slot_button(
+            _slot, active_idx=_active_slot_idx, locked=_slots_locked
+        )
+if _extra_slots:
+    # Case 6+ on following row(s), chunks of 6.
+    for _off in range(0, len(_extra_slots), 6):
+        _chunk = _extra_slots[_off : _off + 6]
+        _extra_cols = st.columns([1] * len(_chunk), gap="small")
+        for _ci, _slot in enumerate(_chunk):
+            with _extra_cols[_ci]:
+                _render_case_slot_button(
+                    _slot, active_idx=_active_slot_idx, locked=_slots_locked
+                )
 
 _flash = st.session_state.pop("_case_slot_flash", None)
 if _flash == "full":
-    st.warning(t("bench.new_case_full", _ui_lang()))
+    st.warning(t("bench.new_case_full", _ui_lang(), n=SOFT_MAX_CASE_SLOTS))
 elif _flash == "empty":
     st.info(t("bench.case_slot_ready_empty", _ui_lang(), n=_active_slot_idx))
 elif _active_slot.filled and st.session_state.get("_confirmed_gold_json"):
@@ -1821,7 +1868,8 @@ elif _active_slot.filled and st.session_state.get("_confirmed_gold_json"):
 else:
     st.caption(
         f"**Case {_active_slot_idx}** selected · History stays private to this "
-        f"API key ({short_owner_label()}). Cap: 5 cases."
+        f"API key ({short_owner_label()}). Base Case 1–{BASE_CASE_SLOTS}; "
+        f"New case adds Case {BASE_CASE_SLOTS + 1}+ when full."
     )
 
 st.markdown('<div class="sec-label">Gold-only clinical case</div>', unsafe_allow_html=True)
@@ -2219,7 +2267,7 @@ if isinstance(_prepared, dict) and _prepared:
                     sid: contract.sections[sid].model_dump() for sid in SECTION_IDS
                 }
                 st.session_state.pop("_restored_cohort_id", None)
-                # Bind this stem to the active Case slot (cap 5; sticky per owner).
+                # Bind this stem to the active Case slot (sticky per owner).
                 try:
                     _bind_idx = int(st.session_state.get("active_case_slot") or 1)
                     _bound = bind_stem_to_slot(
@@ -2230,8 +2278,16 @@ if isinstance(_prepared, dict) and _prepared:
                         ),
                     )
                     st.session_state["_case_slot_bindings"] = _bound
+                    _bind_count = max(
+                        int(st.session_state.get("_case_slot_count") or BASE_CASE_SLOTS),
+                        _bind_idx,
+                        BASE_CASE_SLOTS,
+                    )
+                    st.session_state["_case_slot_count"] = _bind_count
                     if getattr(RUN_STORE, "writes_plaintext", True):
-                        save_bindings(WORKSPACE_DIR, _bound)
+                        save_bindings(
+                            WORKSPACE_DIR, _bound, slot_count=_bind_count
+                        )
                 except Exception:
                     pass
                 st.success(

@@ -576,12 +576,12 @@ _STRINGS = {
         "bench.case_slot_runs": "{n} runs",
         "bench.new_case_btn": "New case",
         "bench.new_case_help": (
-            "Open the next empty Case slot (3→4→5). Cap is 5 cases per API key. "
-            "Paste stem + reference, then Prepare / Confirm."
+            "Open the next empty Case slot, or create Case 6, 7, … when "
+            "Case 1–5 are filled. Paste stem + reference, then Prepare / Confirm."
         ),
         "bench.new_case_full": (
-            "All 5 Case slots are filled for this key. Select a slot to edit "
-            "or rebuild means — a 6th case is not created."
+            "Reached the soft limit of {n} Case slots for this key. Select an "
+            "existing slot to edit or rebuild means."
         ),
         "bench.case_slot_loaded": (
             "Loaded **Case {n}** stem + confirmed reference from History."
@@ -1161,12 +1161,12 @@ _STRINGS = {
         "bench.case_slot_runs": "{n} run",
         "bench.new_case_btn": "Nuovo caso",
         "bench.new_case_help": (
-            "Apre il prossimo slot Case vuoto (3→4→5). Massimo 5 casi per chiave. "
-            "Incolla stem + riferimento, poi Prepare / Confirm."
+            "Apre il prossimo slot Case vuoto, oppure crea Case 6, 7, … quando "
+            "Case 1–5 sono pieni. Incolla stem + riferimento, poi Prepare / Confirm."
         ),
         "bench.new_case_full": (
-            "Tutti e 5 gli slot Case sono pieni per questa chiave. Seleziona uno "
-            "slot — non si crea un sesto caso."
+            "Raggiunto il limite soft di {n} slot Case per questa chiave. "
+            "Seleziona uno slot esistente per modificare o ricalcolare le medie."
         ),
         "bench.case_slot_loaded": (
             "Caricato **Case {n}**: stem + riferimento confermato dalla History."

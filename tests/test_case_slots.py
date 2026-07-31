@@ -1,19 +1,22 @@
-"""Case slot mapping (1–5) + mean-scope helpers."""
+"""Case slot mapping (base 1–5 + grow 6+) + mean-scope helpers."""
 
 from __future__ import annotations
 
 from pathlib import Path
 
 from benchmark.case_slots import (
-    MAX_CASE_SLOTS,
+    BASE_CASE_SLOTS,
+    SOFT_MAX_CASE_SLOTS,
     bind_stem_to_slot,
     count_distinct_stem_keys,
     discover_stem_families,
     ensure_owner_slots,
     filter_artifacts_for_slot,
     load_bindings,
+    load_slot_state,
     migrate_bindings,
     next_empty_slot,
+    open_new_case_slot,
     resolve_slots,
     save_bindings,
     slot_for_stem_key,
@@ -144,7 +147,7 @@ def test_migrate_preserves_existing_bindings_order():
     assert bindings[2] == stem_key(STEM_A)
 
 
-def test_next_empty_slot_and_bind_cap_at_five(tmp_path: Path):
+def test_base_full_new_case_grows_to_six(tmp_path: Path):
     arts = [
         _art(
             run_id=f"r{i}",
@@ -155,14 +158,51 @@ def test_next_empty_slot_and_bind_cap_at_five(tmp_path: Path):
         )
         for i in range(1, 6)
     ]
-    slots, bindings = ensure_owner_slots(tmp_path, arts)
+    slots, bindings, slot_count = ensure_owner_slots(tmp_path, arts)
     assert next_empty_slot(slots) is None
-    assert len(bindings) == MAX_CASE_SLOTS
-    # Binding a 6th distinct stem onto an occupied slot keeps prior stem if
-    # the new stem is already mapped elsewhere — and does not create slot 6.
-    out = bind_stem_to_slot(bindings, slot_index=1, case_stem="Brand new sixth case")
-    assert set(out.keys()) <= set(range(1, 6))
-    assert 6 not in out
+    assert slot_count == BASE_CASE_SLOTS
+    assert len(bindings) == BASE_CASE_SLOTS
+    new_idx, new_count = open_new_case_slot(slots, slot_count=slot_count)
+    assert new_idx == 6
+    assert new_count == 6
+    save_bindings(tmp_path, bindings, slot_count=new_count)
+    slots6, bindings6, count6 = ensure_owner_slots(
+        tmp_path, arts, session_slot_count=new_count
+    )
+    assert count6 == 6
+    assert len(slots6) == 6
+    assert not slots6[5].filled
+    assert slots6[5].index == 6
+    # Binding a 6th distinct stem onto Case 6 is allowed.
+    out = bind_stem_to_slot(
+        bindings6, slot_index=6, case_stem="Brand new sixth case stem text"
+    )
+    assert out[6] == stem_key("Brand new sixth case stem text")
+    assert 6 in out
+
+
+def test_new_case_prefers_empty_base_before_growing(tmp_path: Path):
+    arts = [
+        _art(
+            run_id="a1",
+            stem=STEM_A,
+            finished_at="2026-07-31T10:00:00Z",
+            cohort_id="ca",
+            gold=GOLD_MARK,
+        ),
+        _art(
+            run_id="b1",
+            stem=STEM_B,
+            finished_at="2026-07-30T10:00:00Z",
+            cohort_id="cb",
+            gold=GOLD_MARK,
+        ),
+    ]
+    slots, _bindings, slot_count = ensure_owner_slots(tmp_path, arts)
+    assert next_empty_slot(slots) == 3
+    idx, count = open_new_case_slot(slots, slot_count=slot_count)
+    assert idx == 3
+    assert count == BASE_CASE_SLOTS
 
 
 def test_bind_stem_to_empty_slot_for_new_case(tmp_path: Path):
@@ -182,13 +222,47 @@ def test_bind_stem_to_empty_slot_for_new_case(tmp_path: Path):
             gold=GOLD_MARK,
         ),
     ]
-    slots, bindings = ensure_owner_slots(tmp_path, arts)
+    slots, bindings, _count = ensure_owner_slots(tmp_path, arts)
     assert next_empty_slot(slots) == 3
     bindings = bind_stem_to_slot(bindings, slot_index=3, case_stem=STEM_C)
-    save_bindings(tmp_path, bindings)
+    save_bindings(tmp_path, bindings, slot_count=BASE_CASE_SLOTS)
     loaded = load_bindings(tmp_path)
     assert loaded[3] == stem_key(STEM_C)
     assert slot_for_stem_key(loaded, stem_key(STEM_A)) == 1
+
+
+def test_slot_state_persists_grown_empty_case_six(tmp_path: Path):
+    save_bindings(tmp_path, {1: stem_key(STEM_A)}, slot_count=6)
+    bindings, count = load_slot_state(tmp_path)
+    assert count == 6
+    assert bindings[1] == stem_key(STEM_A)
+    arts = [
+        _art(
+            run_id="a1",
+            stem=STEM_A,
+            finished_at="2026-07-31T10:00:00Z",
+            cohort_id="ca",
+            gold=GOLD_MARK,
+        )
+    ]
+    slots, _, count2 = ensure_owner_slots(tmp_path, arts)
+    assert count2 == 6
+    assert [s.index for s in slots] == list(range(1, 7))
+    assert slots[5].index == 6 and not slots[5].filled
+
+
+def test_open_new_case_respects_soft_max():
+    slots = resolve_slots([], {}, slot_count=SOFT_MAX_CASE_SLOTS)
+    # Fill every slot with a fake binding so none are empty.
+    bindings = {i: f"k{i:02d}{'x' * 20}" for i in range(1, SOFT_MAX_CASE_SLOTS + 1)}
+    slots = resolve_slots([], bindings, slot_count=SOFT_MAX_CASE_SLOTS)
+    assert next_empty_slot(slots) is None
+    try:
+        open_new_case_slot(slots, slot_count=SOFT_MAX_CASE_SLOTS)
+        raised = False
+    except ValueError:
+        raised = True
+    assert raised
 
 
 def test_filter_artifacts_for_selected_case_mean_scope():
@@ -237,3 +311,20 @@ def test_discover_prefers_newest_gold_and_cohort():
     assert fams[0].cohort_id == "new-cohort"
     assert fams[0].gold_reference == "new-gold"
     assert fams[0].run_count == 2
+
+
+def test_migrate_does_not_auto_fill_slot_six():
+    arts = [
+        _art(
+            run_id=f"r{i}",
+            stem=f"Protocol stem number {i} long enough",
+            finished_at=f"2026-07-{10 + i:02d}T10:00:00Z",
+            cohort_id=f"c{i}",
+            gold=GOLD_MARK,
+        )
+        for i in range(1, 8)
+    ]
+    # Even with slot_count=7, auto-migrate only fills base 1–5.
+    bindings = migrate_bindings(arts, slot_count=7)
+    assert set(bindings.keys()) == {1, 2, 3, 4, 5}
+    assert 6 not in bindings and 7 not in bindings
