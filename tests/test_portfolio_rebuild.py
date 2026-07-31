@@ -333,8 +333,13 @@ def test_partial_technical_na_counts_in_failed_pct_same_case_and_portfolio(
     assert by_key["chatgpt"]["n_requested"] == 5
     assert by_key["chatgpt"]["n_runs"] == 4
     assert by_key["chatgpt"]["failure_rate"] == 0.2
+    assert by_key["chatgpt"]["partial"] is True
+    assert by_key["chatgpt"]["eligible"] is True
+    assert by_key["chatgpt"]["rank"] is not None
+    assert by_key["chatgpt"]["accuracy_mean"] is not None
     assert by_key["claude"]["n_failed"] == 0
     assert by_key["claude"]["failure_rate"] == 0.0
+    assert by_key["claude"]["partial"] is False
 
     port = rebuild_portfolio_from_history(
         tmp_path, n=5, scoring_version="graded-clinical-v4", track="controlled"
@@ -344,6 +349,8 @@ def test_partial_technical_na_counts_in_failed_pct_same_case_and_portfolio(
     p_by = {r["key"]: r for r in port["summary"].ranking_mean}
     assert p_by["chatgpt"]["n_failed"] >= 1
     assert float(p_by["chatgpt"]["failure_rate"] or 0) > 0.0
+    assert p_by["chatgpt"]["partial"] is True
+    assert p_by["chatgpt"]["rank"] is not None
     # Cancelled still excluded from portfolio
     _write(
         tmp_path,

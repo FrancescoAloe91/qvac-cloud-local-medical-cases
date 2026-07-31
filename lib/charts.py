@@ -561,8 +561,8 @@ def fig_judge_mean_accuracy_bars(
 ) -> go.Figure:
     """Mean Clinical Composite Score with ±1 std error bars."""
     ranking_mean_rows = filter_current_roster_rows(ranking_mean_rows)
-    # Mean bars are competitive ranks only — unranked / insufficient-N rows stay
-    # in the Failed column of the table, not as fake chart competitors.
+    # Mean bars include partial models (ranked by mean of scored runs). Rows with
+    # zero scored observations stay table-only (Failed column / #—).
     ranking_mean_rows = [
         r
         for r in ranking_mean_rows
@@ -576,17 +576,18 @@ def fig_judge_mean_accuracy_bars(
         return fig
 
     rows = rerank_rows(ranking_mean_rows, score_field="accuracy_mean")
-    labels = [
-        ranking_chart_label(
+    labels = []
+    for r in rows:
+        label = ranking_chart_label(
             {
                 "key": r.get("key"),
                 "label": r.get("label"),
                 "model": r.get("model"),
-                # mean rows use accuracy_mean; chart helper only needs identity
             }
         )
-        for r in rows
-    ]
+        if r.get("partial"):
+            label = f"{label}\npartial"
+        labels.append(label)
     means = [float(r.get("accuracy_mean") or 0) for r in rows]
     stds = [float(r.get("std") or 0) for r in rows]
     cvs = [float(r.get("cv_pct") or 0) for r in rows]

@@ -364,6 +364,15 @@ def live_judging_board_html(
     )
 
 
+def _partial_chip_html() -> str:
+    return (
+        "<span style='display:inline-block;margin-left:0.3rem;padding:0.05rem 0.35rem;"
+        "border-radius:999px;font-size:0.65rem;font-weight:700;letter-spacing:0.04em;"
+        "text-transform:uppercase;color:#78350f;background:#fbbf24;"
+        "border:1px solid #f59e0b;vertical-align:middle'>partial</span>"
+    )
+
+
 def _ranking_table_html(ranking: List[Dict[str, Any]]) -> str:
     rows = sorted(
         ranking or [],
@@ -374,6 +383,7 @@ def _ranking_table_html(ranking: List[Dict[str, Any]]) -> str:
     )
     if not rows:
         return "<p style='color:#94a3b8'>No ranking.</p>"
+    n_failed = sum(1 for r in rows if _is_na_rank_row(r))
     body = []
     for r in rows:
         nm, ver = name_and_version(
@@ -382,19 +392,26 @@ def _ranking_table_html(ranking: List[Dict[str, Any]]) -> str:
             model=r.get("model"),
         )
         failed = _is_na_rank_row(r)
+        is_partial = bool(r.get("partial")) or failed
+        row_bg = "background:rgba(251,191,36,0.10);" if is_partial else ""
         if failed:
-            rank_cell = "—"
+            rank_cell = f"— · {_partial_chip_html()}"
             score_cell = (
                 "<span style='color:#f87171;font-weight:700'>N/A</span>"
                 "<div style='color:#94a3b8;font-size:0.72rem;font-weight:500'>"
                 "technical</div>"
             )
         else:
-            rank_cell = f"#{r.get('rank') or '—'}"
+            rank_n = r.get("rank") or "—"
+            rank_cell = (
+                f"#{rank_n} · {_partial_chip_html()}"
+                if is_partial
+                else f"#{rank_n}"
+            )
             acc = float(r.get("accuracy") or 0)
             score_cell = f"{acc:.1f}%"
         body.append(
-            "<tr>"
+            f"<tr style='{row_bg}'>"
             f"<td style='padding:0.3rem 0.45rem;border-bottom:1px solid #1e293b'>"
             f"{rank_cell}</td>"
             f"<td style='padding:0.3rem 0.45rem;border-bottom:1px solid #1e293b'>"
@@ -405,8 +422,20 @@ def _ranking_table_html(ranking: List[Dict[str, Any]]) -> str:
             f"color:#fbbf24;font-size:1.05rem;text-align:right'>{score_cell}</td>"
             "</tr>"
         )
+    banner = ""
+    if n_failed:
+        banner = (
+            "<div style='margin:0 0 0.45rem;padding:0.4rem 0.55rem;border-radius:8px;"
+            "border:1px solid #f59e0b;background:rgba(251,191,36,0.12);"
+            "color:#fde68a;font-size:0.78rem'>"
+            f"{_partial_chip_html()} "
+            "<b style='color:#fbbf24'>Partial run.</b> "
+            "Scored models keep their ranks; technical N/A stay listed "
+            "(not clinical 0%).</div>"
+        )
     return (
-        "<table style='width:100%;border-collapse:collapse;font-size:0.88rem;color:#e2e8f0'>"
+        banner
+        + "<table style='width:100%;border-collapse:collapse;font-size:0.88rem;color:#e2e8f0'>"
         "<thead><tr style='color:#94a3b8;text-align:left'>"
         "<th style='padding:0.3rem 0.45rem'>#</th>"
         "<th style='padding:0.3rem 0.45rem'>Name</th>"

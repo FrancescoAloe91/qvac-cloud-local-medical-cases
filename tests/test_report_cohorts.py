@@ -63,28 +63,34 @@ def test_mixed_execution_cohort_same_cohort_id_still_summarizes():
     assert any("Portfolio cross-case" in note for note in summary.outliers)
 
 
-def test_failure_excludes_only_under_threshold_model():
+def test_failure_keeps_partial_model_ranked_by_mean():
+    """Models with technical N/A stay listed and ranked by mean of scored runs."""
     artifacts = [_artifact(i) for i in range(5)]
     artifacts[2] = _artifact(2, failure=True)
     summary = summarize_runs(artifacts)
-    # Under-threshold models stay listed (honest Failed %) but are unranked.
     by_key = {row["key"]: row for row in summary.ranking_mean}
     assert set(by_key) == {"chatgpt", "claude"}
-    assert by_key["claude"]["rank"] == 1
     assert by_key["claude"]["eligible"] is True
+    assert by_key["claude"]["partial"] is False
     assert by_key["claude"]["n_failed"] == 0
     assert by_key["claude"]["failure_rate"] == 0.0
-    assert by_key["chatgpt"]["rank"] is None
-    assert by_key["chatgpt"]["eligible"] is False
+    # chatgpt: 4/5 scored → still ranked by mean, marked partial
+    assert by_key["chatgpt"]["eligible"] is True
+    assert by_key["chatgpt"]["partial"] is True
+    assert by_key["chatgpt"]["rank"] is not None
     assert by_key["chatgpt"]["n_runs"] == 4
     assert by_key["chatgpt"]["n_requested"] == 5
     assert by_key["chatgpt"]["n_failed"] == 1
     assert by_key["chatgpt"]["failure_rate"] == 0.2
+    assert by_key["chatgpt"]["accuracy_mean"] is not None
     assert summary.candidate_stats["chatgpt"]["n_valid"] == 4
     assert summary.candidate_stats["chatgpt"]["n_failed"] == 1
     assert summary.candidate_stats["claude"]["n_valid"] == 5
     assert summary.candidate_stats["chatgpt"]["failure_rate"] == 0.2
-    assert any("Unranked until" in note for note in summary.outliers)
+    assert any("Partial (ranked by mean" in note for note in summary.outliers)
+    # Mean order: both ranked; chatgpt mean of [80,81,83,84]=82 vs claude higher
+    assert by_key["claude"]["rank"] == 1
+    assert by_key["chatgpt"]["rank"] == 2
 
 
 def test_ranking_mean_failed_column_for_eligible_partial_failures():
@@ -94,11 +100,31 @@ def test_ranking_mean_failed_column_for_eligible_partial_failures():
     summary = summarize_runs(artifacts, min_valid_for_ranking=5)
     chatgpt = next(row for row in summary.ranking_mean if row["key"] == "chatgpt")
     assert chatgpt["eligible"] is True
+    assert chatgpt["partial"] is True
     assert chatgpt["rank"] is not None
     assert chatgpt["n_runs"] == 5
     assert chatgpt["n_requested"] == 6
     assert chatgpt["n_failed"] == 1
     assert chatgpt["failure_rate"] == pytest.approx(1 / 6, rel=1e-3)
+
+
+def test_all_na_model_listed_but_unranked():
+    """Zero scored observations → stay in table with Failed %, no rank."""
+    artifacts = [_artifact(i, failure=True) for i in range(5)]
+    for i, art in enumerate(artifacts):
+        # claude always scores so ranking is non-empty
+        art.ranking[1]["accuracy"] = 82.0 + i
+        art.ranking[1]["status"] = "ok"
+        art.ranking[1]["status_note"] = ""
+    summary = summarize_runs(artifacts, min_valid_for_ranking=5)
+    by_key = {row["key"]: row for row in summary.ranking_mean}
+    assert by_key["chatgpt"]["eligible"] is False
+    assert by_key["chatgpt"]["rank"] is None
+    assert by_key["chatgpt"]["partial"] is False
+    assert by_key["chatgpt"]["n_failed"] == 5
+    assert by_key["chatgpt"]["accuracy_mean"] is None
+    assert by_key["claude"]["rank"] == 1
+    assert any("unranked (no scored observations)" in note for note in summary.outliers)
 
 
 def test_equal_five_valid_runs_enable_exploratory_ranking():

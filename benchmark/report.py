@@ -200,19 +200,24 @@ def summarize_runs(
                 outliers.append(f"{key}: possible bimodal gap={mid_gap:.1f}")
 
     all_keys = set(requested)
+    # Rank by mean whenever a model has ≥1 scored observation. Technical N/A
+    # never drops a model from the table; incomplete coverage is marked partial
+    # so Failed % stays honest without hiding the mean-based rank.
     eligible_keys = {
-        key for key in all_keys if len(scores.get(key, [])) >= min_rank_n
+        key for key in all_keys if len(scores.get(key, [])) >= 1
     }
-    # Include every requested model so Failed % is visible even when a model
-    # drops below min_valid_for_ranking (common at Multi N=5: one N/A ⇒ excluded
-    # from competitive rank, which previously hid the only non-zero Failed cells).
     ranking_mean = []
     for k, v in stats.items():
         mean_raw = (
             statistics.fmean(scores[k]) if scores.get(k) else None
         )
         n_valid = int(v.get("n_valid") or v.get("n_runs") or v.get("n") or 0)
-        is_eligible = k in eligible_keys and mean_raw is not None
+        n_req = int(v.get("n_requested") or 0)
+        n_failed = int(v.get("n_failed") or 0)
+        is_eligible = mean_raw is not None
+        is_partial = bool(
+            is_eligible and (n_failed > 0 or (n_req > 0 and n_valid < n_req))
+        )
         ranking_mean.append(
             {
                 "key": k,
@@ -226,14 +231,15 @@ def summarize_runs(
                 "min": v["min"],
                 "max": v["max"],
                 "n_runs": n_valid,
-                "n_requested": int(v.get("n_requested") or 0),
-                "n_failed": int(v.get("n_failed") or 0),
+                "n_requested": n_req,
+                "n_failed": n_failed,
                 "failure_rate": v.get("failure_rate"),
                 "failure_reasons": dict(v.get("failure_reasons") or {}),
                 "coverage_mean": v.get("coverage_mean"),
                 "quality_mean": v.get("quality_mean"),
                 "discipline_mean": v.get("discipline_mean"),
                 "eligible": is_eligible,
+                "partial": is_partial,
                 "exploratory": True,
             }
         )
@@ -337,7 +343,17 @@ def summarize_runs(
 
     # Sum of per-run costs + extraction once (not ×N).
     total_cost = batch_total_cost_usd(artifacts)
-    excluded = sorted(all_keys - eligible_keys)
+    no_score = sorted(all_keys - eligible_keys)
+    partial_keys = sorted(
+        str(r.get("key") or "")
+        for r in ranking_mean
+        if r.get("partial") and r.get("key")
+    )
+    below_exploratory = sorted(
+        key
+        for key in eligible_keys
+        if len(scores.get(key, [])) < min_rank_n
+    )
     exec_ids = {
         (getattr(a, "execution_cohort_id", None) or "") for a in artifacts
     }
@@ -354,6 +370,37 @@ def summarize_runs(
                 "execution_cohort_id varied — routes/N/A/GGUF may differ "
                 "(audit only; Portfolio cross-case means unchanged)."
             )
+    extra_notes: List[str] = []
+    if partial_keys:
+        extra_notes.append(
+            "Partial (ranked by mean of scored runs; Failed % > 0 or scored < "
+            "requested): "
+            + ", ".join(
+                f"{key} ({len(scores.get(key, []))}/"
+                f"{int(stats.get(key, {}).get('n_requested') or 0)})"
+                for key in partial_keys
+            )
+            + ". Technical N/A never discard other models' valid data."
+        )
+    if no_score:
+        extra_notes.append(
+            "Listed with Failed % but unranked (no scored observations): "
+            + ", ".join(no_score)
+            + "."
+        )
+    if below_exploratory and min_rank_n > 1:
+        extra_notes.append(
+            "Below exploratory N="
+            + str(min_rank_n)
+            + " but still mean-ranked"
+            + (" · partial" if partial_keys else "")
+            + ": "
+            + ", ".join(
+                f"{key} ({len(scores.get(key, []))}/{min_rank_n})"
+                for key in below_exploratory
+            )
+            + "."
+        )
     return MultiRunSummary(
         case_id=case_id,
         n=min((len(scores.get(key, [])) for key in eligible_keys), default=0),
@@ -363,21 +410,7 @@ def summarize_runs(
         paired_n=paired_n,
         run_ids=[a.run_id for a in artifacts],
         total_cost_usd=round(total_cost, 6),
-        outliers=outliers
-        + (
-            []
-            if not excluded
-            else [
-                "Unranked until "
-                + str(min_rank_n)
-                + " valid observation(s) (still listed with Failed %): "
-                + ", ".join(
-                    f"{key} ({len(scores.get(key, []))}/{min_rank_n})"
-                    for key in excluded
-                )
-                + ". Technical failures are N/A; other models keep their valid data."
-            ]
-        ),
+        outliers=outliers + extra_notes,
     )
 
 
@@ -395,8 +428,14 @@ def print_summary_table(summary: MultiRunSummary) -> str:
         med = row.get("median")
         fail_pct = 100.0 * float(row.get("failure_rate") or 0)
         rank = row.get("rank")
+        if rank is None:
+            rank_s = "—"
+        elif row.get("partial"):
+            rank_s = f"{rank}·p"
+        else:
+            rank_s = str(rank)
         lines.append(
-            f"{('—' if rank is None else rank):<6}{row['key']:<12}"
+            f"{rank_s:<6}{row['key']:<12}"
             f"{('N/A' if mean is None else f'{float(mean):.1f}'):>7}"
             f"{(f'{std:.1f}' if std is not None else '—'):>7}"
             f"{(f'{cv:.1f}' if cv is not None else '—'):>6}"
@@ -421,14 +460,20 @@ def reliability_caption(summary: MultiRunSummary) -> str:
     ]
     if not ranked:
         return (
-            "No model has enough valid runs for exploratory ranking yet. "
+            "No model has a scored observation for mean ranking yet. "
             "Failed % = share of pooled runs that are technical N/A "
             "(collect/judge/timeout/partial/empty) — not a clinical zero; "
             "means use only scored runs."
         )
+    n_partial = sum(1 for r in ranked if r.get("partial"))
+    partial_bit = (
+        f" · {n_partial} partial (ranked by mean of scored runs; badge shows incomplete coverage)"
+        if n_partial
+        else ""
+    )
     eligible = len(ranked)
     return (
-        f"Exploratory ranking for {eligible} model(s) with enough valid runs · "
+        f"Mean ranking for {eligible} model(s) with ≥1 scored run{partial_bit} · "
         "each mean shows its own N; technical N/A never discard other models' data · "
         "Failed % = technical N/A rate across requested runs "
         "(collect/judge/timeout/partial/empty) · "

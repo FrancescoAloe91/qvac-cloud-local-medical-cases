@@ -188,10 +188,13 @@ def _mean_rows_to_last_ranking(ranking_mean):
                 "rank": r["rank"],
                 "accuracy": r["accuracy_mean"],
                 "label": short_model(str(r["key"])),
-                "status": "ok",
+                "status": "partial" if r.get("partial") else "ok",
+                "partial": bool(r.get("partial")),
                 "std": r.get("std"),
                 "cv_pct": r.get("cv_pct"),
                 "n_runs": int(r.get("n_runs") or r.get("n") or 0),
+                "n_requested": int(r.get("n_requested") or r.get("n_runs") or 0),
+                "n_failed": int(r.get("n_failed") or 0),
             }
         )
     return out
@@ -604,8 +607,10 @@ Clinical Composite Score = 30% diagnosis + 25% safety + 20% plan + 15% tests + 1
 Judge is an uncalibrated LLM-as-judge unless human calibration fixtures have been checked.
 Quality is independent of coverage by design (v4). Verifier = systemic re-judge, not human calibration.
 UI shows <b>Clinical Composite</b>; artifact JSON may still use the field name <code>accuracy</code> for compatibility.</p>
-<p>Each model enters the aggregate ranking after 5 valid runs, independently of
-other models' N/A results. Every mean keeps its own N; missing scores are never imputed.
+<p>Each model with ≥1 scored run enters the mean ranking (sorted by mean of scored runs),
+independently of other models' N/A results. Incomplete coverage (Failed% &gt; 0 or scored &lt; requested)
+keeps the rank and shows a <b>partial</b> badge — technical N/A are never clinical zeros.
+Every mean keeps its own N; missing scores are never imputed.
 N=5 remains exploratory (not bit-identical reruns) and measures repeatability on this reference, not general clinical validity.
 Local format-repair (same parser as cloud) only re-asks A# markers — it does not invent clinical content.
 Screenshots should keep at least one honesty caption (API≠web · reference-relative · N=5).</p>
@@ -1238,6 +1243,16 @@ def _render_saved_run_panel(path_str: str, *, key_prefix: str = "saved") -> None
                     st.caption(f"{qs.question_id}: {qs.score}/100 — {qs.rationale}")
 
 
+def _partial_badge_html() -> str:
+    """Compact English badge for incomplete mean / single-run coverage."""
+    return (
+        "<span style='display:inline-block;margin-left:0.35rem;padding:0.08rem 0.4rem;"
+        "border-radius:999px;font-size:0.68rem;font-weight:700;letter-spacing:0.04em;"
+        "text-transform:uppercase;color:#78350f;background:#fbbf24;"
+        "border:1px solid #f59e0b;vertical-align:middle'>partial</span>"
+    )
+
+
 def _reliability_table_html(ranking_mean: list) -> str:
     """Mean ranking table: CV% + Reliability cells tinted by CV band (legend)."""
     rows_html = []
@@ -1245,6 +1260,7 @@ def _reliability_table_html(ranking_mean: list) -> str:
         ranking_mean or [], score_field="accuracy_mean"
     )
     _td = "padding:0.45rem 0.55rem;border-bottom:1px solid #1e293b"
+    n_partial = sum(1 for r in ranking_mean if r.get("partial"))
 
     def _fmt_pct(value, *, digits: int = 1, suffix: str = "%") -> str:
         if value is None:
@@ -1270,7 +1286,13 @@ def _reliability_table_html(ranking_mean: list) -> str:
         except (TypeError, ValueError):
             fail_pct = 0.0
         rank = r.get("rank")
-        rank_cell = "—" if rank is None else f"#{rank}"
+        is_partial = bool(r.get("partial"))
+        if rank is None:
+            rank_cell = "—"
+        elif is_partial:
+            rank_cell = f"#{rank} · {_partial_badge_html()}"
+        else:
+            rank_cell = f"#{rank}"
         mean = r.get("accuracy_mean")
         cov = r.get("coverage_mean")
         qual = r.get("quality_mean")
@@ -1293,13 +1315,17 @@ def _reliability_table_html(ranking_mean: list) -> str:
             else f"{float(mn):.0f}–{float(mx):.0f}"
         )
         fail_color = "#fca5a5" if n_failed else "#94a3b8"
+        row_bg = (
+            "background:rgba(251,191,36,0.10);" if is_partial else ""
+        )
+        mean_color = "#f59e0b" if is_partial else "#fbbf24"
         rows_html.append(
-            "<tr>"
+            f"<tr style='{row_bg}'>"
             f"<td style='{_td}'>{rank_cell}</td>"
             f"<td style='{_td};font-weight:600'>{html.escape(nm)}</td>"
             f"<td style='{_td};color:#cbd5e1;font-size:0.85rem'>"
             f"{html.escape(ver)}</td>"
-            f"<td style='{_td};font-weight:700;color:#fbbf24;font-size:1.05rem'>"
+            f"<td style='{_td};font-weight:700;color:{mean_color};font-size:1.05rem'>"
             f"{_fmt_pct(mean)}</td>"
             f"<td style='{_td};color:#cbd5e1'>{cqd}</td>"
             f"<td style='{_td};color:#cbd5e1'>"
@@ -1318,8 +1344,22 @@ def _reliability_table_html(ranking_mean: list) -> str:
             f"{n_failed} ({fail_pct:.0f}%)</td>"
             "</tr>"
         )
+    banner = ""
+    if n_partial:
+        banner = (
+            "<div style='margin:0.35rem 0 0.55rem;padding:0.55rem 0.75rem;"
+            "border-radius:10px;border:1px solid #f59e0b;"
+            "background:rgba(251,191,36,0.12);color:#fde68a;font-size:0.85rem'>"
+            f"{_partial_badge_html()} "
+            "<b style='color:#fbbf24'>Partial results in this mean window.</b> "
+            "Models with technical N/A stay ranked by the mean of scored runs "
+            f"({n_partial} model"
+            f"{'s' if n_partial != 1 else ''}). "
+            "Failed % is not a clinical zero.</div>"
+        )
     return (
-        "<div style='overflow-x:auto;margin:0.35rem 0 0.75rem;border:1px solid #334155;"
+        banner
+        + "<div style='overflow-x:auto;margin:0.35rem 0 0.75rem;border:1px solid #334155;"
         "border-radius:12px;background:#0f172a'>"
         "<table style='width:100%;border-collapse:collapse;color:#e2e8f0;font-size:0.9rem'>"
         "<thead><tr style='color:#94a3b8;text-align:left;font-size:0.75rem;"
@@ -1347,7 +1387,8 @@ def _reliability_table_html(ranking_mean: list) -> str:
         "(can differ across models) · "
         "<b>Failed</b> = technical N/A rate "
         "(collect / judge / timeout / partial / empty) — not clinical 0% · "
-        "unranked rows (#—) need more valid runs for exploratory rank · "
+        "<b>partial</b> = ranked by mean of scored runs despite incomplete coverage · "
+        "unranked rows (#—) have zero scored observations · "
         "N=5 exploratory · ~10 better for CV eye-check · 20+ diminishing returns · "
         "<b>C/Q/D</b> = coverage / quality / discipline "
         "(quality is independent of coverage; a high board % can still have low C)</div>"
@@ -5182,22 +5223,54 @@ if st.session_state.get("confirmed_run"):
                             ),
                         )
                         _rank_rows = []
+                        _any_na = False
                         for r in ranking:
                             _nm, _ver = _nv(
                                 r.get("key"), label=r.get("label"), model=r.get("model")
                             )
+                            _na = str(r.get("status") or "ok") != "ok" or r.get(
+                                "accuracy"
+                            ) is None
+                            _any_na = _any_na or _na
+                            _rank = r.get("rank")
+                            _rank_disp = (
+                                "— · partial"
+                                if _na
+                                else (
+                                    f"#{_rank} · partial"
+                                    if r.get("partial") and _rank is not None
+                                    else _rank
+                                )
+                            )
                             _rank_rows.append(
                                 {
-                                    "#": r.get("rank"),
+                                    "#": _rank_disp,
                                     "Name": _nm,
                                     "Version": _ver,
-                                    "Clinical Composite %": r.get("accuracy"),
+                                    "Clinical Composite %": (
+                                        "N/A" if _na else r.get("accuracy")
+                                    ),
+                                    "Status": (
+                                        "partial"
+                                        if _na or r.get("partial")
+                                        else "ok"
+                                    ),
                                     "TTFT": r.get("ttft_s"),
                                     "TPS": r.get("tps"),
                                     "RAM(RSS)": _fmt_ram_mb(r.get("ram_mb")) or "—",
                                     "GGUF": _fmt_gguf_mb(r.get("gguf_mb")) or "—",
                                     "Runs": int(r.get("n_runs") or 1),
                                 }
+                            )
+                        if _any_na:
+                            st.markdown(
+                                '<div style="margin:0.25rem 0 0.5rem;padding:0.45rem 0.7rem;'
+                                "border-radius:8px;border:1px solid #f59e0b;"
+                                'background:rgba(251,191,36,0.12);color:#fde68a;font-size:0.85rem">'
+                                "<b style='color:#fbbf24'>partial</b> · technical N/A "
+                                "remain listed; scored models keep their ranks "
+                                "(not clinical 0%).</div>",
+                                unsafe_allow_html=True,
                             )
                         st.dataframe(
                             pd.DataFrame(_rank_rows),
@@ -6603,23 +6676,39 @@ if st.session_state.get("confirmed_run"):
                 )
                 if last_ranking:
                     rows = []
+                    _any_partial = False
                     for r in last_ranking:
                         nm, ver = _nv(
                             r.get("key"),
                             label=r.get("label"),
                             model=r.get("model"),
                         )
+                        st_raw = str(r.get("status") or "ok").lower()
+                        is_na = st_raw in {"n/a", "na", "failed", "error"} or (
+                            r.get("accuracy") is None and st_raw != "ok"
+                        )
+                        is_partial = bool(r.get("partial")) or st_raw == "partial" or is_na
+                        _any_partial = _any_partial or is_partial
+                        rank = r.get("rank")
+                        if is_na:
+                            rank_disp = "— · partial"
+                            score_disp = "N/A"
+                            status_disp = "partial"
+                        elif is_partial and rank is not None:
+                            rank_disp = f"#{rank} · partial"
+                            score_disp = r.get("accuracy")
+                            status_disp = "partial"
+                        else:
+                            rank_disp = rank
+                            score_disp = r.get("accuracy")
+                            status_disp = "ok"
                         rows.append(
                             {
-                                "#": r["rank"],
+                                "#": rank_disp,
                                 "Name": nm,
                                 "Version": ver,
-                                "Clinical Composite %": r["accuracy"],
-                                "Status": (
-                                    "ok"
-                                    if r.get("status", "ok") == "ok"
-                                    else f"error · {r.get('status_note') or 'failed'}"
-                                ),
+                                "Clinical Composite %": score_disp,
+                                "Status": status_disp,
                                 "TTFT": r.get("ttft_s"),
                                 "TPS": r.get("tps"),
                                 "RAM(RSS)": _fmt_ram_mb(r.get("ram_mb")) or "—",
@@ -6627,6 +6716,15 @@ if st.session_state.get("confirmed_run"):
                                 "$": r.get("cost_usd"),
                                 "Runs": int(r.get("n_runs") or 1),
                             }
+                        )
+                    if _any_partial:
+                        st.markdown(
+                            '<div style="margin:0.25rem 0 0.5rem;padding:0.45rem 0.7rem;'
+                            "border-radius:8px;border:1px solid #f59e0b;"
+                            'background:rgba(251,191,36,0.12);color:#fde68a;font-size:0.85rem">'
+                            "<b style='color:#fbbf24'>partial</b> · incomplete coverage "
+                            "stays ranked by mean of scored runs when available.</div>",
+                            unsafe_allow_html=True,
                         )
                     st.dataframe(
                         pd.DataFrame(rows), use_container_width=True, hide_index=True
@@ -6850,21 +6948,37 @@ if (
             key="rank_chart_saved",
         )
         rows = []
+        _any_partial = False
         for r in _saved_rank:
             nm, ver = _nv(
                 r.get("key"), label=r.get("label"), model=r.get("model")
             )
+            st_raw = str(r.get("status") or "ok").lower()
+            is_na = st_raw in {"n/a", "na", "failed", "error"} or (
+                r.get("accuracy") is None and st_raw != "ok"
+            )
+            is_partial = bool(r.get("partial")) or st_raw == "partial" or is_na
+            _any_partial = _any_partial or is_partial
+            rank = r.get("rank")
+            if is_na:
+                rank_disp = "— · partial"
+                score_disp = "N/A"
+                status_disp = "partial"
+            elif is_partial and rank is not None:
+                rank_disp = f"#{rank} · partial"
+                score_disp = r.get("accuracy")
+                status_disp = "partial"
+            else:
+                rank_disp = rank
+                score_disp = r.get("accuracy")
+                status_disp = "ok"
             rows.append(
                 {
-                    "#": r["rank"],
+                    "#": rank_disp,
                     "Name": nm,
                     "Version": ver,
-                    "Clinical Composite %": r["accuracy"],
-                    "Status": (
-                        "ok"
-                        if r.get("status", "ok") == "ok"
-                        else f"error · {r.get('status_note') or 'failed'}"
-                    ),
+                    "Clinical Composite %": score_disp,
+                    "Status": status_disp,
                     "TTFT": r.get("ttft_s"),
                     "TPS": r.get("tps"),
                     "RAM(RSS)": _fmt_ram_mb(r.get("ram_mb")) or "—",
@@ -6872,6 +6986,15 @@ if (
                     "$": r.get("cost_usd"),
                     "Runs": int(r.get("n_runs") or r.get("n") or 1),
                 }
+            )
+        if _any_partial:
+            st.markdown(
+                '<div style="margin:0.25rem 0 0.5rem;padding:0.45rem 0.7rem;'
+                "border-radius:8px;border:1px solid #f59e0b;"
+                'background:rgba(251,191,36,0.12);color:#fde68a;font-size:0.85rem">'
+                "<b style='color:#fbbf24'>partial</b> · incomplete coverage "
+                "stays ranked by mean of scored runs when available.</div>",
+                unsafe_allow_html=True,
             )
         st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
 

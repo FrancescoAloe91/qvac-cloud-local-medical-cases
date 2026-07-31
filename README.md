@@ -228,13 +228,15 @@ Each artifact uses schema v2 and includes:
 - batch and iteration IDs, effective judge, retry/failure metadata, sampling,
   token cap, timing, and available local hardware measurements.
 
-Each model enters the aggregate ranking after five valid observations in one
-cohort, even when another model has fewer valid results or N/A failures. Every
-mean retains its own N; missing scores are never imputed and never discard valid
-data from other models. N=5 is explicitly exploratory (reruns are not
-bit-identical). The dashboard reports sample SD, median, and IQR as
-repeatability signals for that exact case/reference, not general clinical
-validity.
+Each model with at least one scored observation enters the aggregate ranking,
+sorted by the mean of its scored runs — even when another model has fewer valid
+results or technical N/A failures. Incomplete coverage (Failed% &gt; 0 or
+scored &lt; requested) keeps the rank and shows a **partial** badge; N/A is never
+treated as a clinical zero. Every mean retains its own N; missing scores are
+never imputed and never discard valid data from other models. N=5 is explicitly
+exploratory (reruns are not bit-identical). The dashboard reports sample SD,
+median, and IQR as repeatability signals for that exact case/reference, not
+general clinical validity.
 
 Optional SHA digests and provider-routed model metadata may vary across
 OpenRouter responses; treat them as reproducibility aids, not guarantees of

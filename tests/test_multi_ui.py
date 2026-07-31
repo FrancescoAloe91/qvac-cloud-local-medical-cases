@@ -153,6 +153,8 @@ def test_secondary_ranking_table_shows_na_not_zero_percent():
     assert "N/A" in html
     assert "technical" in html
     assert "0.0%" not in html
+    assert "partial" in html.lower()
+    assert "Partial run" in html
 
 
 def test_finished_multi_progress_marks_batch_done_after_early_abort():

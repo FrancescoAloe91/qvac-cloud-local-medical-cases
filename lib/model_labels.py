@@ -53,13 +53,19 @@ def rerank_rows(
     *,
     score_field: str = "accuracy",
 ) -> List[Dict[str, Any]]:
-    """Sort valid rows, preserve exact ties, and leave technical N/A unranked."""
+    """Sort scored rows, preserve exact ties, leave technical N/A unranked.
+
+    ``partial`` rows (incomplete Multi/Portfolio coverage) stay ranked by mean
+    of scored runs — only hard N/A / missing scores are unranked.
+    """
 
     def _rankable(r: Dict[str, Any]) -> bool:
         if r.get("eligible") is False:
             return False
-        if str(r.get("status") or "ok") != "ok":
+        status = str(r.get("status") or "ok").lower()
+        if status in {"n/a", "na", "failed", "error"}:
             return False
+        # ok / partial / empty status with a score remain competitive
         if r.get(score_field) is None:
             return False
         return True
