@@ -76,12 +76,16 @@ judge:
     - Fireworks
     - DeepInfra
 
-# Token assumptions for --dry-run (length-aware estimate also uses live case/gold chars).
-# Baseline estimate = candidates + gold extractor (4k out) + primary judge @16k out.
-# Upper bound also adds possible section repair (≤5×4k/candidate) + optional verifier.
+# Token assumptions for pre-run forecast (rough · often over).
+# Baseline uses *typical* completions — never the API max_tokens cap as billable.
+# When History has comparable runs, UI/CLI calibrate from actual usage.cost.
 estimate:
   candidate_input_tokens: 1800  # legacy CLI hint only; UI estimate uses real text length
-  candidate_output_tokens: 900
-  extractor_output_tokens: 4000
+  candidate_output_tokens: 2000  # ~observed cloud median
+  extractor_output_tokens: 900  # typical extract; not the 4k cap
+  judge_output_tokens: 5500  # typical DeepSeek R1 judge completion (cap is 16384)
+  judge_output_tokens_high: 8500  # ~p90 for upper band
+  repair_rate_per_judge_call: 0.08  # upper: uncommon section repair
+  verifier_rate_per_judge_call: 0.05  # upper: uncommon systemic re-judge
   judge_input_tokens_per_question: 2800  # legacy hint; live estimate builds from case/gold
-  judge_output_tokens_per_question: 1600  # legacy; live primary estimate uses 16384 cap
+  judge_output_tokens_per_question: 1600  # legacy; unused by live forecast

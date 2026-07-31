@@ -16,7 +16,7 @@ OPENROUTER_URL = os.environ.get(
     "OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1/chat/completions"
 )
 
-# Fallback $/1M when usage.cost is missing (OpenRouter list-ish; verify live rates)
+# Fallback $/1M when usage.cost is missing (catalog snapshot; billed truth = usage.cost)
 _FALLBACK_PRICES = {
     "openai/gpt-4o-mini": (0.15, 0.60),
     "openai/gpt-5.5": (5.00, 30.00),

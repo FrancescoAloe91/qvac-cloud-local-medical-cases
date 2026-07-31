@@ -298,20 +298,22 @@ def estimate_cost_breakdown(
     local_only: bool = False,
     include_local_peers: Optional[bool] = None,
     include_medical_peers: Optional[bool] = None,
+    include_extractor: bool = True,
+    extraction_cost_usd: Optional[float] = None,
+    history_artifacts: Optional[Sequence[Any]] = None,
 ) -> Dict[str, Any]:
-    """Length-aware OpenRouter spend estimate (USD).
+    """Rough OpenRouter spend forecast (USD) — often slightly over.
 
-    Baseline (``total_usd``) includes cloud candidates, gold extractor, and
-    primary judge at the real 16k completion cap. Section repair (up to
-    ``n_q`` × 4k) and whole-run verifier are itemized as possible/optional
-    extras and folded into ``total_usd_upper`` so the UI does not rely on a
-    crude 2× fudge that still understated extractor + repair + verifier.
+    Baseline uses **typical** completion sizes (not ``max_tokens`` caps). The
+    API cap (16k judge / 4k repair) is a ceiling for rare retries, not the
+    expected bill. When recent History has comparable runs, baseline/upper are
+    calibrated from actual ``total_cost_usd`` / native token usage.
 
-    Scales with clinical case + gold text length.
     ``local_only`` = on-device GGUFs ($0 collect) + paid extractor/judge path.
-    Extractor is charged once per batch (gold confirmed once); candidates and
-    judge scale with ``n``.
+    Extractor is charged once per batch when ``include_extractor``; candidates
+    and judge scale with ``n``.
     """
+    from benchmark.costing import cost_estimate_priors_from_artifacts
     from benchmark.gold import extraction_messages
     from benchmark.judge import _JUDGE_PRIMARY_MAX_TOKENS, _JUDGE_SECTION_MAX_TOKENS
 
@@ -325,8 +327,8 @@ def estimate_cost_breakdown(
     base_in = openrouter.estimate_tokens_from_text(sys_u, user_u, gold)
     cin = base_in + 80  # small framing overhead only
 
-    cout_base = int(est.get("candidate_output_tokens", 900))
-    # Longer cases → modestly longer answers (still an estimate)
+    # Typical cloud answer length (~2k observed); never treat max_tokens as billable.
+    cout_base = int(est.get("candidate_output_tokens", 2000))
     cout = max(400, int(cout_base * (0.65 + 0.35 * min(2.2, cin / 1000))))
 
     n_q = max(1, len(case.questions))
@@ -334,8 +336,15 @@ def estimate_cost_breakdown(
     judge_ctx = openrouter.estimate_tokens_from_text(case.stem, gold, sys_u)
     per_q_answer = max(200, cout // n_q)
     judge_in = judge_ctx + 350 + n_q * (per_q_answer + 220)
-    # Primary completion budget is 16384 — do not estimate from 1600×sections alone.
-    judge_out_primary = int(_JUDGE_PRIMARY_MAX_TOKENS)
+    # Typical primary judge completion (~5.5k observed). Cap 16k is NOT expected.
+    judge_out_typical = int(est.get("judge_output_tokens", 5500))
+    judge_out_high = int(
+        est.get("judge_output_tokens_high", max(judge_out_typical, 8500))
+    )
+    judge_out_typical = max(800, min(int(_JUDGE_PRIMARY_MAX_TOKENS), judge_out_typical))
+    judge_out_high = max(
+        judge_out_typical, min(int(_JUDGE_PRIMARY_MAX_TOKENS), judge_out_high)
+    )
 
     if local_only:
         roster = merge_roster(
@@ -362,6 +371,7 @@ def estimate_cost_breakdown(
 
     per_model: List[Dict[str, Any]] = []
     scored_keys = 0
+    openrouter_keys = 0
     candidates_usd = 0.0
     for c in roster:
         key = c.get("key")
@@ -387,6 +397,7 @@ def estimate_cost_breakdown(
         cost = openrouter.estimate_cost_usd(mid, cin, cout)
         candidates_usd += cost
         scored_keys += 1
+        openrouter_keys += 1
         pin, pout = openrouter.model_prices_per_mtok(mid)
         per_model.append(
             {
@@ -402,7 +413,38 @@ def estimate_cost_breakdown(
             }
         )
 
-    # Gold extractor: one paid call when reference is confirmed (max 4k out).
+    priors = cost_estimate_priors_from_artifacts(
+        history_artifacts or [],
+        scored_keys=scored_keys,
+        openrouter_keys=openrouter_keys,
+    )
+    calibrated = bool(priors)
+    if priors:
+        if priors.get("candidate_completion_tokens_typical"):
+            cout = int(priors["candidate_completion_tokens_typical"])
+            # Recompute cloud candidate line items with calibrated outs.
+            candidates_usd = 0.0
+            for row in per_model:
+                if row.get("provider") != "openrouter":
+                    row["completion_tokens"] = cout
+                    continue
+                mid = str(row["model"])
+                pin_tok = int(row.get("prompt_tokens") or cin)
+                if priors.get("candidate_prompt_tokens_typical"):
+                    pin_tok = int(priors["candidate_prompt_tokens_typical"])
+                    row["prompt_tokens"] = pin_tok
+                row["completion_tokens"] = cout
+                cost = openrouter.estimate_cost_usd(mid, pin_tok, cout)
+                row["estimated_usd"] = round(cost, 6)
+                candidates_usd += cost
+        if priors.get("judge_completion_tokens_typical"):
+            judge_out_typical = int(priors["judge_completion_tokens_typical"])
+        if priors.get("judge_completion_tokens_high"):
+            judge_out_high = int(priors["judge_completion_tokens_high"])
+        if priors.get("judge_prompt_tokens_typical"):
+            judge_in = int(priors["judge_prompt_tokens_typical"])
+
+    # Gold extractor: once per Prepare/Confirm batch (skip if already paid).
     extractor_model = os.environ.get(
         "BENCHMARK_GOLD_EXTRACTOR_MODEL", "openai/gpt-4o-mini"
     )
@@ -410,30 +452,43 @@ def estimate_cost_breakdown(
     extract_in = openrouter.estimate_tokens_from_text(
         *(str(m.get("content") or "") for m in extract_msgs)
     )
-    extract_out = int(est.get("extractor_output_tokens", 4000))
-    extractor_one = openrouter.estimate_cost_usd(
-        extractor_model, extract_in, extract_out
-    )
+    extract_out = int(est.get("extractor_output_tokens", 900))
+    if extraction_cost_usd is not None:
+        extractor_one = max(0.0, float(extraction_cost_usd))
+    elif include_extractor:
+        extractor_one = openrouter.estimate_cost_usd(
+            extractor_model, extract_in, extract_out
+        )
+    else:
+        extractor_one = 0.0
     epin, epout = openrouter.model_prices_per_mtok(extractor_model)
     extractor_block = {
         "model": extractor_model,
         "label": f"Gold extractor · {extractor_model}",
-        "calls": 1,
+        "calls": 1 if extractor_one > 0 else 0,
         "estimated_usd": round(extractor_one, 6),
         "prompt_tokens": extract_in,
         "completion_tokens": extract_out,
         "price_in_per_mtok": epin,
         "price_out_per_mtok": epout,
-        "note": "once per prepared/confirmed reference batch",
+        "note": (
+            "already paid / omitted"
+            if extractor_one <= 0
+            else "once per prepared/confirmed reference batch"
+        ),
     }
 
     judge_cfg = cfg.get("judge") or {}
     judge_model = judge_cfg.get("model", "deepseek/deepseek-r1")
     n_judge_calls = scored_keys
     judge_one = openrouter.estimate_cost_usd(
-        judge_model, judge_in, judge_out_primary
+        judge_model, judge_in, judge_out_typical
     )
     judge_total = judge_one * n_judge_calls
+    judge_one_high = openrouter.estimate_cost_usd(
+        judge_model, judge_in, judge_out_high
+    )
+    judge_total_high = judge_one_high * n_judge_calls
     jpin, jpout = openrouter.model_prices_per_mtok(judge_model)
     judge_block = {
         "model": judge_model,
@@ -442,73 +497,104 @@ def estimate_cost_breakdown(
         "estimated_usd_per_call": round(judge_one, 6),
         "estimated_usd": round(judge_total, 6),
         "prompt_tokens_per_call": judge_in,
-        "completion_tokens_per_call": judge_out_primary,
+        "completion_tokens_per_call": judge_out_typical,
+        "completion_tokens_high_per_call": judge_out_high,
+        "completion_tokens_cap": int(_JUDGE_PRIMARY_MAX_TOKENS),
         "price_in_per_mtok": jpin,
         "price_out_per_mtok": jpout,
-        "note": f"primary cap {_JUDGE_PRIMARY_MAX_TOKENS} completion tokens/call",
+        "note": (
+            f"typical ~{judge_out_typical} completion tokens/call "
+            f"(API cap {_JUDGE_PRIMARY_MAX_TOKENS} is not the expected bill)"
+        ),
     }
 
-    # Possible section repair: up to one 4k call per section still invalid.
+    # Repair/verifier are rare; upper uses observed-ish rates, not full worst case.
     repair_out = int(_JUDGE_SECTION_MAX_TOKENS)
     repair_one_section = openrouter.estimate_cost_usd(
         judge_model, judge_in, repair_out
     )
-    repair_total = repair_one_section * n_q * n_judge_calls
+    repair_rate = float(
+        (priors or {}).get("repair_rate_per_judge_call")
+        if priors
+        else est.get("repair_rate_per_judge_call", 0.08)
+    )
+    repair_rate = min(1.0, max(0.0, repair_rate))
+    # At most one section-repair call expected per judge call at that rate.
+    repair_expected = repair_one_section * n_judge_calls * repair_rate
+    repair_ceiling = repair_one_section * n_q * n_judge_calls
     repair_block = {
         "model": judge_model,
         "label": "Section repair (possible)",
         "calls_max": n_q * n_judge_calls,
         "sections_per_candidate": n_q,
-        "estimated_usd": round(repair_total, 6),
+        "estimated_usd": round(repair_expected, 6),
+        "estimated_usd_ceiling": round(repair_ceiling, 6),
         "prompt_tokens_per_call": judge_in,
         "completion_tokens_per_call": repair_out,
         "price_in_per_mtok": jpin,
         "price_out_per_mtok": jpout,
         "optional": True,
         "note": (
-            f"upper bound if every section of every candidate needs a "
-            f"{repair_out}-token repair"
+            f"upper uses ~{repair_rate:.0%} of judge calls needing one "
+            f"{repair_out}-token repair (not every section × every model)"
         ),
     }
 
-    # Optional whole-run verifier: re-judges the full cohort (same primary cap).
     verifier_model = (
         (judge_cfg.get("verifier_model") or "").strip()
         or "qwen/qwen3.5-397b-a17b"
     )
     verifier_one = openrouter.estimate_cost_usd(
-        verifier_model, judge_in, judge_out_primary
+        verifier_model, judge_in, judge_out_typical
     )
-    verifier_total = verifier_one * n_judge_calls
+    verifier_full = verifier_one * n_judge_calls
+    verifier_rate = float(
+        (priors or {}).get("verifier_rate_per_judge_call")
+        if priors
+        else est.get("verifier_rate_per_judge_call", 0.05)
+    )
+    verifier_rate = min(1.0, max(0.0, verifier_rate))
+    verifier_expected = verifier_full * verifier_rate
     vpin, vpout = openrouter.model_prices_per_mtok(verifier_model)
     verifier_block = {
         "model": verifier_model,
         "label": f"Whole-run verifier (optional) · {verifier_model}",
         "calls": n_judge_calls,
         "estimated_usd_per_call": round(verifier_one, 6),
-        "estimated_usd": round(verifier_total, 6),
+        "estimated_usd": round(verifier_expected, 6),
+        "estimated_usd_full_cohort": round(verifier_full, 6),
         "prompt_tokens_per_call": judge_in,
-        "completion_tokens_per_call": judge_out_primary,
+        "completion_tokens_per_call": judge_out_typical,
         "price_in_per_mtok": vpin,
         "price_out_per_mtok": vpout,
         "optional": True,
         "note": (
-            "only if systemic primary failure (≥2 technical N/A and ≥30% cohort); "
-            "replaces primary ranking for that run — never mixed"
+            f"upper folds ~{verifier_rate:.0%} chance of systemic re-judge "
+            "(not billed on every run)"
         ),
     }
 
-    # Baseline = always-on path for one iteration (candidates + primary judge).
-    # Extractor is once per batch, so it is added outside the ×n scale below.
+    # Formula path: typical candidates + typical primary judge.
     per_iteration = candidates_usd + judge_total
+    per_iteration_high = candidates_usd + judge_total_high + repair_expected + verifier_expected
+    source = "formula_typical_tokens"
+    if priors and priors.get("run_cost_usd_typical"):
+        # Prefer actual OpenRouter spend from comparable History runs.
+        per_iteration = float(priors["run_cost_usd_typical"])
+        per_iteration_high = max(
+            float(priors.get("run_cost_usd_high") or per_iteration),
+            per_iteration,
+        )
+        # Keep a small buffer for case-length drift when not already above.
+        per_iteration_high = max(
+            per_iteration_high, per_iteration * 1.15 + repair_expected
+        )
+        source = "history_calibrated"
+
     baseline_one = per_iteration + extractor_one
-    upper_one = baseline_one + repair_total + verifier_total
-    # Multi: extractor once; candidates/judge/repair/verifier scale with N.
+    upper_one = per_iteration_high + extractor_one
     total_for_n = extractor_one + per_iteration * n_runs
-    upper_for_n = (
-        extractor_one
-        + (per_iteration + repair_total + verifier_total) * n_runs
-    )
+    upper_for_n = extractor_one + per_iteration_high * n_runs
 
     chars = len(case.stem or "") + len(gold)
     return {
@@ -525,11 +611,21 @@ def estimate_cost_breakdown(
         "input_tokens_used_for_estimate": cin,
         "completion_tokens_used_for_estimate": cout,
         "chars_case_plus_gold": chars,
+        "calibrated": calibrated,
+        "calibration_n": int((priors or {}).get("n_samples") or 0),
+        "estimate_source": source,
+        "reliability": "rough_estimate_often_over",
+        "priors": priors,
         "note": (
-            "Baseline = candidates + gold extractor (once/batch) + primary judge "
-            f"@{_JUDGE_PRIMARY_MAX_TOKENS} out. Upper adds possible section repair "
-            f"(≤{n_q}×{_JUDGE_SECTION_MAX_TOKENS}/candidate) and optional whole-run "
-            "verifier. Actual billed cost from OpenRouter usage."
+            "Rough estimate · often over. Baseline uses typical completion sizes "
+            f"(judge ~{judge_out_typical} tok, not the {_JUDGE_PRIMARY_MAX_TOKENS} "
+            "API cap). Upper adds higher judge outs + uncommon repair/verifier. "
+            + (
+                f"Calibrated from {int(priors['n_samples'])} comparable History runs."
+                if priors
+                else "No comparable History yet — formula priors only. "
+            )
+            + " Billed truth = OpenRouter usage.cost."
         ),
     }
 

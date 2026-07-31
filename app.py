@@ -837,18 +837,27 @@ def _render_spend_confirm_card() -> None:
     est = float(pr.get("est") or 0)
     est_hi = float(pr.get("est_hi") or 0) or est
     mode = pr.get("mode") or "full"
-    if mode == "local_only":
+    show_fc = bool(st.session_state.get("show_cost_forecast", True))
+    if not show_fc:
         spend_body = (
-            f"Estimated OpenRouter spend <b>${est:.4f} – ${est_hi:.4f}</b> for "
-            f"<b>{n}</b> Only-local run(s) · <b>judge only</b> "
-            f"(DeepSeek R1 × 6 answers × {n}). "
-            f"Collect = 6 on-device GGUFs · <b>$0</b> inference each run."
+            f"Start <b>{n}</b> run(s) "
+            f"({'judge-only / on-device collect' if mode == 'local_only' else 'cloud + judge'}). "
+            f"Cost forecast is hidden — billed truth = OpenRouter usage."
+        )
+    elif mode == "local_only":
+        spend_body = (
+            f"Rough OpenRouter estimate <b>${est:.4f} – ${est_hi:.4f}</b> "
+            f"(often over) for <b>{n}</b> Only-local run(s) · <b>judge only</b> "
+            f"(DeepSeek R1 × on-device answers × {n}). "
+            f"Collect = on-device GGUFs · <b>$0</b> inference each run. "
+            f"Billed truth = OpenRouter usage."
         )
     else:
         spend_body = (
-            f"Estimated OpenRouter spend <b>${est:.4f} – ${est_hi:.4f}</b> for "
-            f"<b>{n}</b> run(s) (cloud models + DeepSeek R1 judge). "
-            f"On-device = $0 if included."
+            f"Rough OpenRouter estimate <b>${est:.4f} – ${est_hi:.4f}</b> "
+            f"(often over) for <b>{n}</b> run(s) "
+            f"(cloud models + DeepSeek R1 judge). "
+            f"On-device = $0 if included. Billed truth = OpenRouter usage."
         )
     st.markdown(
         f"""
@@ -2660,71 +2669,82 @@ if missing:
         "Medical: `./scripts/download_medical_peers.sh`."
     )
 
-bd = estimate_cost_breakdown(
-    cfg,
-    live_case,
+_hist_for_cost = []
+try:
+    _hist_for_cost = [a for _, a in RUN_STORE.list_artifacts()[:60]]
+except Exception:
+    _hist_for_cost = []
+# Confirmed gold ⇒ extractor already billed; omit from pre-run forecast.
+_extract_already = bool(st.session_state.get("_confirmed_gold_json"))
+_cost_kwargs = dict(
     include_qvac=_eff_medpsy,
     gold_reference=effective_gold or gold_reference,
-    n=1,
     triple_qvac=_eff_triple,
     include_local_peers=_eff_generic,
     include_medical_peers=_eff_medical,
+    include_extractor=not _extract_already,
+    extraction_cost_usd=0.0 if _extract_already else None,
+    history_artifacts=_hist_for_cost,
 )
+
+bd = estimate_cost_breakdown(cfg, live_case, n=1, **_cost_kwargs)
 bd_multi = estimate_cost_breakdown(
-    cfg,
-    live_case,
-    include_qvac=_eff_medpsy,
-    gold_reference=effective_gold or gold_reference,
-    n=int(n_multi),
-    triple_qvac=_eff_triple,
-    include_local_peers=_eff_generic,
-    include_medical_peers=_eff_medical,
+    cfg, live_case, n=int(n_multi), **_cost_kwargs
 )
 bd_local_only = estimate_cost_breakdown(
     cfg,
     live_case,
-    include_qvac=_eff_medpsy or True,
-    gold_reference=effective_gold or gold_reference,
     n=1,
-    triple_qvac=True,
     local_only=True,
+    include_qvac=True,
+    gold_reference=effective_gold or gold_reference,
+    triple_qvac=True,
     include_local_peers=_eff_generic,
     include_medical_peers=_eff_medical,
+    include_extractor=not _extract_already,
+    extraction_cost_usd=0.0 if _extract_already else None,
+    history_artifacts=_hist_for_cost,
 )
 bd_local_only_multi = estimate_cost_breakdown(
     cfg,
     live_case,
-    include_qvac=_eff_medpsy or True,
-    gold_reference=effective_gold or gold_reference,
     n=int(n_multi),
-    triple_qvac=True,
     local_only=True,
+    include_qvac=True,
+    gold_reference=effective_gold or gold_reference,
+    triple_qvac=True,
     include_local_peers=_eff_generic,
     include_medical_peers=_eff_medical,
+    include_extractor=not _extract_already,
+    extraction_cost_usd=0.0 if _extract_already else None,
+    history_artifacts=_hist_for_cost,
 )
 
 
 def _fmt_cost_single(breakdown: dict) -> str:
     bits = []
     for m in breakdown.get("per_model") or []:
+        if float(m.get("estimated_usd", 0) or 0) <= 0:
+            continue
         bits.append(f"{m.get('key')} ${m.get('estimated_usd', 0):.3f}")
     ex = breakdown.get("extractor") or {}
-    if ex:
-        bits.append(f"extract ${float(ex.get('estimated_usd', 0) or 0):.3f}")
+    ex_usd = float(ex.get("estimated_usd", 0) or 0)
+    if ex_usd > 0:
+        bits.append(f"extract ${ex_usd:.3f}")
     j = breakdown.get("judge") or {}
     bits.append(f"judge ${j.get('estimated_usd', 0):.3f}")
     total = float(breakdown.get("total_usd", 0) or 0)
     hi = float(breakdown.get("total_usd_upper", 0) or 0) or total
-    repair = float((breakdown.get("section_repair") or {}).get("estimated_usd", 0) or 0)
-    verifier = float((breakdown.get("verifier") or {}).get("estimated_usd", 0) or 0)
-    tok = breakdown.get("input_tokens_used_for_estimate", 0)
-    chars = breakdown.get("chars_case_plus_gold", 0)
+    cal_n = int(breakdown.get("calibration_n") or 0)
+    src = "History-calibrated" if breakdown.get("calibrated") else "formula"
+    j_out = j.get("completion_tokens_per_call", "?")
     return (
         '<div class="cost-compact run-cost-cell">'
         + " · ".join(bits)
         + f' · <b>${total:.3f}–${hi:.3f}</b>'
-        + f'<br/><span style="opacity:.75">{chars} chars · ~{tok} in-tok · '
-        + f"upper=+repair ${repair:.3f} +opt verifier ${verifier:.3f}</span>"
+        + f'<br/><span style="opacity:.75">rough estimate · often over · {src}'
+        + (f" n={cal_n}" if cal_n else "")
+        + f" · judge ~{j_out} tok (not 16k cap)</span>"
         + "</div>"
     )
 
@@ -2733,10 +2753,17 @@ def _fmt_cost_multi(breakdown: dict, n: int) -> str:
     tot = float(breakdown.get("total_usd_for_n", 0) or 0)
     hi = float(breakdown.get("total_usd_upper_for_n", 0) or 0) or tot
     extract = float((breakdown.get("extractor") or {}).get("estimated_usd", 0) or 0)
+    cal_n = int(breakdown.get("calibration_n") or 0)
+    src = "History-calibrated" if breakdown.get("calibrated") else "formula"
+    extract_bit = (
+        f" · +extract ${extract:.3f} once" if extract > 0 else " · extract already paid"
+    )
     return (
         f'<div class="cost-compact cost-multi run-cost-cell">'
-        f"<b>${tot:.3f}–${hi:.3f}</b> · ×{n} (+extract ${extract:.3f} once)"
-        f'<br/><span style="opacity:.75">baseline–upper (repair+opt verifier)</span></div>'
+        f"<b>${tot:.3f}–${hi:.3f}</b> · ×{n}{extract_bit}"
+        f'<br/><span style="opacity:.75">rough estimate · often over · {src}'
+        + (f" n={cal_n}" if cal_n else "")
+        + "</span></div>"
     )
 
 
@@ -2751,6 +2778,13 @@ selected_unavailable = (
     or (not include_cloud and not qvac_run_ok)
     or not bool(effective_gold)
 )
+show_cost_forecast = st.toggle(
+    "Show OpenRouter cost forecast",
+    value=bool(st.session_state.get("show_cost_forecast", True)),
+    key="show_cost_forecast",
+    help="Pre-run forecast is a rough estimate (often over). "
+    "Toggle off if you prefer not to see it. Billed truth = OpenRouter usage.",
+)
 _run_r1 = st.columns(2, gap="small")
 with _run_r1[0]:
     single_clicked = st.button(
@@ -2760,11 +2794,12 @@ with _run_r1[0]:
         disabled=selected_unavailable,
         help="Quick one-shot. For published-style comparison prefer Multi ×5.",
     )
-    st.markdown(_fmt_cost_single(selected_bd), unsafe_allow_html=True)
-    st.caption(
-        "Length-aware estimate ≠ billed OpenRouter ledger "
-        "(repair/verifier/pricing drift · usage is truth)."
-    )
+    if show_cost_forecast:
+        st.markdown(_fmt_cost_single(selected_bd), unsafe_allow_html=True)
+        st.caption(
+            "Rough estimate · often over · not the OpenRouter ledger "
+            "(History-calibrated when comparable runs exist · usage is truth)."
+        )
 with _run_r1[1]:
     multi_clicked = st.button(
         f"Multi run ×{int(n_multi)} · {selected_scope}",
@@ -2773,11 +2808,12 @@ with _run_r1[1]:
         disabled=selected_unavailable,
         help="Mean/median/std across N runs (default 5 exploratory; ~10 steadier CV).",
     )
-    st.markdown(_fmt_cost_multi(selected_bd_multi, int(n_multi)), unsafe_allow_html=True)
-    st.caption(
-        "Length-aware estimate ≠ billed OpenRouter ledger "
-        "(repair/verifier/pricing drift · usage is truth)."
-    )
+    if show_cost_forecast:
+        st.markdown(_fmt_cost_multi(selected_bd_multi, int(n_multi)), unsafe_allow_html=True)
+        st.caption(
+            "Rough estimate · often over · not the OpenRouter ledger "
+            "(History-calibrated when comparable runs exist · usage is truth)."
+        )
 
 _run_r2 = st.columns([1, 1], gap="small")
 with _run_r2[0]:
