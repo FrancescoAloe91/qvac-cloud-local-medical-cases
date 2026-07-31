@@ -93,14 +93,14 @@ LOCAL_PEER_SPECS: List[Dict[str, Any]] = [
 MEDICAL_PEER_SPECS: List[Dict[str, Any]] = [
     {
         "key": "local_medgemma",
-        "label": "MedGemma 4B IT",
-        "display_label": "Medical · MedGemma-4B-IT Q4 · on-device",
+        "label": "MedGemma 1.5 4B IT",
+        "display_label": "Medical · MedGemma-1.5-4B-IT Q4 · on-device",
         "vendor": "Google / Unsloth (open)",
         "site": "local (QVAC SDK)",
         "color": "#f59e0b",
         "provider": "qvac",
-        "model": "medgemma-4b-it-q4",
-        "gguf": "medgemma-4b-it-Q4_K_M.gguf",
+        "model": "medgemma-1.5-4b-it-q4",
+        "gguf": "medgemma-1.5-4b-it-Q4_K_M.gguf",
         "band": "medical_local",
     },
     {

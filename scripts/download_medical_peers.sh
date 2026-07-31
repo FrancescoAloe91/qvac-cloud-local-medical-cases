@@ -19,11 +19,11 @@ pip install -q huggingface_hub
 
 # Primary repo|hf_filename|local_name  (fallback tried in download_one for Med42)
 # Filenames verified on Hugging Face (Q4_K_M):
-#   unsloth/medgemma-4b-it-GGUF → medgemma-4b-it-Q4_K_M.gguf
+#   unsloth/medgemma-1.5-4b-it-GGUF → medgemma-1.5-4b-it-Q4_K_M.gguf
 #   mradermacher/Llama3-Med42-8B-GGUF → Llama3-Med42-8B.Q4_K_M.gguf
 #   mradermacher/Llama-3-8B-UltraMedical-GGUF → Llama-3-8B-UltraMedical.Q4_K_M.gguf
 PEERS=(
-  "unsloth/medgemma-4b-it-GGUF|medgemma-4b-it-Q4_K_M.gguf|medgemma-4b-it-Q4_K_M.gguf"
+  "unsloth/medgemma-1.5-4b-it-GGUF|medgemma-1.5-4b-it-Q4_K_M.gguf|medgemma-1.5-4b-it-Q4_K_M.gguf"
   "mradermacher/Llama3-Med42-8B-GGUF|Llama3-Med42-8B.Q4_K_M.gguf|Llama3-Med42-8B.Q4_K_M.gguf"
   "mradermacher/Llama-3-8B-UltraMedical-GGUF|Llama-3-8B-UltraMedical.Q4_K_M.gguf|Llama-3-8B-UltraMedical.Q4_K_M.gguf"
 )

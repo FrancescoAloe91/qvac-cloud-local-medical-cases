@@ -56,7 +56,7 @@ Nine roster slots answer the same five questions under the same prompt (up to
 - **QVAC MedPsy** (toggle): 1.7B Q4, 4B Q4, 4B Q8 via QVAC sidecar
 - **Generic local LLMs** (toggle): Gemma 2 2B IT Q4, Llama 3.2 3B Instruct Q4,
   Phi-3.5 Mini Instruct Q4 — not medical-specialized
-- **Medical local LLMs** (toggle): MedGemma 4B IT Q4, Med42 8B Q4,
+- **Medical local LLMs** (toggle): MedGemma 1.5 4B IT Q4, Med42 8B Q4,
   UltraMedical 8B Q4 — medical-specialized peers (not MedPsy)
 
 Dashboard presets (English): **Medical on-device only** (6 = MedPsy + medical),

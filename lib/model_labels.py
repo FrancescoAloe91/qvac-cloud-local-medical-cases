@@ -115,7 +115,7 @@ MODEL_LABELS: Dict[str, Dict[str, str]] = {
     },
     "local_medgemma": {
         "name": "MedGemma",
-        "version": "MedGemma-4B-IT Q4",
+        "version": "MedGemma-1.5-4B-IT Q4",
     },
     "local_med42": {
         "name": "Med42",

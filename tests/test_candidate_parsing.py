@@ -397,6 +397,7 @@ def test_medical_peers_rely_on_embedded_chat_template():
     }
     for key, spec in by_key.items():
         assert "chat_format" not in spec
+    assert by_key["local_medgemma"]["gguf"] == "medgemma-1.5-4b-it-Q4_K_M.gguf"
     assert by_key["local_ultramedical"]["gguf"].startswith("Llama-3-8B-UltraMedical")
 
 

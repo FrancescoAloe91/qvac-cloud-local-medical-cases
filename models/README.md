@@ -56,7 +56,7 @@ preset **Medical on-device only** (3 MedPsy + 3 medical, cloud/generics off).
 
 | File (local name) | Role | HF repo · remote file |
 |-------------------|------|------------------------|
-| `medgemma-4b-it-Q4_K_M.gguf` | MedGemma 4B IT | [`unsloth/medgemma-4b-it-GGUF`](https://huggingface.co/unsloth/medgemma-4b-it-GGUF) · `medgemma-4b-it-Q4_K_M.gguf` |
+| `medgemma-1.5-4b-it-Q4_K_M.gguf` | MedGemma 1.5 4B IT | [`unsloth/medgemma-1.5-4b-it-GGUF`](https://huggingface.co/unsloth/medgemma-1.5-4b-it-GGUF) · `medgemma-1.5-4b-it-Q4_K_M.gguf` |
 | `Llama3-Med42-8B.Q4_K_M.gguf` | Med42 8B (M42 Health) | [`mradermacher/Llama3-Med42-8B-GGUF`](https://huggingface.co/mradermacher/Llama3-Med42-8B-GGUF) · `Llama3-Med42-8B.Q4_K_M.gguf` (fallback: [`tensorblock/Llama3-Med42-8B-GGUF`](https://huggingface.co/tensorblock/Llama3-Med42-8B-GGUF)) |
 | `Llama-3-8B-UltraMedical.Q4_K_M.gguf` | UltraMedical 8B (Tsinghua C3I) | [`mradermacher/Llama-3-8B-UltraMedical-GGUF`](https://huggingface.co/mradermacher/Llama-3-8B-UltraMedical-GGUF) · `Llama-3-8B-UltraMedical.Q4_K_M.gguf` |
 
