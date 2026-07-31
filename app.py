@@ -136,7 +136,6 @@ from lib.charts import fig_judge_accuracy_bars, fig_judge_mean_accuracy_bars
 from lib.deployment import is_local_install, is_streamlit_cloud
 from lib.i18n import t
 from lib.model_labels import (
-    CURRENT_ROSTER_KEYS,
     OPTIONAL_LEGACY_SLOT_KEYS,
     filter_current_roster_rows,
     name_and_version,
