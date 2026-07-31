@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from benchmark.cases_loader import load_case
+from benchmark.case_slots import count_distinct_stem_keys
 from benchmark.gold import case_family_key, load_confirmed_gold
 from benchmark.prompts import use_gold_ground_truth
 from benchmark.schema import MultiRunSummary, RunArtifact
@@ -1210,18 +1211,20 @@ def rebuild_portfolio_from_history(
         model_ids=want_keys,
         preloaded=preloaded,
     )
-    n_cases_all = len({a.case_id for _, a in all_eligible})
+    n_cases_all = count_distinct_stem_keys(a for _, a in all_eligible)
     if len(all_eligible) < 1:
         return {
             "ok": False,
             "reason": (
                 f"Need at least 1 portfolio-eligible run "
-                f"(found {len(all_eligible)}; {n_cases_all} distinct case(s)). "
+                f"(found {len(all_eligible)}; {n_cases_all} distinct clinical "
+                f"case stem(s)). "
                 "Filters: same track + scoring_version, complete|partial + "
                 "≥1 valid judgment; roster shapes may differ "
                 "(≤N observations per model). "
                 "Cancelled/failed aborts stay out. "
-                "Different scoring versions are never pooled."
+                "Different scoring versions are never pooled. "
+                "Mixed-case portfolio means are exploratory — not clinical validation."
             ),
             "available": len(all_eligible),
             "n_cases": n_cases_all,
@@ -1262,7 +1265,7 @@ def rebuild_portfolio_from_history(
             key = str(row.get("key") or "")
             if key in mean_rank:
                 row["mean_rank"] = mean_rank[key]
-    n_cases = len({a.case_id for a in rescored_arts})
+    n_cases = count_distinct_stem_keys(rescored_arts)
     return {
         "ok": True,
         "available": len(all_eligible),
@@ -1272,9 +1275,9 @@ def rebuild_portfolio_from_history(
         "summary": summary,
         "per_run": per_run,
         "formula": (
-            "exploratory cross-case mean · mixed roster shapes OK · "
+            "exploratory mixed-case portfolio mean · mixed roster shapes OK · "
             "≤N observations per model · reference-relative scores · "
-            "not clinical validation"
+            "not clinical validation · gold contracts are not merged"
         ),
         "api_cost_usd": 0.0,
         "official": False,
@@ -1283,6 +1286,7 @@ def rebuild_portfolio_from_history(
         "track": track,
         "mean_rank": mean_rank,
         "case_ids": sorted({a.case_id for a in rescored_arts}),
+        "mixed_case_exploratory": True,
     }
 
 

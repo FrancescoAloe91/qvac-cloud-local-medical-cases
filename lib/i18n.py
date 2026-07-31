@@ -513,46 +513,52 @@ _STRINGS = {
             "Re-Prepare or claim-split edits start a new cohort."
         ),
         "bench.rebuild_sec_label": "Rebuild mean across N runs · $0 API",
-        "bench.rebuild_scope_label": "Scope",
-        "bench.rebuild_scope_same": "Same case",
-        "bench.rebuild_scope_portfolio": "Portfolio (≤N per model · multi-case)",
+        "bench.rebuild_scope_label": "Mean scope",
+        "bench.rebuild_scope_same": "Selected case only",
+        "bench.rebuild_scope_portfolio": (
+            "All cases (portfolio · mixed-case exploratory)"
+        ),
         "bench.rebuild_n_label": "Average over ≤N obs / model",
         "bench.rebuild_btn": "Rebuild mean · ≤{n} / model · open KPI popup · $0",
         "bench.rebuild_btn_help_same": (
-            "Offline mean for one immutable cohort only; N = max observations "
-            "per model (newest first). Zero API cost."
+            "Offline mean for the selected Case slot's immutable cohort only "
+            "(same clinical stem + confirmed gold contract). N = max "
+            "observations per model (newest first). Zero API cost."
         ),
         "bench.rebuild_btn_help_portfolio": (
-            "Offline exploratory mean: for each roster model, average its own "
-            "newest ≤N eligible observations across cases (same track + "
-            "scoring_version). Not a global last-N run slice — cloud history "
-            "still counts when recent runs were medical-only. Zero API cost."
+            "Offline exploratory mean across all Case slots that have History "
+            "for this API key: for each roster model, average its own newest "
+            "≤N eligible observations (same track + scoring_version). "
+            "Mixed-case / mixed-gold — not clinical validation. Zero API cost."
         ),
         "bench.rebuild_portfolio_intro": (
-            "Portfolio: **≤N observations per model** from History (newest first) "
-            "— same track + scoring_version. Roster shapes may differ "
-            "(e.g. 6 medical-only + 9/12 mixed); each model pools its own runs, "
-            "so cloud models stay visible if they have older eligible history. "
+            "**All cases (portfolio)** — exploratory mean across every Case "
+            "slot with data for this key. **≤N observations per model** "
+            "(newest first), same track + scoring_version. Gold contracts are "
+            "**not** merged; scores stay reference-relative per run. "
             "**No API calls.**"
         ),
         "bench.rebuild_portfolio_stats": (
-            "**≤{n} obs/model · {cases} distinct cases** (eligible runs: {avail}) · "
-            "track `{track}` · per-model N may differ · CV% noisier across cases"
+            "**≤{n} obs/model · {cases} distinct case stems** (eligible runs: "
+            "{avail}) · track `{track}` · mixed-case exploratory · "
+            "per-model N may differ"
         ),
         "bench.rebuild_portfolio_quiet": (
             "Scores stay reference-relative per case; portfolio = exploratory "
-            "cross-case mean (≤N obs per model), not clinical validation. "
+            "mixed-case mean (≤N obs per model), not clinical validation. "
             "Mixed rosters OK. Incompatible scoring versions are never auto-merged."
         ),
         "bench.rebuild_portfolio_success": (
-            "**Portfolio** · **≤N/model · {n} run docs · {cases} cases** · "
-            "exploratory cross-case mean · mixed rosters OK · **$0 API**"
+            "**All cases (portfolio)** · **≤N/model · {n} run docs · "
+            "{cases} case stems** · mixed-case exploratory · "
+            "mixed rosters OK · **$0 API**"
         ),
         "bench.rebuild_portfolio_caption": (
-            "Each run’s Clinical Composite is still relative to that case’s "
-            "confirmed gold. Averaging across cases is exploratory — not a "
-            "clinical validation claim. N is per model: models with fewer "
-            "eligible appearances show smaller N / higher failure rate."
+            "Each run's Clinical Composite is still relative to that case's "
+            "confirmed gold. Averaging across Case 1–5 slots is exploratory "
+            "mixed-case analysis — not a clinical validation claim. "
+            "N is per model: models with fewer eligible appearances show "
+            "smaller N / higher failure rate."
         ),
         "bench.rebuild_portfolio_mean_rank": "Mean rank (lower better): {ranks}",
         "bench.rebuild_need_portfolio": (
@@ -561,7 +567,28 @@ _STRINGS = {
             "roster shapes may differ."
         ),
         "bench.rebuild_reopen_portfolio": (
-            "Re-open portfolio mean · ≤N/model · {n} docs · {cases} cases · $0"
+            "Re-open all-cases portfolio mean · ≤N/model · {n} docs · "
+            "{cases} stems · $0"
+        ),
+        "bench.case_slots_label": "Clinical cases",
+        "bench.case_slot_btn": "Case {n}",
+        "bench.case_slot_empty": "Empty",
+        "bench.case_slot_runs": "{n} runs",
+        "bench.new_case_btn": "New case",
+        "bench.new_case_help": (
+            "Open the next empty Case slot (3→4→5). Cap is 5 cases per API key. "
+            "Paste stem + reference, then Prepare / Confirm."
+        ),
+        "bench.new_case_full": (
+            "All 5 Case slots are filled for this key. Select a slot to edit "
+            "or rebuild means — a 6th case is not created."
+        ),
+        "bench.case_slot_loaded": (
+            "Loaded **Case {n}** stem + confirmed reference from History."
+        ),
+        "bench.case_slot_ready_empty": (
+            "**Case {n}** is empty — paste an anonymized case and reference, "
+            "then Prepare / Confirm."
         ),
     },
     "it": {
@@ -1075,48 +1102,49 @@ _STRINGS = {
             "aprono un nuovo cohort."
         ),
         "bench.rebuild_sec_label": "Ricostruisci media su N run · $0 API",
-        "bench.rebuild_scope_label": "Ambito",
-        "bench.rebuild_scope_same": "Stesso caso",
-        "bench.rebuild_scope_portfolio": "Portfolio (≤N per modello · più casi)",
+        "bench.rebuild_scope_label": "Ambito media",
+        "bench.rebuild_scope_same": "Solo caso selezionato",
+        "bench.rebuild_scope_portfolio": (
+            "Tutti i casi (portfolio · esplorativo misti)"
+        ),
         "bench.rebuild_n_label": "Media su ≤N oss. / modello",
         "bench.rebuild_btn": "Ricostruisci media · ≤{n} / modello · apri popup KPI · $0",
         "bench.rebuild_btn_help_same": (
-            "Media offline per un solo cohort immutabile; N = max osservazioni "
+            "Media offline solo per il cohort immutabile dello slot Case "
+            "selezionato (stesso stem + gold confermato). N = max osservazioni "
             "per modello (più recenti prima). Costo API zero."
         ),
         "bench.rebuild_btn_help_portfolio": (
-            "Media esplorativa offline: per ogni modello del roster, media delle "
-            "proprie ≤N osservazioni eleggibili più recenti tra i casi "
-            "(stesso track + scoring_version). Non è uno slice globale delle ultime "
-            "N run — lo storico cloud resta se le run recenti erano solo medical. "
-            "Costo API zero."
+            "Media esplorativa offline su tutti gli slot Case con History per "
+            "questa chiave: per ogni modello, media delle proprie ≤N "
+            "osservazioni eleggibili (stesso track + scoring_version). "
+            "Casi/gold misti — non validazione clinica. Costo API zero."
         ),
         "bench.rebuild_portfolio_intro": (
-            "Portfolio: **≤N osservazioni per modello** dalla History (più recenti "
-            "prima) — stesso track + scoring_version. Forme di roster diverse ok "
-            "(es. 6 medical-only + 9/12 misti); ogni modello usa le proprie run, "
-            "quindi i cloud restano visibili se hanno storico eleggibile più vecchio. "
-            "**Nessuna chiamata API.**"
+            "**Tutti i casi (portfolio)** — media esplorativa su ogni slot Case "
+            "con dati per questa chiave. **≤N osservazioni per modello** "
+            "(più recenti prima), stesso track + scoring_version. I contratti "
+            "gold **non** vengono uniti. **Nessuna chiamata API.**"
         ),
         "bench.rebuild_portfolio_stats": (
-            "**≤{n} oss./modello · {cases} casi distinti** (run eleggibili: {avail}) · "
-            "track `{track}` · N per modello può differire · CV% più rumoroso"
+            "**≤{n} oss./modello · {cases} stem di caso distinti** "
+            "(run eleggibili: {avail}) · track `{track}` · esplorativo misti · "
+            "N per modello può differire"
         ),
         "bench.rebuild_portfolio_quiet": (
             "Gli score restano relativi al riferimento di ciascun caso; "
-            "portfolio = media esplorativa cross-caso (≤N oss. per modello), "
+            "portfolio = media esplorativa misti (≤N oss. per modello), "
             "non validazione clinica. Roster misti ok. Versioni di scoring "
             "incompatibili non vengono mai unite."
         ),
         "bench.rebuild_portfolio_success": (
-            "**Portfolio** · **≤N/modello · {n} doc run · {cases} casi** · "
-            "media esplorativa cross-caso · roster misti ok · **$0 API**"
+            "**Tutti i casi (portfolio)** · **≤N/modello · {n} doc run · "
+            "{cases} stem** · esplorativo misti · roster misti ok · **$0 API**"
         ),
         "bench.rebuild_portfolio_caption": (
             "Il Clinical Composite di ogni run resta relativo al gold confermato "
-            "di quel caso. La media tra casi è esplorativa — non è una claim di "
-            "validazione clinica. N è per modello: chi appare in meno run mostra "
-            "N più basso / failure rate più alto."
+            "di quel caso. La media tra gli slot Case 1–5 è analisi esplorativa "
+            "misti — non una claim di validazione clinica. N è per modello."
         ),
         "bench.rebuild_portfolio_mean_rank": "Rank medio (più basso = meglio): {ranks}",
         "bench.rebuild_need_portfolio": (
@@ -1124,7 +1152,28 @@ _STRINGS = {
             "(trovate {n}). Stesso track + scoring_version; roster diversi ok."
         ),
         "bench.rebuild_reopen_portfolio": (
-            "Riapri media portfolio · ≤N/modello · {n} doc · {cases} casi · $0"
+            "Riapri media portfolio tutti i casi · ≤N/modello · {n} doc · "
+            "{cases} stem · $0"
+        ),
+        "bench.case_slots_label": "Casi clinici",
+        "bench.case_slot_btn": "Case {n}",
+        "bench.case_slot_empty": "Vuoto",
+        "bench.case_slot_runs": "{n} run",
+        "bench.new_case_btn": "Nuovo caso",
+        "bench.new_case_help": (
+            "Apre il prossimo slot Case vuoto (3→4→5). Massimo 5 casi per chiave. "
+            "Incolla stem + riferimento, poi Prepare / Confirm."
+        ),
+        "bench.new_case_full": (
+            "Tutti e 5 gli slot Case sono pieni per questa chiave. Seleziona uno "
+            "slot — non si crea un sesto caso."
+        ),
+        "bench.case_slot_loaded": (
+            "Caricato **Case {n}**: stem + riferimento confermato dalla History."
+        ),
+        "bench.case_slot_ready_empty": (
+            "**Case {n}** è vuoto — incolla un caso anonimizzato e il "
+            "riferimento, poi Prepare / Confirm."
         ),
     },
 }

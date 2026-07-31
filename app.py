@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import html
 import hashlib
+import html
 import json
 import os
 import time
@@ -17,14 +17,24 @@ ROOT = Path(__file__).resolve().parent
 if str(ROOT) not in os.sys.path:
     os.sys.path.insert(0, str(ROOT))
 
-from benchmark.config import is_usable_openrouter_key, load_models_config
+import streamlit.components.v1 as components
+
 from benchmark import openrouter
+from benchmark.case_slots import (
+    bind_stem_to_slot,
+    count_distinct_stem_keys,
+    ensure_owner_slots,
+    filter_artifacts_for_slot,
+    next_empty_slot,
+    save_bindings,
+    slot_label_for_artifact,
+    validate_gold_for_restore,
+)
 from benchmark.cases_loader import case_display_name, load_case
+from benchmark.config import is_usable_openrouter_key, load_models_config
 from benchmark.gold import (
     SCORING_VERSION,
     SECTION_IDS,
-    cohort_id as build_cohort_id,
-    confirmed_gold as build_confirmed_gold,
     extract_with_chat,
     gold_json,
     is_strict_track,
@@ -33,16 +43,12 @@ from benchmark.gold import (
     track_ui_routing_blurb,
     uses_controlled_sampling,
 )
-from benchmark.schema import GoldSection
-from benchmark.workspace import (
-    assert_path_in_workspace,
-    maybe_claim_legacy_root_artifacts,
-    owner_id_for_current_key,
-    scoped_artifacts_dir,
-    short_owner_label,
+from benchmark.gold import (
+    cohort_id as build_cohort_id,
 )
-from lib.deployment import is_local_install, is_streamlit_cloud
-from lib.i18n import t
+from benchmark.gold import (
+    confirmed_gold as build_confirmed_gold,
+)
 from benchmark.judge import (
     PipelinedJudge,
     abandon_all_pipelines,
@@ -50,25 +56,25 @@ from benchmark.judge import (
     explain_run_scores,
     systemic_judge_failure,
 )
-from benchmark.qvac_bridge import available as qvac_available
-from benchmark.qvac_bridge import ensure_sidecar as qvac_ensure_sidecar
-from benchmark.qvac_bridge import health as qvac_health
-from benchmark.qvac_bridge import load_model as qvac_load_model
-from benchmark.qvac_bridge import reachable as qvac_reachable
-from benchmark.qvac_bridge import iter_tokens as qvac_iter_tokens
-from benchmark.qvac_variants import (
-    is_on_device_key,
-    is_qvac_key,
-    medical_peers_ready,
-    merge_roster,
-    panel_rows_for_roster,
-)
 from benchmark.prompts import (
     candidate_system,
     candidate_user,
     local_chat_messages,
     missing_section_ids,
     parse_candidate_answers,
+)
+from benchmark.qvac_bridge import available as qvac_available
+from benchmark.qvac_bridge import ensure_sidecar as qvac_ensure_sidecar
+from benchmark.qvac_bridge import health as qvac_health
+from benchmark.qvac_bridge import iter_tokens as qvac_iter_tokens
+from benchmark.qvac_bridge import load_model as qvac_load_model
+from benchmark.qvac_bridge import reachable as qvac_reachable
+from benchmark.qvac_variants import (
+    is_on_device_key,
+    is_qvac_key,
+    medical_peers_ready,
+    merge_roster,
+    panel_rows_for_roster,
 )
 from benchmark.report import (
     artifacts_for_case,
@@ -84,15 +90,29 @@ from benchmark.report import (
 )
 from benchmark.run_control import cancel_run, finish_run, is_cancelled, start_run
 from benchmark.runner import (
+    _validate_judge_separation,
     build_run_artifact,
     estimate_cost_breakdown,
     is_retryable_local_error,
     iter_collect_live,
     maybe_retry_candidate,
     prepare_run,
-    _validate_judge_separation,
 )
-from benchmark.schema import CandidateAnswer, Case, ModelCallMeta, RunArtifact, utc_now_iso
+from benchmark.schema import (
+    CandidateAnswer,
+    Case,
+    GoldSection,
+    ModelCallMeta,
+    RunArtifact,
+    utc_now_iso,
+)
+from benchmark.workspace import (
+    assert_path_in_workspace,
+    maybe_claim_legacy_root_artifacts,
+    owner_id_for_current_key,
+    scoped_artifacts_dir,
+    short_owner_label,
+)
 from lib.benchmark_multi_ui import (
     client_toast_run_done,
     cv_reliability_cells_html,
@@ -104,6 +124,8 @@ from lib.benchmark_multi_ui import (
     snapshot_from_artifact,
 )
 from lib.charts import fig_judge_accuracy_bars, fig_judge_mean_accuracy_bars
+from lib.deployment import is_local_install, is_streamlit_cloud
+from lib.i18n import t
 from lib.model_labels import (
     CURRENT_ROSTER_KEYS,
     filter_current_roster_rows,
@@ -112,15 +134,28 @@ from lib.model_labels import (
 )
 from lib.secure_account_store import (
     AccountSession,
+)
+from lib.secure_account_store import (
     configured as account_store_configured,
+)
+from lib.secure_account_store import (
     list_artifacts as account_list_artifacts,
+)
+from lib.secure_account_store import (
     load_openrouter_key as account_load_key,
+)
+from lib.secure_account_store import (
     save_artifact as account_save_artifact,
+)
+from lib.secure_account_store import (
     save_openrouter_key as account_save_key,
+)
+from lib.secure_account_store import (
     sign_in as account_sign_in,
+)
+from lib.secure_account_store import (
     sign_up as account_sign_up,
 )
-import streamlit.components.v1 as components
 
 
 def _nv(key, *, label=None, model=None):
@@ -665,9 +700,7 @@ def _ui_lang() -> str:
 
 def _source_fingerprint(case_stem: str, reference_raw: str) -> str:
     return hashlib.sha256(
-        f"{(case_stem or '').strip()}\n---\n{(reference_raw or '').strip()}".encode(
-            "utf-8"
-        )
+        f"{(case_stem or '').strip()}\n---\n{(reference_raw or '').strip()}".encode()
     ).hexdigest()
 
 
@@ -719,6 +752,48 @@ def _restore_confirmed_gold_contract(
     )
     st.session_state["_persist_case_stem"] = stem
     st.session_state["_persist_gold_ref"] = gold.raw_text
+
+
+def _clear_case_editor_state() -> None:
+    """Blank stem/reference + prepared/confirmed gold (empty Case slot)."""
+    st.session_state["demo_case_stem"] = ""
+    st.session_state["demo_gold_ref"] = ""
+    st.session_state["_persist_case_stem"] = ""
+    st.session_state["_persist_gold_ref"] = ""
+    for _gk in (
+        "_confirmed_gold_json",
+        "_gold_sections",
+        "_prepared_gold_sections",
+        "_prepared_extraction_meta",
+        "_prepared_extraction_cost",
+        "_gold_confirmed_at",
+        "_restored_cohort_id",
+    ):
+        st.session_state.pop(_gk, None)
+    for _wk in list(st.session_state.keys()):
+        if str(_wk).startswith("prep_sum_") or str(_wk).startswith("prep_q_"):
+            st.session_state.pop(_wk, None)
+    st.session_state["_gold_source_fingerprint"] = _source_fingerprint("", "")
+
+
+def _select_case_slot(slot, *, as_new: bool = False) -> None:
+    """Activate a Case 1–5 slot and load stem+gold from History when filled."""
+    st.session_state["active_case_slot"] = int(slot.index)
+    if as_new or not slot.filled:
+        _clear_case_editor_state()
+        return
+    if slot.gold_reference and validate_gold_for_restore(slot.gold_reference):
+        _restore_confirmed_gold_contract(
+            gold_reference_json=slot.gold_reference,
+            case_stem_saved=slot.stem,
+            cohort_id=slot.cohort_id or "",
+        )
+        return
+    # Filled stem without restoreable gold JSON — load stem only.
+    st.session_state["demo_case_stem"] = slot.stem
+    st.session_state["_persist_case_stem"] = slot.stem
+    st.session_state.pop("_confirmed_gold_json", None)
+    st.session_state.pop("_restored_cohort_id", None)
 
 
 def _dlg_full_text(text: str) -> None:
@@ -1652,6 +1727,103 @@ with st.sidebar:
 case_id = "caseC"
 preset = load_case(case_id)
 is_custom_real = True
+
+# Case 1–5 slots (sticky stem_key bindings per API-key owner workspace)
+_slot_arts = _preloaded_artifacts()
+_case_slots, _case_bindings = ensure_owner_slots(
+    WORKSPACE_DIR,
+    _slot_arts,
+    session_bindings=st.session_state.get("_case_slot_bindings") or {},
+    persist=bool(getattr(RUN_STORE, "writes_plaintext", True)),
+)
+st.session_state["_case_slot_bindings"] = dict(_case_bindings)
+if "active_case_slot" not in st.session_state:
+    # Prefer first filled slot (migrated Case 1), else Case 1 empty.
+    _first_filled = next((s.index for s in _case_slots if s.filled), 1)
+    st.session_state["active_case_slot"] = int(_first_filled)
+    _boot_slot = next(
+        (s for s in _case_slots if s.index == st.session_state["active_case_slot"]),
+        _case_slots[0],
+    )
+    if _boot_slot.filled and not (
+        st.session_state.get("demo_case_stem") or st.session_state.get("_persist_case_stem")
+    ):
+        _select_case_slot(_boot_slot)
+
+_active_slot_idx = int(st.session_state.get("active_case_slot") or 1)
+_active_slot = next(
+    (s for s in _case_slots if s.index == _active_slot_idx), _case_slots[0]
+)
+_slots_locked = bool(
+    st.session_state.get("benchmark_running") or st.session_state.get("confirmed_run")
+)
+
+st.markdown(
+    f'<div class="sec-label">{t("bench.case_slots_label", _ui_lang())}</div>',
+    unsafe_allow_html=True,
+)
+_slot_cols = st.columns([1, 1, 1, 1, 1, 1.2], gap="small")
+for _si, _slot in enumerate(_case_slots):
+    with _slot_cols[_si]:
+        _is_active = _slot.index == _active_slot_idx
+        _btn_label = t("bench.case_slot_btn", _ui_lang(), n=_slot.index)
+        if _slot.filled:
+            _btn_label += f" · {_slot.run_count}"
+        else:
+            _btn_label += f" · {t('bench.case_slot_empty', _ui_lang())}"
+        if st.button(
+            _btn_label,
+            key=f"case_slot_btn_{_slot.index}",
+            use_container_width=True,
+            type="primary" if _is_active else "secondary",
+            disabled=_slots_locked,
+            help=(
+                f"{_slot.stem[:120]}…"
+                if _slot.filled and len(_slot.stem) > 120
+                else (_slot.stem or t("bench.case_slot_ready_empty", _ui_lang(), n=_slot.index))
+            ),
+        ):
+            if not _slots_locked:
+                _select_case_slot(_slot)
+                st.rerun()
+with _slot_cols[5]:
+    if st.button(
+        t("bench.new_case_btn", _ui_lang()),
+        key="case_slot_new_btn",
+        use_container_width=True,
+        disabled=_slots_locked,
+        help=t("bench.new_case_help", _ui_lang()),
+    ):
+        if not _slots_locked:
+            _empty_idx = next_empty_slot(_case_slots)
+            if _empty_idx is None:
+                st.session_state["_case_slot_flash"] = "full"
+            else:
+                _empty = next(s for s in _case_slots if s.index == _empty_idx)
+                _select_case_slot(_empty, as_new=True)
+                st.session_state["_case_slot_flash"] = "empty"
+            st.rerun()
+
+_flash = st.session_state.pop("_case_slot_flash", None)
+if _flash == "full":
+    st.warning(t("bench.new_case_full", _ui_lang()))
+elif _flash == "empty":
+    st.info(t("bench.case_slot_ready_empty", _ui_lang(), n=_active_slot_idx))
+elif _active_slot.filled and st.session_state.get("_confirmed_gold_json"):
+    st.caption(
+        t("bench.case_slot_loaded", _ui_lang(), n=_active_slot.index)
+        + (
+            f" · {t('bench.case_slot_runs', _ui_lang(), n=_active_slot.run_count)}"
+            if _active_slot.run_count
+            else ""
+        )
+    )
+else:
+    st.caption(
+        f"**Case {_active_slot_idx}** selected · History stays private to this "
+        f"API key ({short_owner_label()}). Cap: 5 cases."
+    )
+
 st.markdown('<div class="sec-label">Gold-only clinical case</div>', unsafe_allow_html=True)
 st.info(
     "Paste an anonymized case and your reference answer. The benchmark measures "
@@ -2047,6 +2219,21 @@ if isinstance(_prepared, dict) and _prepared:
                     sid: contract.sections[sid].model_dump() for sid in SECTION_IDS
                 }
                 st.session_state.pop("_restored_cohort_id", None)
+                # Bind this stem to the active Case slot (cap 5; sticky per owner).
+                try:
+                    _bind_idx = int(st.session_state.get("active_case_slot") or 1)
+                    _bound = bind_stem_to_slot(
+                        st.session_state.get("_case_slot_bindings") or {},
+                        slot_index=_bind_idx,
+                        case_stem=str(
+                            st.session_state.get("demo_case_stem") or case_stem or ""
+                        ),
+                    )
+                    st.session_state["_case_slot_bindings"] = _bound
+                    if getattr(RUN_STORE, "writes_plaintext", True):
+                        save_bindings(WORKSPACE_DIR, _bound)
+                except Exception:
+                    pass
                 st.success(
                     f"Reference confirmed at {contract.confirmed_at} · "
                     f"extractor cost ${extract_cost:.4f}"
@@ -2660,7 +2847,7 @@ def _kpi_live_line(ttft_s, elapsed_s, tps_live) -> str:
 
 
 
-def _fmt_s_min(seconds: int | float) -> str:
+def _fmt_s_min(seconds: float) -> str:
     """Primary seconds; compact minutes in parentheses (Italian comma), e.g. 150s (2,5m)."""
     s = max(0, int(round(float(seconds))))
     m = s / 60.0
@@ -2668,7 +2855,7 @@ def _fmt_s_min(seconds: int | float) -> str:
     return f'{s}s<span class="t-min"> ({m_txt}m)</span>'
 
 
-def _fmt_s_plain(seconds: int | float) -> str:
+def _fmt_s_plain(seconds: float) -> str:
     """Compact seconds for per-run strips (no HTML minutes)."""
     return f"{max(0, int(round(float(seconds))))}s"
 
@@ -2995,14 +3182,16 @@ with st.sidebar:
         st.markdown("**History**")
         _placeholder = "— select a run —"
         _opts = {_placeholder: None}
+        _hist_bindings = st.session_state.get("_case_slot_bindings") or {}
         for p, art in _hist_pairs:
             try:
                 when = (art.finished_at or art.started_at or "")[5:16].replace("T", " ")
                 top = ""
                 if art.ranking:
                     top = f" · {art.ranking[0].get('accuracy')}%"
+                _slot_tag = slot_label_for_artifact(art, _hist_bindings)
                 label = (
-                    f"{case_display_name(art.case_id)} · {when} · "
+                    f"{_slot_tag} · {when} · "
                     f"${art.total_cost_usd:.2f}{top}"
                 )
             except Exception:
@@ -3083,7 +3272,23 @@ st.caption(
 )
 
 _hist_for_case = artifacts_for_case(WORKSPACE_DIR, case_id)
+# Scope "selected case only" to the active Case slot's stem cohort history.
+_slot_scoped_arts = filter_artifacts_for_slot(
+    [a for _, a in _hist_for_case],
+    _active_slot,
+)
+if _active_slot.filled and _slot_scoped_arts:
+    _hist_for_case = [
+        (p, a)
+        for p, a in _hist_for_case
+        if a.run_id in {x.run_id for x in _slot_scoped_arts}
+    ]
+elif _active_slot.filled and not _slot_scoped_arts:
+    # Slot has a stem binding but no runs yet in History for that stem.
+    _hist_for_case = []
 _rebuild_cohort_id = st.session_state.get("_restored_cohort_id") or None
+if not _rebuild_cohort_id and _active_slot.cohort_id:
+    _rebuild_cohort_id = _active_slot.cohort_id
 if _rebuild_cohort_id and not any(
     a.cohort_id == _rebuild_cohort_id for _, a in _hist_for_case
 ):
@@ -3168,11 +3373,10 @@ if _rebuild_scope == "portfolio":
     _avail_n = _avail_portfolio
 else:
     st.caption(
-        f"**{case_display_name(case_id)}** · one immutable cohort only. "
+        f"**Case {_active_slot_idx}** · selected-case mean · one immutable cohort only. "
         "Cohort hash = normalized case + confirmed gold (excl. timestamp) + models + track. "
-        "Restore a prior confirmed reference to pool that cohort again; a new Prepare that "
-        "splits claims differently starts a fresh cohort. Legacy artifacts stay experimental. "
-        "**No API calls**."
+        "Other Case slots are excluded. A new Prepare that splits claims differently "
+        "starts a fresh cohort. **No API calls**."
     )
     _avail_n = _avail_same
 
@@ -3235,7 +3439,9 @@ with _rb2:
     if _rebuild_scope == "portfolio":
         _n_show = int(_rebuild_n) if _avail_portfolio else 0
         _k_show = (
-            len({a.case_id for _, a in _portfolio_probe}) if _avail_portfolio else 0
+            count_distinct_stem_keys(a for _, a in _portfolio_probe)
+            if _avail_portfolio
+            else 0
         )
         st.caption(
             t(
@@ -3249,7 +3455,7 @@ with _rb2:
         )
     else:
         st.caption(
-            f"Saved runs for {case_display_name(case_id)}"
+            f"Saved runs for Case {_active_slot_idx}"
             + (
                 f" · this cohort: **{_avail_n}**"
                 if _rebuild_cohort_id
@@ -3280,7 +3486,7 @@ if _avail_n < 1:
         st.info(t("bench.rebuild_need_portfolio", _ui_lang(), n=_avail_n))
     else:
         st.info(
-            f"Need at least **1** saved complete run for {case_display_name(case_id)} "
+            f"Need at least **1** saved complete run for Case {_active_slot_idx} "
             f"(found {_avail_n}). Run Single once, then rebuild the mean."
         )
 elif _do_rebuild:
@@ -3302,12 +3508,15 @@ elif _do_rebuild:
             preloaded=_preloaded_artifacts() if _HOSTED_NO_PLAINTEXT else None,
         )
     else:
+        # Selected-case only: preload slot-scoped artifacts so other Case stems
+        # cannot enter the mean even when case_id is shared (caseC).
+        _same_preloaded = [a for _, a in _hist_for_case]
         _built = rebuild_multi_from_history(
             WORKSPACE_DIR,
             case_id,
             n=_n_use,
             cohort_id=_rebuild_cohort_id,
-            preloaded=_preloaded_artifacts() if _HOSTED_NO_PLAINTEXT else None,
+            preloaded=_same_preloaded,
         )
     if not _built.get("ok"):
         st.warning(_built.get("reason") or "Rebuild failed.")
@@ -3869,9 +4078,7 @@ if st.session_state.get("confirmed_run"):
                         prev = lo_board.get(key) or {}
                         # Never regress a finished score; only reopen a failed row when
                         # a real new attempt starts (active_attempt / retry stages).
-                        if prev.get("status") == "scored":
-                            pass
-                        elif prev.get("status") == "failed" and not evt.get(
+                        if prev.get("status") == "scored" or prev.get("status") == "failed" and not evt.get(
                             "active_attempt"
                         ):
                             pass
@@ -3944,9 +4151,7 @@ if st.session_state.get("confirmed_run"):
                             prev = lo_board.get(key) or {}
                             # Scored rows stay scored. Terminal N/A only reopens when
                             # the pipeline marks a real new attempt (live clock).
-                            if prev.get("status") == "scored":
-                                pass
-                            elif prev.get("status") == "failed" and not evt.get(
+                            if prev.get("status") == "scored" or prev.get("status") == "failed" and not evt.get(
                                 "active_attempt"
                             ):
                                 pass
@@ -5475,9 +5680,7 @@ if st.session_state.get("confirmed_run"):
                     _paint_full_board()
                 elif phase == "progress" and key:
                     prev = full_board.get(key) or {}
-                    if prev.get("status") == "scored":
-                        pass
-                    elif prev.get("status") == "failed" and not evt.get(
+                    if prev.get("status") == "scored" or prev.get("status") == "failed" and not evt.get(
                         "active_attempt"
                     ):
                         pass
@@ -5494,9 +5697,7 @@ if st.session_state.get("confirmed_run"):
                         _paint_full_board()
                 elif phase == "retry" and key:
                     prev = full_board.get(key) or {}
-                    if prev.get("status") == "scored":
-                        pass
-                    elif prev.get("status") == "failed" and not evt.get(
+                    if prev.get("status") == "scored" or prev.get("status") == "failed" and not evt.get(
                         "active_attempt"
                     ):
                         pass
