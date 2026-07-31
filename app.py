@@ -28,6 +28,8 @@ from benchmark.case_slots import (
     empty_slot,
     ensure_owner_slots,
     filter_artifacts_for_slot,
+    load_default_pack_meta,
+    load_pack_revision,
     open_new_case_slot,
     save_bindings,
     slot_label_for_artifact,
@@ -1826,6 +1828,24 @@ _active_slot = next(
 _slots_locked = bool(
     st.session_state.get("benchmark_running") or st.session_state.get("confirmed_run")
 )
+
+# After a default-pack revision force-seed (e.g. Case 2 → anaphylaxis), reload the
+# active editor when that slot was remapped — without interrupting a live run.
+_pack_rev_now = load_pack_revision(WORKSPACE_DIR)
+_pack_rev_meta, _force_seed_slots = load_default_pack_meta()
+_pack_rev_seen = st.session_state.get("_ui_pack_revision")
+if (
+    not _slots_locked
+    and _force_seed_slots
+    and _pack_rev_now >= _pack_rev_meta
+    and _pack_rev_seen != _pack_rev_now
+    and int(_active_slot_idx) in _force_seed_slots
+    and _active_slot.filled
+):
+    st.session_state["_ui_pack_revision"] = _pack_rev_now
+    _select_case_slot(_active_slot)
+    st.rerun()
+st.session_state.setdefault("_ui_pack_revision", _pack_rev_now)
 
 st.markdown(
     f'<div class="sec-label">{t("bench.case_slots_label", _ui_lang())}</div>',

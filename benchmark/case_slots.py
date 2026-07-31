@@ -191,16 +191,21 @@ def _parse_bindings(raw_bindings: Any) -> dict[int, str]:
     return out
 
 
-def load_slot_state(workspace: Path) -> tuple[dict[int, str], int]:
-    """Load sticky bindings + how many Case buttons exist ( ≥ base 5 )."""
+def _read_slot_state_raw(workspace: Path) -> dict[str, Any]:
     path = Path(workspace) / SLOTS_FILENAME
     if not path.is_file():
-        return {}, BASE_CASE_SLOTS
+        return {}
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
-        return {}, BASE_CASE_SLOTS
-    if not isinstance(raw, dict):
+        return {}
+    return raw if isinstance(raw, dict) else {}
+
+
+def load_slot_state(workspace: Path) -> tuple[dict[int, str], int]:
+    """Load sticky bindings + how many Case buttons exist ( ≥ base 5 )."""
+    raw = _read_slot_state_raw(workspace)
+    if not raw:
         return {}, BASE_CASE_SLOTS
     bindings = _parse_bindings(raw.get("bindings"))
     stored = raw.get("slot_count")
@@ -214,6 +219,15 @@ def load_slot_state(workspace: Path) -> tuple[dict[int, str], int]:
     return bindings, slot_count
 
 
+def load_pack_revision(workspace: Path) -> int:
+    """Owner workspace's last applied default-pack revision (0 = never)."""
+    raw = _read_slot_state_raw(workspace)
+    try:
+        return max(0, int(raw.get("pack_revision") or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
 def load_bindings(workspace: Path) -> dict[int, str]:
     """Load sticky slot→stem_key bindings (hashes only; no clinical plaintext)."""
     bindings, _ = load_slot_state(workspace)
@@ -225,6 +239,7 @@ def save_bindings(
     bindings: Mapping[int, str],
     *,
     slot_count: int | None = None,
+    pack_revision: int | None = None,
 ) -> None:
     """Persist sticky bindings (stem hashes only) + slot bar size."""
     path = Path(workspace) / SLOTS_FILENAME
@@ -240,9 +255,13 @@ def save_bindings(
         max_bound,
     )
     count = min(count, SOFT_MAX_CASE_SLOTS)
+    # Preserve prior pack_revision unless caller supplies a new one.
+    prior_rev = load_pack_revision(workspace)
+    rev = prior_rev if pack_revision is None else max(0, int(pack_revision))
     payload = {
         "version": 2,
         "slot_count": count,
+        "pack_revision": rev,
         "bindings": {str(i): clean[i] for i in sorted(clean)},
     }
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -310,10 +329,7 @@ def save_drafts(workspace: Path, drafts: Mapping[int, Mapping[str, str]]) -> Non
     )
 
 
-def load_default_pack(
-    path: Path | None = None,
-) -> dict[int, dict[str, str]]:
-    """Load shipped default case pack (slot index → stem + gold_raw)."""
+def _load_default_pack_document(path: Path | None = None) -> dict[str, Any]:
     pack_path = Path(path) if path is not None else DEFAULT_CASES_DIR / DEFAULT_PACK_FILENAME
     if not pack_path.is_file():
         return {}
@@ -321,7 +337,35 @@ def load_default_pack(
         raw = json.loads(pack_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return {}
-    slots = raw.get("slots") if isinstance(raw, dict) else None
+    return raw if isinstance(raw, dict) else {}
+
+
+def load_default_pack_meta(
+    path: Path | None = None,
+) -> tuple[int, frozenset[int]]:
+    """Return ``(revision, force_seed_slots)`` from the shipped default pack."""
+    raw = _load_default_pack_document(path)
+    try:
+        revision = max(0, int(raw.get("revision") or 1))
+    except (TypeError, ValueError):
+        revision = 1
+    force: set[int] = set()
+    for item in raw.get("force_seed_slots") or []:
+        try:
+            idx = int(item)
+        except (TypeError, ValueError):
+            continue
+        if 1 <= idx <= SOFT_MAX_CASE_SLOTS:
+            force.add(idx)
+    return revision, frozenset(force)
+
+
+def load_default_pack(
+    path: Path | None = None,
+) -> dict[int, dict[str, str]]:
+    """Load shipped default case pack (slot index → stem + gold_raw)."""
+    raw = _load_default_pack_document(path)
+    slots = raw.get("slots") if raw else None
     if not isinstance(slots, dict):
         return {}
     out: dict[int, dict[str, str]] = {}
@@ -383,6 +427,49 @@ def apply_default_pack_to_empty_slots(
             continue
         out_bindings[idx] = key
         used_keys.add(key)
+        out_drafts[idx] = {
+            "stem": stem,
+            "gold_raw": str(entry.get("gold_raw") or "").strip(),
+            "stem_key": key,
+        }
+    return out_bindings, out_drafts
+
+
+def force_seed_pack_slots(
+    bindings: Mapping[int, str],
+    drafts: Mapping[int, Mapping[str, str]],
+    *,
+    slot_indexes_to_seed: Iterable[int],
+    pack: Mapping[int, Mapping[str, str]] | None = None,
+) -> tuple[dict[int, str], dict[int, dict[str, str]]]:
+    """Overwrite listed slots with pack stem + freeform gold (History artifacts kept).
+
+    Used for one-time pack revision migrations (e.g. replace Case 2 arthritis/SLE
+    with anaphylaxis). Does not delete old-stem artifacts; they become unslotted.
+    """
+    pack_data = dict(pack) if pack is not None else load_default_pack()
+    out_bindings = dict(bindings)
+    out_drafts = _parse_drafts(dict(drafts))
+    for raw_idx in slot_indexes_to_seed:
+        try:
+            idx = int(raw_idx)
+        except (TypeError, ValueError):
+            continue
+        entry = pack_data.get(idx)
+        if not entry:
+            continue
+        stem = str(entry.get("stem") or "").strip()
+        if not stem:
+            continue
+        key = str(entry.get("stem_key") or stem_key(stem)).strip()
+        if not key:
+            continue
+        # Drop any other slot that already owns this pack stem.
+        for other, existing in list(out_bindings.items()):
+            if existing == key and other != idx:
+                del out_bindings[other]
+                out_drafts.pop(other, None)
+        out_bindings[idx] = key
         out_drafts[idx] = {
             "stem": stem,
             "gold_raw": str(entry.get("gold_raw") or "").strip(),
@@ -503,9 +590,11 @@ def ensure_owner_slots(
     """Load/migrate sticky bindings, seed empty defaults, resolve Case 1–N.
 
     Returns ``(slots, bindings, slot_count, drafts)``. Defaults fill only empty
-    slots (never overwrite Case 1/2 History bindings).
+    slots, except ``force_seed_slots`` on a pack revision bump (Case 2 anaphylaxis
+    migration). Case 1/3/4/5 History bindings stay unless listed in force_seed.
     """
     disk, disk_count = load_slot_state(workspace)
+    disk_pack_rev = load_pack_revision(workspace)
     merged: dict[int, str] = dict(disk)
     for idx, key in (session_bindings or {}).items():
         try:
@@ -527,14 +616,35 @@ def ensure_owner_slots(
     )
     slot_count = min(slot_count, SOFT_MAX_CASE_SLOTS)
     bindings = migrate_bindings(artifacts, merged, slot_count=slot_count)
+    pack_rev_to_store = disk_pack_rev
     if apply_defaults:
-        bindings, drafts = apply_default_pack_to_empty_slots(bindings, drafts)
+        pack_data = load_default_pack()
+        pack_rev, force_slots = load_default_pack_meta()
+        bindings, drafts = apply_default_pack_to_empty_slots(
+            bindings, drafts, pack=pack_data
+        )
+        if force_slots and pack_rev > disk_pack_rev:
+            bindings, drafts = force_seed_pack_slots(
+                bindings,
+                drafts,
+                slot_indexes_to_seed=force_slots,
+                pack=pack_data,
+            )
+            pack_rev_to_store = pack_rev
+        elif pack_rev_to_store < pack_rev and not force_slots:
+            # Pack advanced with empty-slot-only seeds; record revision.
+            pack_rev_to_store = pack_rev
         max_bound = max(bindings.keys(), default=0)
         slot_count = max(slot_count, max_bound, BASE_CASE_SLOTS)
         slot_count = min(slot_count, SOFT_MAX_CASE_SLOTS)
     if persist:
         try:
-            save_bindings(workspace, bindings, slot_count=slot_count)
+            save_bindings(
+                workspace,
+                bindings,
+                slot_count=slot_count,
+                pack_revision=pack_rev_to_store,
+            )
         except OSError:
             pass
         try:

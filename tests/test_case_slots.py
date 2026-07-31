@@ -13,9 +13,12 @@ from benchmark.case_slots import (
     discover_stem_families,
     ensure_owner_slots,
     filter_artifacts_for_slot,
+    force_seed_pack_slots,
     load_bindings,
     load_default_pack,
+    load_default_pack_meta,
     load_drafts,
+    load_pack_revision,
     load_slot_state,
     migrate_bindings,
     next_empty_slot,
@@ -341,9 +344,16 @@ def test_migrate_does_not_auto_fill_slot_six():
     assert 6 not in bindings and 7 not in bindings
 
 
-def test_default_pack_loads_stemi_dka_stroke_qna():
+def test_default_pack_loads_anaphylaxis_stemi_dka_stroke_qna():
     pack = load_default_pack()
-    assert set(pack.keys()) == {3, 4, 5}
+    rev, force = load_default_pack_meta()
+    assert rev >= 2
+    assert 2 in force
+    assert set(pack.keys()) == {2, 3, 4, 5}
+    assert "anaphylaxis" in pack[2]["gold_raw"].lower() or "epinephrine" in pack[2]["gold_raw"].lower()
+    assert "stridor" in pack[2]["stem"].lower() or "angioedema" in pack[2]["stem"].lower()
+    assert "Q1 [diagnosis]:" in pack[2]["gold_raw"]
+    assert "A5:" in pack[2]["gold_raw"]
     assert "STEMI" in pack[3]["stem"] or "ST-segment elevation" in pack[3]["stem"]
     assert "Q1 [diagnosis]:" in pack[3]["gold_raw"]
     assert "A5:" in pack[3]["gold_raw"]
@@ -352,7 +362,9 @@ def test_default_pack_loads_stemi_dka_stroke_qna():
     assert "Q5 [plan]:" in pack[5]["gold_raw"]
 
 
-def test_default_pack_fills_empty_slots_only_preserves_case_1_2(tmp_path: Path):
+def test_default_pack_fills_empty_slots_preserves_case_1_force_seeds_case_2(
+    tmp_path: Path,
+):
     arts = [
         _art(
             run_id="a1",
@@ -370,19 +382,29 @@ def test_default_pack_fills_empty_slots_only_preserves_case_1_2(tmp_path: Path):
         ),
     ]
     slots, bindings, _count, drafts = ensure_owner_slots(tmp_path, arts)
+    pack = load_default_pack()
     assert bindings[1] == stem_key(STEM_A)
-    assert bindings[2] == stem_key(STEM_B)
+    # Pack revision force-seeds Case 2 (anaphylaxis); old STEM_B History stays on disk
+    # but is no longer bound to slot 2.
+    assert bindings[2] == pack[2]["stem_key"]
+    assert bindings[2] != stem_key(STEM_B)
     assert 3 in bindings and 4 in bindings and 5 in bindings
+    assert slots[1].filled and (
+        "anaphylaxis" in slots[1].gold_raw.lower()
+        or "epinephrine" in slots[1].gold_raw.lower()
+    )
+    assert "Q1 [diagnosis]:" in slots[1].gold_raw
     assert slots[2].filled and "ST-segment elevation" in slots[2].stem
     assert "Q1 [diagnosis]:" in slots[2].gold_raw
     assert "Q1 [diagnosis]:" in slots[3].gold_raw
     assert "Q1 [diagnosis]:" in slots[4].gold_raw
     assert slots[0].stem == STEM_A
-    assert slots[1].stem == STEM_B
+    assert "peanut" in slots[1].stem.lower() or "angioedema" in slots[1].stem.lower()
     # Drafts persisted for owner workspace.
     loaded = load_drafts(tmp_path)
-    assert set(loaded.keys()) >= {3, 4, 5}
+    assert set(loaded.keys()) >= {2, 3, 4, 5}
     assert "A1:" in loaded[3]["gold_raw"]
+    assert load_pack_revision(tmp_path) >= 2
 
 
 def test_apply_default_pack_does_not_overwrite_existing_binding():
@@ -396,6 +418,49 @@ def test_apply_default_pack_does_not_overwrite_existing_binding():
     assert 3 not in out_d  # pack must not replace occupied slot
     assert 4 in out_b and 5 in out_b
     assert "Q1 [diagnosis]:" in out_d[4]["gold_raw"]
+
+
+def test_force_seed_overwrites_case_2_only():
+    pack = load_default_pack()
+    old_key = stem_key("Old arthritis / SLE stem for case two")
+    bindings = {1: stem_key(STEM_A), 2: old_key, 3: pack[3]["stem_key"]}
+    drafts = {3: pack[3]}
+    out_b, out_d = force_seed_pack_slots(
+        bindings, drafts, slot_indexes_to_seed={2}, pack=pack
+    )
+    assert out_b[1] == stem_key(STEM_A)
+    assert out_b[2] == pack[2]["stem_key"]
+    assert out_b[3] == pack[3]["stem_key"]
+    assert "epinephrine" in out_d[2]["gold_raw"].lower()
+    assert 3 in out_d
+
+
+def test_pack_revision_force_seed_runs_once(tmp_path: Path):
+    pack = load_default_pack()
+    old_stem = "Patient: 34-year-old female. History: chronic arthritis cohort."
+    save_bindings(tmp_path, {2: stem_key(old_stem)}, slot_count=5, pack_revision=0)
+    arts = [
+        _art(
+            run_id="old2",
+            stem=old_stem,
+            finished_at="2026-07-30T10:00:00Z",
+            cohort_id="cold",
+            gold=GOLD_MARK,
+        )
+    ]
+    slots, bindings, _count, drafts = ensure_owner_slots(tmp_path, arts)
+    assert bindings[2] == pack[2]["stem_key"]
+    assert "anaphylaxis" in drafts[2]["gold_raw"].lower()
+    rev = load_pack_revision(tmp_path)
+    assert rev >= 2
+    # Second ensure must not thrash a user re-bind away if revision already applied
+    # and slot still matches pack (idempotent).
+    slots2, bindings2, _, drafts2 = ensure_owner_slots(
+        tmp_path, arts, session_bindings=bindings, session_drafts=drafts
+    )
+    assert bindings2[2] == pack[2]["stem_key"]
+    assert drafts2[2]["stem"] == pack[2]["stem"]
+    assert slots2[1].stem_key == pack[2]["stem_key"]
 
 
 def test_resolve_slots_surfaces_draft_gold_without_artifact():
