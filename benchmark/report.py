@@ -1007,18 +1007,26 @@ def list_portfolio_runs(
     return pairs[:cap]
 
 
+def _is_scored_ranking_row(row: Dict[str, Any]) -> bool:
+    """True when a ranking row is a valid scored observation (not technical N/A)."""
+    status = str(row.get("status") or "ok")
+    return status == "ok" and row.get("accuracy") is not None
+
+
 def _trim_rescored_to_per_model_n(
     rescored_pairs: Sequence[Tuple[RunArtifact, Dict[str, Any]]],
     *,
     n: int,
     model_ids: Optional[Sequence[str]] = None,
 ) -> Tuple[List[RunArtifact], List[Dict[str, Any]], Dict[str, int]]:
-    """Keep ≤N newest ranking observations per model (ok + technical N/A).
+    """Keep ≤N newest *scored* observations per model; N/A does not fill N.
 
-    ``rescored_pairs`` must already be newest-first. Each ranking row for a
-    wanted key counts as one observation (Failed % stays honest). Rows beyond
-    a model's cap are dropped; run documents that retain no rows are omitted.
-    Returns (arts, per_run rows, per-model observation counts).
+    ``rescored_pairs`` must already be newest-first. Technical N/A / errors are
+    skipped for the scored-N cap — the walk continues into older History until
+    each model has N scored rows (or history ends). N/A rows encountered while
+    seeking those scored obs are still kept so Failed % reflects failures in
+    the scan window. Run documents that retain no rows are omitted.
+    Returns (arts, per_run rows, per-model **scored** counts).
     """
     n = max(1, min(int(n), 50))
     want = (
@@ -1026,7 +1034,7 @@ def _trim_rescored_to_per_model_n(
         if model_ids is not None
         else frozenset(CURRENT_ROSTER_KEYS)
     )
-    counts: Dict[str, int] = {}
+    scored_counts: Dict[str, int] = {}
     arts: List[RunArtifact] = []
     per_run: List[Dict[str, Any]] = []
     for clone, row in rescored_pairs:
@@ -1035,10 +1043,16 @@ def _trim_rescored_to_per_model_n(
             key = str(r.get("key") or "")
             if key not in want or not is_current_roster_key(key):
                 continue
-            if counts.get(key, 0) >= n:
+            scored_n = scored_counts.get(key, 0)
+            if scored_n >= n:
+                # Already have N scored — stop collecting scored and N/A for key.
                 continue
-            kept_ranking.append(r)
-            counts[key] = counts.get(key, 0) + 1
+            if _is_scored_ranking_row(r):
+                kept_ranking.append(r)
+                scored_counts[key] = scored_n + 1
+            else:
+                # Technical N/A: keep for Failed %; do not advance scored cap.
+                kept_ranking.append(r)
         if not kept_ranking:
             continue
         trimmed = clone.model_copy(deep=True)
@@ -1047,7 +1061,7 @@ def _trim_rescored_to_per_model_n(
         trimmed_row = dict(row)
         trimmed_row["ranking"] = kept_ranking
         per_run.append(trimmed_row)
-    return arts, per_run, counts
+    return arts, per_run, scored_counts
 
 
 def _offline_rescore_pair(
@@ -1126,8 +1140,9 @@ def rebuild_multi_from_history(
     preloaded: Optional[Sequence[RunArtifact]] = None,
 ) -> Dict[str, Any]:
     """
-    Offline Multi×N: same immutable cohort only; ``n`` = max observations
-    **per model** (newest first). Rescore with the current formula; return
+    Offline Multi×N: same immutable cohort only; ``n`` = max **scored**
+    observations per model (newest first). Technical N/A does not fill N —
+    older scored rows are used. Rescore with the current formula; return
     summarize_runs-compatible summary + per-run rows. Zero API cost.
 
     When ``cohort_id`` is set (e.g. after restoring a prior confirmed gold),
@@ -1217,7 +1232,7 @@ def rebuild_multi_from_history(
         "per_run": per_run,
         "formula": (
             "reference-relative Clinical Composite Score · same immutable cohort · "
-            "≤N observations per model"
+            "≤N scored obs/model; N/A skipped, older scored used"
         ),
         "api_cost_usd": 0.0,
         "cohort_id": target_cohort,
@@ -1237,13 +1252,15 @@ def rebuild_portfolio_from_history(
     model_ids: Optional[Sequence[str]] = None,
     preloaded: Optional[Sequence[RunArtifact]] = None,
 ) -> Dict[str, Any]:
-    """Offline exploratory mean: ≤N observations **per model** across cases.
+    """Offline exploratory mean: ≤N **scored** observations per model across cases.
 
     Loads every eligible run (same track + scoring_version, complete|partial),
-    then for each roster key keeps that model's own newest ≤N ranking rows
-    (ok + technical N/A). Cloud models with older history still appear when
-    recent global runs were medical-only. Never invents scores; never merges
-    incompatible scoring versions. Zero API cost. Not clinical validation.
+    then for each roster key keeps that model's own newest ≤N *scored* ranking
+    rows. Technical N/A does not fill N — the walk continues into older History.
+    N/A seen while filling the scored quota still counts toward Failed %.
+    Cloud models with older history still appear when recent global runs were
+    medical-only. Never invents scores; never merges incompatible scoring
+    versions. Zero API cost. Not clinical validation.
     """
     n = max(1, min(int(n), 50))
     want_keys = list(model_ids) if model_ids is not None else list(CURRENT_ROSTER_KEYS)
@@ -1321,8 +1338,9 @@ def rebuild_portfolio_from_history(
         "per_run": per_run,
         "formula": (
             "exploratory mixed-case portfolio mean · mixed roster shapes OK · "
-            "≤N observations per model · reference-relative scores · "
-            "not clinical validation · gold contracts are not merged"
+            "≤N scored obs/model; N/A skipped, older scored used · "
+            "reference-relative scores · not clinical validation · "
+            "gold contracts are not merged"
         ),
         "api_cost_usd": 0.0,
         "official": False,

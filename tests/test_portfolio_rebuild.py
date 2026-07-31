@@ -517,6 +517,110 @@ def test_portfolio_per_model_n_includes_older_cloud_history(tmp_path: Path):
     assert int(by_key[med_key]["n_requested"]) == 15
 
 
+def test_trim_n_skips_technical_na_and_uses_older_scored(tmp_path: Path):
+    """N = scored quota: interleaved N/A must not shrink a model's scored mean.
+
+    Newest runs fail for chatgpt; older History still has scored rows. Rebuild
+    with N=5 must pull five scored chatgpt observations (and keep the N/A seen
+    while scanning for Failed %), not stop after five raw ranking rows.
+    """
+    cohort = "cohort-na-interleave"
+    keys = ["chatgpt", "claude"]
+
+    def _write_row(*, run_id: str, finished_at: str, chatgpt_ok: bool, acc: float):
+        ranking = []
+        for i, key in enumerate(keys):
+            if key == "chatgpt" and not chatgpt_ok:
+                ranking.append(
+                    {
+                        "key": key,
+                        "accuracy": None,
+                        "status": "n/a",
+                        "status_note": "candidate_partial",
+                        "rank": None,
+                        "coverage": None,
+                        "quality": None,
+                        "discipline": None,
+                    }
+                )
+            else:
+                ranking.append(
+                    {
+                        "key": key,
+                        "accuracy": acc + i,
+                        "status": "ok",
+                        "rank": i + 1,
+                        "coverage": 70.0,
+                        "quality": 80.0,
+                        "discipline": 90.0,
+                    }
+                )
+        art = RunArtifact(
+            run_id=run_id,
+            case_id="caseC",
+            started_at=finished_at,
+            finished_at=finished_at,
+            n_index=1,
+            batch_id="batch-na-interleave",
+            models_config={
+                "candidates": [{"key": k, "model": f"test/{k}"} for k in keys],
+                "judge": {"model": "deepseek/deepseek-r1"},
+                "gold_reference": "{}",
+                "case_stem": "stem-caseC",
+            },
+            ranking=ranking,
+            judgments=[],
+            cohort_id=cohort,
+            scoring_version="graded-clinical-v4",
+            prompt_version="gold-only-v1",
+            benchmark_track="controlled",
+            run_status="partial" if not chatgpt_ok else "complete",
+        )
+        write_artifact(art, tmp_path)
+
+    # Older: 5 fully scored (chatgpt accuracy 60..64).
+    for i in range(5):
+        _write_row(
+            run_id=f"old-ok-{i}",
+            finished_at=f"2026-05-01T1{i}:00:00Z",
+            chatgpt_ok=True,
+            acc=60.0 + i,
+        )
+    # Newer: 3 technical N/A for chatgpt (would fill a raw last-5 window).
+    for i in range(3):
+        _write_row(
+            run_id=f"new-na-{i}",
+            finished_at=f"2026-06-01T1{i}:00:00Z",
+            chatgpt_ok=False,
+            acc=90.0 + i,
+        )
+
+    same = rebuild_multi_from_history(
+        tmp_path, "caseC", n=5, cohort_id=cohort
+    )
+    assert same["ok"] is True
+    by_key = {r["key"]: r for r in same["summary"].ranking_mean}
+    assert by_key["chatgpt"]["n_runs"] == 5
+    assert by_key["chatgpt"]["n_failed"] == 3
+    assert by_key["chatgpt"]["n_requested"] == 8
+    # Mean of the five older scored rows (60..64), not a 2-scored truncated window.
+    assert by_key["chatgpt"]["accuracy_mean"] == 62.0
+    assert by_key["chatgpt"]["partial"] is True
+    assert by_key["chatgpt"]["rank"] is not None
+    # Claude always scored; newest ≤5 scored, no N/A in its window once filled.
+    assert by_key["claude"]["n_runs"] == 5
+    assert by_key["claude"]["n_failed"] == 0
+
+    port = rebuild_portfolio_from_history(
+        tmp_path, n=5, scoring_version="graded-clinical-v4", track="controlled"
+    )
+    assert port["ok"] is True
+    p_by = {r["key"]: r for r in port["summary"].ranking_mean}
+    assert int(p_by["chatgpt"]["n_runs"]) == 5
+    assert int(p_by["chatgpt"]["n_failed"]) == 3
+    assert float(p_by["chatgpt"]["accuracy_mean"]) == 62.0
+
+
 def test_rebuild_accepts_per_model_n_40_and_50(tmp_path: Path):
     """UI selectbox offers 40/50; backend must not clamp those caps to 30."""
     for i in range(3):

@@ -1389,6 +1389,7 @@ def _reliability_table_html(ranking_mean: list) -> str:
         "(collect / judge / timeout / partial / empty) — not clinical 0% · "
         "<b>partial</b> = ranked by mean of scored runs despite incomplete coverage · "
         "unranked rows (#—) have zero scored observations · "
+        "≤N scored obs/model; N/A skipped, older scored used · "
         "N=5 exploratory · ~10 better for CV eye-check · 20–50 diminishing returns · "
         "<b>C/Q/D</b> = coverage / quality / discipline "
         "(quality is independent of coverage; a high board % can still have low C)</div>"
@@ -1457,7 +1458,7 @@ def history_mean_rebuild_dialog():
 
     st.markdown("##### Chart (mean %; whiskers = ±1 std)")
     _chart_title = (
-        f"Mean Clinical Composite · Portfolio · ≤{payload.get('n_per_model_cap') or '?'} / model · "
+        f"Mean Clinical Composite · Portfolio · ≤{payload.get('n_per_model_cap') or '?'} scored/model · "
         f"{payload.get('n_used')} run docs · {payload.get('n_cases')} cases"
         if _scope == "portfolio"
         else f"Mean Clinical Composite Score · {case_display_name(summary.case_id)}"
@@ -3538,7 +3539,7 @@ with _rb1:
         t("bench.rebuild_n_label", _ui_lang()),
         options=_n_options,
         format_func=lambda n: (
-            f"≤{n} / model"
+            f"≤{n} scored / model"
             + (" · exploratory" if n == 5 else "")
             + (" · better CV (suggested)" if n == 10 else "")
             + (" · diminishing returns" if n in (20, 30, 40) else "")
@@ -3547,10 +3548,11 @@ with _rb1:
         ),
         key="history_rebuild_n_pick",
         on_change=_on_rebuild_n_pick_change,
-        help="N = max scored observations per model (newest first), not a global "
-        "last-N run slice. Tiers: 5 exploratory · ~10 better for CV · 20–50 "
-        "diminishing returns (50 max). Default stays 5. Selecting N alone does "
-        "not open a popup — use Rebuild mean.",
+        help="N = max scored observations per model (newest first); technical "
+        "N/A skipped, older scored used — not a global last-N run slice. "
+        "Tiers: 5 exploratory · ~10 better for CV · 20–50 diminishing returns "
+        "(50 max). Default stays 5. Selecting N alone does not open a popup — "
+        "use Rebuild mean.",
     )
 with _rb2:
     if _rebuild_scope == "portfolio":
