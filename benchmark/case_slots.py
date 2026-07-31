@@ -4,8 +4,10 @@ Base slots Case 1–5 are always present. **New case** opens the next empty
 base slot, or grows the bar to Case 6, 7, … when 1–5 are filled. Bindings are
 sticky slot index → stem_key (normalized stem hash).
 
-Stem text + confirmed gold are always resolved from existing run artifacts —
-this module does not invent clinical content and does not rewrite artifacts.
+Stem text + confirmed gold are resolved from run artifacts when present.
+Empty base slots may also be seeded from a shipped default case pack
+(``benchmark/default_cases/``) into owner-scoped sticky drafts — stem + freeform
+gold Q&A for Prepare/Confirm — without rewriting History artifacts.
 
 History ownership remains ``artifacts/owners/<fingerprint>/`` (API key / account).
 """
@@ -28,6 +30,9 @@ SOFT_MAX_CASE_SLOTS = 50
 # Backward-compatible alias: base bar size (Case 1–5 always shown).
 MAX_CASE_SLOTS = BASE_CASE_SLOTS
 SLOTS_FILENAME = "case_slots.json"
+DRAFTS_FILENAME = "case_slot_drafts.json"
+DEFAULT_CASES_DIR = Path(__file__).resolve().parent / "default_cases"
+DEFAULT_PACK_FILENAME = "abc_emergency.json"
 
 
 def slot_indexes(slot_count: int) -> tuple[int, ...]:
@@ -77,6 +82,7 @@ class CaseSlot:
     stem_key: str = ""
     stem: str = ""
     gold_reference: str = ""
+    gold_raw: str = ""
     cohort_id: str = ""
     run_ids: list[str] | None = None
     run_count: int = 0
@@ -86,11 +92,16 @@ class CaseSlot:
     def filled(self) -> bool:
         # Bound stem_key counts even before the first History artifact exists
         # (Confirm binds; collect writes the stem into models_config later).
-        return bool(self.stem_key)
+        # Draft-only slots (stem text, no hash yet) also count as filled.
+        return bool(self.stem_key or self.stem)
 
     @property
     def has_confirmed_gold(self) -> bool:
         return bool(self.gold_reference)
+
+    @property
+    def has_draft_gold(self) -> bool:
+        return bool(self.gold_raw)
 
 
 def empty_slot(index: int) -> CaseSlot:
@@ -241,6 +252,145 @@ def save_bindings(
     )
 
 
+def _parse_drafts(raw_drafts: Any) -> dict[int, dict[str, str]]:
+    if not isinstance(raw_drafts, dict):
+        return {}
+    out: dict[int, dict[str, str]] = {}
+    for k, v in raw_drafts.items():
+        try:
+            idx = int(k)
+        except (TypeError, ValueError):
+            continue
+        if idx < 1 or idx > SOFT_MAX_CASE_SLOTS or not isinstance(v, Mapping):
+            continue
+        stem = str(v.get("stem") or "").strip()
+        gold_raw = str(v.get("gold_raw") or "").strip()
+        key = str(v.get("stem_key") or "").strip()
+        if not stem and not gold_raw and not key:
+            continue
+        if stem and not key:
+            key = stem_key(stem)
+        out[idx] = {"stem": stem, "gold_raw": gold_raw, "stem_key": key}
+    return out
+
+
+def load_drafts(workspace: Path) -> dict[int, dict[str, str]]:
+    """Load owner-scoped stem + freeform gold drafts (for empty / pre-run slots)."""
+    path = Path(workspace) / DRAFTS_FILENAME
+    if not path.is_file():
+        return {}
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    if not isinstance(raw, dict):
+        return {}
+    return _parse_drafts(raw.get("drafts"))
+
+
+def save_drafts(workspace: Path, drafts: Mapping[int, Mapping[str, str]]) -> None:
+    """Persist owner-scoped drafts (clinical plaintext — local plaintext store only)."""
+    path = Path(workspace) / DRAFTS_FILENAME
+    clean = _parse_drafts(dict(drafts))
+    payload = {
+        "version": 1,
+        "drafts": {
+            str(i): {
+                "stem": clean[i]["stem"],
+                "gold_raw": clean[i]["gold_raw"],
+                "stem_key": clean[i]["stem_key"],
+            }
+            for i in sorted(clean)
+        },
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+
+def load_default_pack(
+    path: Path | None = None,
+) -> dict[int, dict[str, str]]:
+    """Load shipped default case pack (slot index → stem + gold_raw)."""
+    pack_path = Path(path) if path is not None else DEFAULT_CASES_DIR / DEFAULT_PACK_FILENAME
+    if not pack_path.is_file():
+        return {}
+    try:
+        raw = json.loads(pack_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    slots = raw.get("slots") if isinstance(raw, dict) else None
+    if not isinstance(slots, dict):
+        return {}
+    out: dict[int, dict[str, str]] = {}
+    for k, v in slots.items():
+        try:
+            idx = int(k)
+        except (TypeError, ValueError):
+            continue
+        if idx < 1 or idx > SOFT_MAX_CASE_SLOTS or not isinstance(v, Mapping):
+            continue
+        stem = str(v.get("stem") or "").strip()
+        gold_raw = str(v.get("gold_raw") or "").strip()
+        if not stem:
+            continue
+        out[idx] = {
+            "stem": stem,
+            "gold_raw": gold_raw,
+            "stem_key": stem_key(stem),
+            "title": str(v.get("title") or "").strip(),
+        }
+    return out
+
+
+def apply_default_pack_to_empty_slots(
+    bindings: Mapping[int, str],
+    drafts: Mapping[int, Mapping[str, str]],
+    *,
+    pack: Mapping[int, Mapping[str, str]] | None = None,
+) -> tuple[dict[int, str], dict[int, dict[str, str]]]:
+    """Seed empty slots from the shipped pack without touching filled History slots.
+
+    Only applies when the slot has no binding and no existing draft. Never
+    overwrites Case slots that already have sticky History bindings.
+    """
+    pack_data = dict(pack) if pack is not None else load_default_pack()
+    out_bindings = dict(bindings)
+    out_drafts = _parse_drafts(dict(drafts))
+    used_keys = {str(k).strip() for k in out_bindings.values() if str(k or "").strip()}
+    for idx, entry in sorted(pack_data.items()):
+        if idx in out_bindings:
+            continue
+        if idx in out_drafts and (
+            out_drafts[idx].get("stem") or out_drafts[idx].get("gold_raw")
+        ):
+            # Keep user/owner draft; still ensure binding if missing.
+            key = str(out_drafts[idx].get("stem_key") or "").strip()
+            if not key and out_drafts[idx].get("stem"):
+                key = stem_key(out_drafts[idx]["stem"])
+                out_drafts[idx]["stem_key"] = key
+            if key and key not in used_keys:
+                out_bindings[idx] = key
+                used_keys.add(key)
+            continue
+        stem = str(entry.get("stem") or "").strip()
+        if not stem:
+            continue
+        key = str(entry.get("stem_key") or stem_key(stem)).strip()
+        if not key or key in used_keys:
+            continue
+        out_bindings[idx] = key
+        used_keys.add(key)
+        out_drafts[idx] = {
+            "stem": stem,
+            "gold_raw": str(entry.get("gold_raw") or "").strip(),
+            "stem_key": key,
+        }
+    return out_bindings, out_drafts
+
+
 def migrate_bindings(
     artifacts: Sequence[RunArtifact],
     existing: Mapping[int, str] | None = None,
@@ -288,18 +438,32 @@ def resolve_slots(
     bindings: Mapping[int, str],
     *,
     slot_count: int = BASE_CASE_SLOTS,
+    drafts: Mapping[int, Mapping[str, str]] | None = None,
 ) -> list[CaseSlot]:
-    """Resolve slot views (stem + gold + runs) from bindings + artifacts."""
+    """Resolve slot views (stem + gold + runs) from bindings + artifacts + drafts."""
     by_key = {f.stem_key: f for f in discover_stem_families(artifacts)}
+    draft_map = _parse_drafts(dict(drafts or {}))
     slots: list[CaseSlot] = []
     for idx in slot_indexes(slot_count):
         key = str(bindings.get(idx) or "").strip()
+        draft = draft_map.get(idx) or {}
         fam = by_key.get(key) if key else None
         if not fam:
-            if key:
-                # Sticky binding without a loaded artifact yet — occupied, not empty.
+            stem = str(draft.get("stem") or "").strip()
+            gold_raw = str(draft.get("gold_raw") or "").strip()
+            if not key and stem:
+                key = str(draft.get("stem_key") or stem_key(stem)).strip()
+            if key or stem:
+                # Sticky binding and/or draft without a History artifact yet.
                 slots.append(
-                    CaseSlot(index=idx, label=f"Case {idx}", stem_key=key, run_ids=[])
+                    CaseSlot(
+                        index=idx,
+                        label=f"Case {idx}",
+                        stem_key=key,
+                        stem=stem,
+                        gold_raw=gold_raw,
+                        run_ids=[],
+                    )
                 )
             else:
                 slots.append(empty_slot(idx))
@@ -311,6 +475,12 @@ def resolve_slots(
                 stem_key=fam.stem_key,
                 stem=fam.stem,
                 gold_reference=fam.gold_reference,
+                # Keep freeform draft only when confirmed gold JSON is absent.
+                gold_raw=(
+                    ""
+                    if fam.gold_reference
+                    else str(draft.get("gold_raw") or "").strip()
+                ),
                 cohort_id=fam.cohort_id,
                 run_ids=list(fam.run_ids),
                 run_count=fam.run_count,
@@ -326,9 +496,15 @@ def ensure_owner_slots(
     *,
     session_bindings: Mapping[int, str] | None = None,
     session_slot_count: int | None = None,
+    session_drafts: Mapping[int, Mapping[str, str]] | None = None,
     persist: bool = True,
-) -> tuple[list[CaseSlot], dict[int, str], int]:
-    """Load/migrate sticky bindings, resolve Case 1–N, optionally persist hashes."""
+    apply_defaults: bool = True,
+) -> tuple[list[CaseSlot], dict[int, str], int, dict[int, dict[str, str]]]:
+    """Load/migrate sticky bindings, seed empty defaults, resolve Case 1–N.
+
+    Returns ``(slots, bindings, slot_count, drafts)``. Defaults fill only empty
+    slots (never overwrite Case 1/2 History bindings).
+    """
     disk, disk_count = load_slot_state(workspace)
     merged: dict[int, str] = dict(disk)
     for idx, key in (session_bindings or {}).items():
@@ -339,6 +515,9 @@ def ensure_owner_slots(
         k = str(key or "").strip()
         if 1 <= i <= SOFT_MAX_CASE_SLOTS and k:
             merged[i] = k
+    drafts = load_drafts(workspace)
+    for idx, draft in _parse_drafts(dict(session_drafts or {})).items():
+        drafts[idx] = draft
     max_bound = max(merged.keys(), default=0)
     slot_count = max(
         BASE_CASE_SLOTS,
@@ -348,12 +527,24 @@ def ensure_owner_slots(
     )
     slot_count = min(slot_count, SOFT_MAX_CASE_SLOTS)
     bindings = migrate_bindings(artifacts, merged, slot_count=slot_count)
+    if apply_defaults:
+        bindings, drafts = apply_default_pack_to_empty_slots(bindings, drafts)
+        max_bound = max(bindings.keys(), default=0)
+        slot_count = max(slot_count, max_bound, BASE_CASE_SLOTS)
+        slot_count = min(slot_count, SOFT_MAX_CASE_SLOTS)
     if persist:
         try:
             save_bindings(workspace, bindings, slot_count=slot_count)
         except OSError:
             pass
-    return resolve_slots(artifacts, bindings, slot_count=slot_count), bindings, slot_count
+        try:
+            save_drafts(workspace, drafts)
+        except OSError:
+            pass
+    slots = resolve_slots(
+        artifacts, bindings, slot_count=slot_count, drafts=drafts
+    )
+    return slots, bindings, slot_count, drafts
 
 
 def next_empty_slot(slots: Sequence[CaseSlot]) -> int | None:

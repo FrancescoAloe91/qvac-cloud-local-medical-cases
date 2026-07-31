@@ -7,12 +7,15 @@ from pathlib import Path
 from benchmark.case_slots import (
     BASE_CASE_SLOTS,
     SOFT_MAX_CASE_SLOTS,
+    apply_default_pack_to_empty_slots,
     bind_stem_to_slot,
     count_distinct_stem_keys,
     discover_stem_families,
     ensure_owner_slots,
     filter_artifacts_for_slot,
     load_bindings,
+    load_default_pack,
+    load_drafts,
     load_slot_state,
     migrate_bindings,
     next_empty_slot,
@@ -158,7 +161,9 @@ def test_base_full_new_case_grows_to_six(tmp_path: Path):
         )
         for i in range(1, 6)
     ]
-    slots, bindings, slot_count = ensure_owner_slots(tmp_path, arts)
+    slots, bindings, slot_count, _drafts = ensure_owner_slots(
+        tmp_path, arts, apply_defaults=False
+    )
     assert next_empty_slot(slots) is None
     assert slot_count == BASE_CASE_SLOTS
     assert len(bindings) == BASE_CASE_SLOTS
@@ -166,8 +171,8 @@ def test_base_full_new_case_grows_to_six(tmp_path: Path):
     assert new_idx == 6
     assert new_count == 6
     save_bindings(tmp_path, bindings, slot_count=new_count)
-    slots6, bindings6, count6 = ensure_owner_slots(
-        tmp_path, arts, session_slot_count=new_count
+    slots6, bindings6, count6, _ = ensure_owner_slots(
+        tmp_path, arts, session_slot_count=new_count, apply_defaults=False
     )
     assert count6 == 6
     assert len(slots6) == 6
@@ -198,7 +203,9 @@ def test_new_case_prefers_empty_base_before_growing(tmp_path: Path):
             gold=GOLD_MARK,
         ),
     ]
-    slots, _bindings, slot_count = ensure_owner_slots(tmp_path, arts)
+    slots, _bindings, slot_count, _ = ensure_owner_slots(
+        tmp_path, arts, apply_defaults=False
+    )
     assert next_empty_slot(slots) == 3
     idx, count = open_new_case_slot(slots, slot_count=slot_count)
     assert idx == 3
@@ -222,7 +229,9 @@ def test_bind_stem_to_empty_slot_for_new_case(tmp_path: Path):
             gold=GOLD_MARK,
         ),
     ]
-    slots, bindings, _count = ensure_owner_slots(tmp_path, arts)
+    slots, bindings, _count, _ = ensure_owner_slots(
+        tmp_path, arts, apply_defaults=False
+    )
     assert next_empty_slot(slots) == 3
     bindings = bind_stem_to_slot(bindings, slot_index=3, case_stem=STEM_C)
     save_bindings(tmp_path, bindings, slot_count=BASE_CASE_SLOTS)
@@ -245,7 +254,9 @@ def test_slot_state_persists_grown_empty_case_six(tmp_path: Path):
             gold=GOLD_MARK,
         )
     ]
-    slots, _, count2 = ensure_owner_slots(tmp_path, arts)
+    slots, _, count2, _ = ensure_owner_slots(
+        tmp_path, arts, apply_defaults=False
+    )
     assert count2 == 6
     assert [s.index for s in slots] == list(range(1, 7))
     assert slots[5].index == 6 and not slots[5].filled
@@ -328,3 +339,71 @@ def test_migrate_does_not_auto_fill_slot_six():
     bindings = migrate_bindings(arts, slot_count=7)
     assert set(bindings.keys()) == {1, 2, 3, 4, 5}
     assert 6 not in bindings and 7 not in bindings
+
+
+def test_default_pack_loads_stemi_dka_stroke_qna():
+    pack = load_default_pack()
+    assert set(pack.keys()) == {3, 4, 5}
+    assert "STEMI" in pack[3]["stem"] or "ST-segment elevation" in pack[3]["stem"]
+    assert "Q1 [diagnosis]:" in pack[3]["gold_raw"]
+    assert "A5:" in pack[3]["gold_raw"]
+    assert "ketoacidosis" in pack[4]["gold_raw"].lower() or "DKA" in pack[4]["stem"]
+    assert "stroke" in pack[5]["gold_raw"].lower()
+    assert "Q5 [plan]:" in pack[5]["gold_raw"]
+
+
+def test_default_pack_fills_empty_slots_only_preserves_case_1_2(tmp_path: Path):
+    arts = [
+        _art(
+            run_id="a1",
+            stem=STEM_A,
+            finished_at="2026-07-31T10:00:00Z",
+            cohort_id="ca",
+            gold=GOLD_MARK,
+        ),
+        _art(
+            run_id="b1",
+            stem=STEM_B,
+            finished_at="2026-07-30T10:00:00Z",
+            cohort_id="cb",
+            gold=GOLD_MARK,
+        ),
+    ]
+    slots, bindings, _count, drafts = ensure_owner_slots(tmp_path, arts)
+    assert bindings[1] == stem_key(STEM_A)
+    assert bindings[2] == stem_key(STEM_B)
+    assert 3 in bindings and 4 in bindings and 5 in bindings
+    assert slots[2].filled and "ST-segment elevation" in slots[2].stem
+    assert "Q1 [diagnosis]:" in slots[2].gold_raw
+    assert "Q1 [diagnosis]:" in slots[3].gold_raw
+    assert "Q1 [diagnosis]:" in slots[4].gold_raw
+    assert slots[0].stem == STEM_A
+    assert slots[1].stem == STEM_B
+    # Drafts persisted for owner workspace.
+    loaded = load_drafts(tmp_path)
+    assert set(loaded.keys()) >= {3, 4, 5}
+    assert "A1:" in loaded[3]["gold_raw"]
+
+
+def test_apply_default_pack_does_not_overwrite_existing_binding():
+    pack = load_default_pack()
+    # Pretend Case 3 already owns an unrelated stem.
+    existing_key = stem_key("Already bound unrelated stem for case three")
+    bindings = {3: existing_key}
+    drafts: dict[int, dict[str, str]] = {}
+    out_b, out_d = apply_default_pack_to_empty_slots(bindings, drafts, pack=pack)
+    assert out_b[3] == existing_key
+    assert 3 not in out_d  # pack must not replace occupied slot
+    assert 4 in out_b and 5 in out_b
+    assert "Q1 [diagnosis]:" in out_d[4]["gold_raw"]
+
+
+def test_resolve_slots_surfaces_draft_gold_without_artifact():
+    pack = load_default_pack()
+    bindings = {3: pack[3]["stem_key"]}
+    drafts = {3: pack[3]}
+    slots = resolve_slots([], bindings, drafts=drafts)
+    assert slots[2].stem_key == pack[3]["stem_key"]
+    assert slots[2].stem.startswith("Patient:")
+    assert slots[2].gold_raw.startswith("Q1 [diagnosis]:")
+    assert not slots[2].gold_reference

@@ -780,7 +780,7 @@ def _clear_case_editor_state() -> None:
 
 
 def _select_case_slot(slot, *, as_new: bool = False) -> None:
-    """Activate a Case slot and load stem+gold from History when filled."""
+    """Activate a Case slot and load stem+gold from History or drafts when filled."""
     st.session_state["active_case_slot"] = int(slot.index)
     if as_new or not slot.filled:
         _clear_case_editor_state()
@@ -792,11 +792,27 @@ def _select_case_slot(slot, *, as_new: bool = False) -> None:
             cohort_id=slot.cohort_id or "",
         )
         return
-    # Filled stem without restoreable gold JSON — load stem only.
-    st.session_state["demo_case_stem"] = slot.stem
-    st.session_state["_persist_case_stem"] = slot.stem
-    st.session_state.pop("_confirmed_gold_json", None)
-    st.session_state.pop("_restored_cohort_id", None)
+    # Draft / freeform gold (Prepare + Confirm still required) or stem-only.
+    stem = slot.stem or ""
+    gold_raw = getattr(slot, "gold_raw", "") or ""
+    st.session_state["demo_case_stem"] = stem
+    st.session_state["demo_gold_ref"] = gold_raw
+    st.session_state["_persist_case_stem"] = stem
+    st.session_state["_persist_gold_ref"] = gold_raw
+    for _gk in (
+        "_confirmed_gold_json",
+        "_gold_sections",
+        "_prepared_gold_sections",
+        "_prepared_extraction_meta",
+        "_prepared_extraction_cost",
+        "_gold_confirmed_at",
+        "_restored_cohort_id",
+    ):
+        st.session_state.pop(_gk, None)
+    for _wk in list(st.session_state.keys()):
+        if str(_wk).startswith("prep_sum_") or str(_wk).startswith("prep_q_"):
+            st.session_state.pop(_wk, None)
+    st.session_state["_gold_source_fingerprint"] = _source_fingerprint(stem, gold_raw)
 
 
 def _dlg_full_text(text: str) -> None:
@@ -1734,15 +1750,19 @@ is_custom_real = True
 # Case slots (sticky stem_key bindings per API-key owner workspace).
 # Base Case 1–5 always shown; New case opens next empty or grows to Case 6+.
 _slot_arts = _preloaded_artifacts()
-_case_slots, _case_bindings, _case_slot_count = ensure_owner_slots(
+_case_slots, _case_bindings, _case_slot_count, _case_drafts = ensure_owner_slots(
     WORKSPACE_DIR,
     _slot_arts,
     session_bindings=st.session_state.get("_case_slot_bindings") or {},
     session_slot_count=st.session_state.get("_case_slot_count"),
+    session_drafts=st.session_state.get("_case_slot_drafts") or {},
     persist=bool(getattr(RUN_STORE, "writes_plaintext", True)),
 )
 st.session_state["_case_slot_bindings"] = dict(_case_bindings)
 st.session_state["_case_slot_count"] = int(_case_slot_count)
+st.session_state["_case_slot_drafts"] = {
+    int(i): dict(v) for i, v in (_case_drafts or {}).items()
+}
 if "active_case_slot" not in st.session_state:
     # Prefer first filled slot (migrated Case 1), else Case 1 empty.
     _first_filled = next((s.index for s in _case_slots if s.filled), 1)
