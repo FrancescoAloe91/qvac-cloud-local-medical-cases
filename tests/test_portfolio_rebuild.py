@@ -515,3 +515,32 @@ def test_portfolio_per_model_n_includes_older_cloud_history(tmp_path: Path):
     med_key = medical_six[0]
     assert med_key in by_key
     assert int(by_key[med_key]["n_requested"]) == 15
+
+
+def test_rebuild_accepts_per_model_n_40_and_50(tmp_path: Path):
+    """UI selectbox offers 40/50; backend must not clamp those caps to 30."""
+    for i in range(3):
+        _write(
+            tmp_path,
+            run_id=f"p{i}",
+            case_id="caseA",
+            finished_at=f"2026-01-01T1{i}:00:00Z",
+            cohort_id=f"cohort-p-{i}",
+        )
+    for n in (40, 50):
+        port = rebuild_portfolio_from_history(
+            tmp_path, n=n, scoring_version="graded-clinical-v4", track="controlled"
+        )
+        assert port["ok"] is True
+        assert port["n_per_model_cap"] == n
+        same = rebuild_multi_from_history(
+            tmp_path, "caseA", n=n, cohort_id="cohort-p-2"
+        )
+        assert same["ok"] is True
+        assert same["n_per_model_cap"] == n
+    # Still hard-capped above the UI max.
+    over = rebuild_portfolio_from_history(
+        tmp_path, n=99, scoring_version="graded-clinical-v4", track="controlled"
+    )
+    assert over["ok"] is True
+    assert over["n_per_model_cap"] == 50
