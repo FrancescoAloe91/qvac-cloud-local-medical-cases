@@ -298,6 +298,8 @@ def estimate_cost_breakdown(
     local_only: bool = False,
     include_local_peers: Optional[bool] = None,
     include_medical_peers: Optional[bool] = None,
+    include_optional_legacy: bool = False,
+    optional_legacy_keys: Optional[Sequence[str]] = None,
     include_extractor: bool = True,
     extraction_cost_usd: Optional[float] = None,
     history_artifacts: Optional[Sequence[Any]] = None,
@@ -346,6 +348,10 @@ def estimate_cost_breakdown(
         judge_out_typical, min(int(_JUDGE_PRIMARY_MAX_TOKENS), judge_out_high)
     )
 
+    _opt_kw = dict(
+        include_optional_legacy=bool(include_optional_legacy),
+        optional_legacy_keys=optional_legacy_keys,
+    )
     if local_only:
         roster = merge_roster(
             [],
@@ -359,6 +365,7 @@ def estimate_cost_breakdown(
                 if include_medical_peers is None
                 else bool(include_medical_peers)
             ),
+            **_opt_kw,
         )
     else:
         roster = merge_roster(
@@ -367,6 +374,7 @@ def estimate_cost_breakdown(
             include_qvac=bool(include_qvac),
             include_local_peers=include_local_peers,
             include_medical_peers=include_medical_peers,
+            **_opt_kw,
         )
 
     per_model: List[Dict[str, Any]] = []
@@ -1493,6 +1501,8 @@ def prepare_run(
     triple_qvac: bool = False,
     include_local_peers: Optional[bool] = None,
     include_medical_peers: Optional[bool] = None,
+    include_optional_legacy: bool = False,
+    optional_legacy_keys: Optional[Sequence[str]] = None,
 ) -> Dict[str, Any]:
     """Resolve case + candidate list + blind map for UI-driven runs."""
     case = load_case(case_id)
@@ -1507,6 +1517,8 @@ def prepare_run(
         include_qvac=include_medpsy,
         include_local_peers=include_local_peers,
         include_medical_peers=include_medical_peers,
+        include_optional_legacy=bool(include_optional_legacy),
+        optional_legacy_keys=optional_legacy_keys,
     )
     candidates_cfg = [
         c
@@ -1538,6 +1550,9 @@ def prepare_run(
         "triple_qvac": bool(triple_qvac) and include_medpsy,
         "include_local_peers": include_local_peers,
         "include_medical_peers": include_medical_peers,
+        "optional_legacy_keys": list(optional_legacy_keys or ())
+        if optional_legacy_keys is not None
+        else (["local_gemma", "local_llama", "qvac_4b_q8"] if include_optional_legacy else []),
     }
 
 

@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
-# Active dashboard roster (≤12: 3 cloud + 3 generic + 3 medical + 3 MedPsy).
-# Legacy keys stay in MODEL_LABELS for old JSON only — KPI / history / charts drop them.
+# Full History / chart keyset (≤12). Default live roster is 9; three optional/legacy
+# slots (Gemma, Llama, MedPsy Q8) stay labeled here so History still resolves them.
 CURRENT_ROSTER_KEYS: Tuple[str, ...] = (
     "chatgpt",
     "claude",
@@ -21,6 +21,28 @@ CURRENT_ROSTER_KEYS: Tuple[str, ...] = (
     "qvac_4b_q8",
 )
 CURRENT_ROSTER_SET = frozenset(CURRENT_ROSTER_KEYS)
+
+# Default active live roster (bands ON, optional/legacy OFF).
+DEFAULT_ACTIVE_ROSTER_KEYS: Tuple[str, ...] = (
+    "chatgpt",
+    "claude",
+    "gemini",
+    "local_phi",
+    "local_medgemma",
+    "local_med42",
+    "local_ultramedical",
+    "qvac_1_7b",
+    "qvac",
+)
+DEFAULT_ACTIVE_ROSTER_SET = frozenset(DEFAULT_ACTIVE_ROSTER_KEYS)
+
+# Opt-in slots (UI expander); never deleted from GGUFs / artifacts / History labels.
+OPTIONAL_LEGACY_SLOT_KEYS: Tuple[str, ...] = (
+    "local_gemma",
+    "local_llama",
+    "qvac_4b_q8",
+)
+OPTIONAL_LEGACY_SLOT_SET = frozenset(OPTIONAL_LEGACY_SLOT_KEYS)
 
 
 def is_current_roster_key(key: Optional[str]) -> bool:

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterable, List, Optional
 
 _REPO = Path(__file__).resolve().parent.parent
 MODELS_DIR = _REPO / "models"
@@ -45,11 +45,12 @@ QVAC_VARIANT_SPECS: List[Dict[str, Any]] = [
         "model": "medpsy-4b-q8",
         "gguf": "medpsy-4b-q8_0.gguf",
         "band": "qvac",
+        "optional_legacy": True,
     },
 ]
 
 # Band B — open small Q4 GGUFs, same sidecar as MedPsy (real on-device privacy).
-# Gemma-2-2B-IT replaces Qwen: Qwen 3B→zeros / 1.5B→CJK garbage under this SDK path.
+# Default active: Phi only. Gemma / Llama are optional legacy slots (History keeps labels).
 LOCAL_PEER_SPECS: List[Dict[str, Any]] = [
     {
         "key": "local_gemma",
@@ -62,6 +63,7 @@ LOCAL_PEER_SPECS: List[Dict[str, Any]] = [
         "model": "gemma-2-2b-it-q4",
         "gguf": "gemma-2-2b-it-Q4_K_M.gguf",
         "band": "local_peer",
+        "optional_legacy": True,
     },
     {
         "key": "local_llama",
@@ -74,6 +76,7 @@ LOCAL_PEER_SPECS: List[Dict[str, Any]] = [
         "model": "llama-3.2-3b-instruct-q4",
         "gguf": "Llama-3.2-3B-Instruct-Q4_K_M.gguf",
         "band": "local_peer",
+        "optional_legacy": True,
     },
     {
         "key": "local_phi",
@@ -132,6 +135,13 @@ MEDICAL_PEER_SPECS: List[Dict[str, Any]] = [
 
 _LOCAL_PEER_KEYS = frozenset(str(s["key"]) for s in LOCAL_PEER_SPECS)
 _MEDICAL_PEER_KEYS = frozenset(str(s["key"]) for s in MEDICAL_PEER_SPECS)
+# Optional / legacy: still in CURRENT_ROSTER_KEYS for History; OFF by default.
+OPTIONAL_LEGACY_SLOT_KEYS = frozenset(
+    str(s["key"]) for s in (QVAC_VARIANT_SPECS + LOCAL_PEER_SPECS) if s.get("optional_legacy")
+)
+assert OPTIONAL_LEGACY_SLOT_KEYS == frozenset(
+    {"local_gemma", "local_llama", "qvac_4b_q8"}
+)
 
 
 def gguf_path(filename: str) -> Path:
@@ -146,15 +156,49 @@ def _with_gguf(spec: Dict[str, Any]) -> Dict[str, Any]:
     return row
 
 
-def variant_candidates(*, triple: bool) -> List[Dict[str, Any]]:
-    """Return 1 (default 4B Q4) or all 3 MedPsy candidate dicts with absolute gguf_path."""
-    specs = QVAC_VARIANT_SPECS if triple else [s for s in QVAC_VARIANT_SPECS if s["key"] == "qvac"]
+def _resolve_optional_keys(
+    *,
+    include_optional_legacy: bool,
+    optional_legacy_keys: Optional[Iterable[str]],
+) -> frozenset:
+    if optional_legacy_keys is not None:
+        return frozenset(str(k) for k in optional_legacy_keys) & OPTIONAL_LEGACY_SLOT_KEYS
+    if include_optional_legacy:
+        return OPTIONAL_LEGACY_SLOT_KEYS
+    return frozenset()
+
+
+def variant_candidates(
+    *,
+    triple: bool,
+    include_q8: bool = False,
+) -> List[Dict[str, Any]]:
+    """Return MedPsy candidate dicts with absolute gguf_path.
+
+    - ``triple=False``: default single slot ``qvac`` (4B Q4).
+    - ``triple=True``: 1.7B + 4B Q4 (default active dual).
+    - ``include_q8=True`` with triple: also MedPsy 4B Q8 (optional legacy).
+    """
+    if not triple:
+        specs = [s for s in QVAC_VARIANT_SPECS if s["key"] == "qvac"]
+    else:
+        specs = [
+            s
+            for s in QVAC_VARIANT_SPECS
+            if s["key"] != "qvac_4b_q8" or include_q8
+        ]
     return [_with_gguf(s) for s in specs]
 
 
-def local_peer_candidates() -> List[Dict[str, Any]]:
-    """Band B open local GGUFs (always all three when included)."""
-    return [_with_gguf(s) for s in LOCAL_PEER_SPECS]
+def local_peer_candidates(
+    *,
+    optional_keys: Optional[Iterable[str]] = None,
+) -> List[Dict[str, Any]]:
+    """Band B open local GGUFs. Default active = Phi only; Gemma/Llama optional."""
+    allow = {"local_phi"} | (
+        frozenset(str(k) for k in (optional_keys or ())) & {"local_gemma", "local_llama"}
+    )
+    return [_with_gguf(s) for s in LOCAL_PEER_SPECS if s["key"] in allow]
 
 
 def medical_peer_candidates() -> List[Dict[str, Any]]:
@@ -167,14 +211,32 @@ def medical_peers_ready() -> bool:
     return all(c.get("gguf_ready") for c in medical_peer_candidates())
 
 
-def local_only_roster() -> List[Dict[str, Any]]:
-    """Fair on-device compare: 3 open peers + 3 MedPsy quants (always all six)."""
-    return local_peer_candidates() + variant_candidates(triple=True)
+def local_only_roster(
+    *,
+    include_optional_legacy: bool = False,
+) -> List[Dict[str, Any]]:
+    """Fair on-device compare: default Phi + dual MedPsy (optional legacy expands)."""
+    opt = _resolve_optional_keys(
+        include_optional_legacy=include_optional_legacy,
+        optional_legacy_keys=None,
+    )
+    return local_peer_candidates(optional_keys=opt) + variant_candidates(
+        triple=True, include_q8="qvac_4b_q8" in opt
+    )
 
 
-def local_medical_only_roster() -> List[Dict[str, Any]]:
-    """Medical-specialized on-device only: 3 MedPsy + 3 medical_local (six slots)."""
-    return medical_peer_candidates() + variant_candidates(triple=True)
+def local_medical_only_roster(
+    *,
+    include_optional_legacy: bool = False,
+) -> List[Dict[str, Any]]:
+    """Medical-specialized on-device: 3 medical_local + dual MedPsy (Q8 optional)."""
+    opt = _resolve_optional_keys(
+        include_optional_legacy=include_optional_legacy,
+        optional_legacy_keys=None,
+    )
+    return medical_peer_candidates() + variant_candidates(
+        triple=True, include_q8="qvac_4b_q8" in opt
+    )
 
 
 def merge_roster(
@@ -184,6 +246,8 @@ def merge_roster(
     include_qvac: bool,
     include_local_peers: Optional[bool] = None,
     include_medical_peers: Optional[bool] = None,
+    include_optional_legacy: bool = False,
+    optional_legacy_keys: Optional[Iterable[str]] = None,
 ) -> List[Dict[str, Any]]:
     """Band A cloud + Band B generics + medical_local + optional MedPsy slot(s).
 
@@ -192,12 +256,18 @@ def merge_roster(
     (sidecar up = generic on-device slots available).
     ``include_medical_peers`` defaults False unless explicitly requested (UI
     turns it on when GGUFs are ready).
-    Cap: ≤12 = 3 cloud + 3 generic + 3 medical + 3 MedPsy.
+
+    Default active cap: ≤9 = 3 cloud + Phi + 3 medical + dual MedPsy.
+    Optional legacy (Gemma / Llama / MedPsy Q8) can grow the roster to ≤12.
     """
     if include_local_peers is None:
         include_local_peers = include_qvac
     if include_medical_peers is None:
         include_medical_peers = False
+    opt = _resolve_optional_keys(
+        include_optional_legacy=include_optional_legacy,
+        optional_legacy_keys=optional_legacy_keys,
+    )
     # Band A only from YAML. Accept current API rows and archived free_web rows.
     cloud = [
         c
@@ -205,9 +275,15 @@ def merge_roster(
         if c.get("provider") == "openrouter"
         and (c.get("band") or "free_web") in {"api", "free_web"}
     ]
-    peers = local_peer_candidates() if include_local_peers else []
+    peers = (
+        local_peer_candidates(optional_keys=opt) if include_local_peers else []
+    )
     medical = medical_peer_candidates() if include_medical_peers else []
-    medpsy = variant_candidates(triple=triple_qvac) if include_qvac else []
+    medpsy = (
+        variant_candidates(triple=triple_qvac, include_q8="qvac_4b_q8" in opt)
+        if include_qvac
+        else []
+    )
     return cloud + peers + medical + medpsy
 
 
@@ -226,21 +302,29 @@ def is_medical_peer_key(key: str) -> bool:
     return (key or "") in _MEDICAL_PEER_KEYS
 
 
+def is_optional_legacy_key(key: str) -> bool:
+    return (key or "") in OPTIONAL_LEGACY_SLOT_KEYS
+
+
 def is_on_device_key(key: str) -> bool:
     return is_qvac_key(key) or is_local_peer_key(key) or is_medical_peer_key(key)
 
 
 def panel_rows_for_roster(roster: List[Dict[str, Any]]) -> List[List[Dict[str, Any]]]:
-    """Layout: 12 → 3×4 · 9 → 3×3 · 7 → 3+3+1 · 6 → 3+3 · else one row."""
+    """Layout: 12 → 3×4 · 9 → 3×3 · 8 → 3+3+2 · 7 → 3+3+1 · 6 → 3+3 · 5 → 3+2 · else one row."""
     n = len(roster)
     if n >= 12:
         return [roster[0:3], roster[3:6], roster[6:9], roster[9:12]]
     if n >= 9:
         return [roster[0:3], roster[3:6], roster[6:9]]
+    if n == 8:
+        return [roster[0:3], roster[3:6], roster[6:8]]
     if n == 7:
         return [roster[0:3], roster[3:6], roster[6:7]]
     if n == 6:
         return [roster[0:3], roster[3:6]]
+    if n == 5:
+        return [roster[0:3], roster[3:5]]
     if n:
         return [roster]
     return [[]]

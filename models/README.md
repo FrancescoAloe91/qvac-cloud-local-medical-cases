@@ -11,7 +11,7 @@ quant used for Band B / MedPsy / medical_local reproducibility.
 
 ## One-shot: full pack (~25 GB)
 
-All three MedPsy quants used by **3× QVAC** + Band B generics + medical_local
+MedPsy quants (default dual + optional Q8) + Band B generics + medical_local
 peers (MedGemma / Med42 / UltraMedical):
 
 ```bash
@@ -52,7 +52,8 @@ compare — **not** medical-specialized.
 ## Band medical_local · medical-specialized peers (Q4_K_M)
 
 Distinct from Band B generics. Toggle **Medical local peers** in the UI, or use
-preset **Medical on-device only** (3 MedPsy + 3 medical, cloud/generics off).
+preset **Medical on-device only** (dual MedPsy + 3 medical, cloud/generics off;
+optional MedPsy Q8 under Optional / legacy slots).
 
 | File (local name) | Role | HF repo · remote file |
 |-------------------|------|------------------------|
@@ -65,8 +66,9 @@ preset **Medical on-device only** (3 MedPsy + 3 medical, cloud/generics off).
 ```
 
 In the Streamlit app, all on-device bands share one sidecar (serial GGUF load).
-Toggle **3× QVAC** adds the three MedPsy quants. Full grid with medical peers
-on = up to **12** models (3 cloud + 3 generic + 3 medical + 3 MedPsy).
+Default MedPsy band is dual (1.7B + 4B Q4); Gemma / Llama / MedPsy Q8 stay under
+**Optional / legacy slots**. Default full grid = up to **9** models; re-enable
+legacy slots for up to **12**.
 
 ```bash
 ./scripts/setup_qvac_sidecar.sh

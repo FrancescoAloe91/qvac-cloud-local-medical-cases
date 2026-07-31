@@ -179,10 +179,11 @@ cross-case means stay exploratory and are not broken by that disclosure.
 `controlled` is best-effort preferred-provider; `strict_controlled` is opt-in
 no-fallback (judge + candidates); native-default runs never mix.
 
-On-device roster bands: Band B generics (Gemma/Llama/Phi) ≠ Band
-**medical_local** (MedGemma/Med42/UltraMedical); MedPsy is the QVAC brand
-triple. Cap ≤12 with all toggles on. UI presets (English): Medical on-device
-only (6), All on-device (9), Full roster (≤12), Cloud only (3).
+On-device roster bands: Band B generics (default Phi; Gemma/Llama optional
+legacy) ≠ Band **medical_local** (MedGemma/Med42/UltraMedical); MedPsy default
+is the dual 1.7B/4B Q4 (4B Q8 optional legacy). Cap ≤9 with default bands on;
+≤12 when Optional / legacy slots are re-enabled. UI presets (English): Medical
+on-device only (5), All on-device (≤6), Full roster (≤9), Cloud only (3).
 
 Multi runs continue when any valid judged results remain and abort early only
 when judge infrastructure is globally unavailable. The judge pipeline has a

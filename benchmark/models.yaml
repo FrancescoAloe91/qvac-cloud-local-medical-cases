@@ -49,8 +49,8 @@ candidates:
     band: api
     allowed_providers:
       - Google
-  # Band B · open Q4 GGUFs (local_gemma / local_llama / local_phi) — see qvac_variants.py
-  # Default on-device MedPsy slot (4B Q4). Toggle "3× QVAC" adds 1.7B Q4 + 4B Q8.
+  # Band B · open Q4 GGUFs (default local_phi; local_gemma / local_llama optional) — see qvac_variants.py
+  # Default on-device MedPsy slot (4B Q4). MedPsy band adds 1.7B Q4; 4B Q8 is optional/legacy.
   - key: qvac
     label: MedPsy 4B Q4
     display_label: QVAC · MedPsy-4B Q4 · on-device

@@ -2407,28 +2407,38 @@ else:
 live_case = preset.model_copy(update={"stem": (case_stem or "").strip()})
 effective_gold = st.session_state.get("_confirmed_gold_json", "")
 
-# --- Models roster: 4 bands × up to 3 = ≤12 ---
+# --- Models roster: default ≤9; optional legacy slots can grow to ≤12 ---
 # Preset shortcuts apply BEFORE toggle widgets (click → next rerun).
+def _clear_optional_legacy_slots() -> None:
+    st.session_state.opt_legacy_local_gemma = False
+    st.session_state.opt_legacy_local_llama = False
+    st.session_state.opt_legacy_qvac_4b_q8 = False
+
+
 if st.session_state.pop("_force_medical_on_device_only", False):
     st.session_state.include_cloud_models = False
     st.session_state.include_generic_peers = False
     st.session_state.include_medical_peers = True
     st.session_state.include_medpsy_models = True
+    _clear_optional_legacy_slots()
 if st.session_state.pop("_force_all_on_device", False):
     st.session_state.include_cloud_models = False
     st.session_state.include_generic_peers = True
     st.session_state.include_medical_peers = True
     st.session_state.include_medpsy_models = True
+    _clear_optional_legacy_slots()
 if st.session_state.pop("_force_full_roster", False):
     st.session_state.include_cloud_models = True
     st.session_state.include_generic_peers = True
     st.session_state.include_medical_peers = True
     st.session_state.include_medpsy_models = True
+    _clear_optional_legacy_slots()
 if st.session_state.pop("_force_cloud_only", False):
     st.session_state.include_cloud_models = True
     st.session_state.include_generic_peers = False
     st.session_state.include_medical_peers = False
     st.session_state.include_medpsy_models = False
+    _clear_optional_legacy_slots()
 # Migrate legacy triple_qvac_toggle → include_medpsy_models once.
 if "include_medpsy_models" not in st.session_state:
     st.session_state.include_medpsy_models = bool(
@@ -2443,8 +2453,18 @@ if "include_medical_peers" not in st.session_state:
     st.session_state.include_medical_peers = bool(_med_ready and sidecar_up)
 if "include_generic_peers" not in st.session_state:
     st.session_state.include_generic_peers = bool(sidecar_up)
+for _opt_key in (
+    "opt_legacy_local_gemma",
+    "opt_legacy_local_llama",
+    "opt_legacy_qvac_4b_q8",
+):
+    if _opt_key not in st.session_state:
+        st.session_state[_opt_key] = False
 
-st.markdown('<div class="sec-label">Roster bands (max 12)</div>', unsafe_allow_html=True)
+st.markdown(
+    '<div class="sec-label">Roster bands (default ≤9 · optional ≤12)</div>',
+    unsafe_allow_html=True,
+)
 include_cloud = st.toggle(
     "Include 3 cloud API models · ChatGPT / Claude / Gemini (OpenRouter)",
     value=True,
@@ -2452,16 +2472,17 @@ include_cloud = st.toggle(
     help="OpenRouter API routes — not ChatGPT/Claude/Gemini consumer web apps.",
 )
 include_medpsy = st.toggle(
-    "Include 3 QVAC MedPsy models · 1.7B / 4B Q4 / 4B Q8",
+    "Include QVAC MedPsy · 1.7B / 4B Q4",
     key="include_medpsy_models",
     disabled=not sidecar_up,
-    help="MedPsy GGUFs on the QVAC sidecar (serial load). Requires sidecar up.",
+    help="Default MedPsy pair on the QVAC sidecar (serial load). "
+    "4B Q8 is optional under Optional / legacy slots.",
 )
 include_generic = st.toggle(
-    "Include 3 generic local LLMs · Gemma / Llama / Phi",
+    "Include generic local · Phi-3.5 mini",
     key="include_generic_peers",
     disabled=not sidecar_up,
-    help="Band B open GGUFs — not medical-specialized. Same QVAC sidecar.",
+    help="Default Band B slot (Phi). Gemma / Llama are optional legacy slots.",
 )
 include_medical = st.toggle(
     "Include 3 medical local LLMs · MedGemma / Med42 / UltraMedical",
@@ -2481,6 +2502,30 @@ elif sidecar_up and not _med_ready:
         "`./scripts/download_medical_peers.sh` → then enable the toggle."
     )
 
+with st.expander("Optional / legacy slots (off by default)", expanded=False):
+    st.caption(
+        "History and artifacts still resolve these labels. Re-enable to grow the "
+        "live roster up to 12. GGUFs are not deleted."
+    )
+    st.toggle(
+        "Gemma 2 2B · Band B legacy",
+        key="opt_legacy_local_gemma",
+        disabled=not sidecar_up,
+        help="Requires generic local band ON.",
+    )
+    st.toggle(
+        "Llama 3.2 3B · Band B legacy",
+        key="opt_legacy_local_llama",
+        disabled=not sidecar_up,
+        help="Requires generic local band ON.",
+    )
+    st.toggle(
+        "MedPsy 4B Q8 · MedPsy legacy",
+        key="opt_legacy_qvac_4b_q8",
+        disabled=not sidecar_up,
+        help="Requires MedPsy band ON.",
+    )
+
 _preset_cols = st.columns(4, gap="small")
 with _preset_cols[0]:
     if st.button(
@@ -2488,7 +2533,8 @@ with _preset_cols[0]:
         key="preset_medical_on_device_btn",
         use_container_width=True,
         disabled=not sidecar_up,
-        help="Cloud OFF · generic OFF · medical ON · MedPsy ON → 6 models.",
+        help="Cloud OFF · generic OFF · medical ON · MedPsy ON → 5 models "
+        "(+ optional Q8 → 6).",
     ):
         st.session_state["_force_medical_on_device_only"] = True
         st.rerun()
@@ -2498,7 +2544,8 @@ with _preset_cols[1]:
         key="preset_all_on_device_btn",
         use_container_width=True,
         disabled=not sidecar_up,
-        help="Cloud OFF · MedPsy + generic + medical → up to 9 models.",
+        help="Cloud OFF · Phi + medical + dual MedPsy → up to 6 "
+        "(+ optional legacy → 9).",
     ):
         st.session_state["_force_all_on_device"] = True
         st.rerun()
@@ -2507,7 +2554,8 @@ with _preset_cols[2]:
         "Full roster",
         key="preset_full_roster_btn",
         use_container_width=True,
-        help="All four bands ON → up to 12 models.",
+        help="All four default bands ON → up to 9 models "
+        "(+ Optional / legacy → ≤12).",
     ):
         st.session_state["_force_full_roster"] = True
         st.rerun()
@@ -2522,9 +2570,10 @@ with _preset_cols[3]:
         st.rerun()
 
 st.caption(
-    "Presets set the four toggles above. "
-    "**Medical on-device only** = 3 MedPsy + 3 medical local (6). "
-    "**All on-device** = 9 (no cloud). **Full roster** ≤12. Generics ≠ medical band."
+    "Presets set the four band toggles and clear optional/legacy slots. "
+    "**Medical on-device only** = dual MedPsy + 3 medical (5). "
+    "**All on-device** ≤6. **Full roster** ≤9 (+ optional ≤12). "
+    "Generics ≠ medical band."
 )
 with st.expander("Advanced · generation settings", expanded=False):
     st.caption(
@@ -2560,12 +2609,20 @@ n_multi = st.number_input(
     "1 = single pass. Not clinical validation.",
 )
 
-# Keep legacy name used downstream; MedPsy band ON ⇒ always all three quants.
+# MedPsy band ON ⇒ default dual (1.7B + 4B Q4); Q8 only via optional legacy.
 triple_qvac = bool(include_medpsy) and sidecar_up
 _eff_triple = triple_qvac
 _eff_generic = bool(include_generic) and sidecar_up
 _eff_medical = bool(include_medical) and sidecar_up
 _eff_medpsy = bool(include_medpsy) and sidecar_up
+_optional_legacy_keys = []
+if _eff_generic:
+    if st.session_state.get("opt_legacy_local_gemma"):
+        _optional_legacy_keys.append("local_gemma")
+    if st.session_state.get("opt_legacy_local_llama"):
+        _optional_legacy_keys.append("local_llama")
+if _eff_medpsy and st.session_state.get("opt_legacy_qvac_4b_q8"):
+    _optional_legacy_keys.append("qvac_4b_q8")
 
 roster = merge_roster(
     list(cfg.get("candidates") or []) if include_cloud else [],
@@ -2573,6 +2630,7 @@ roster = merge_roster(
     include_qvac=_eff_medpsy,
     include_local_peers=_eff_generic,
     include_medical_peers=_eff_medical,
+    optional_legacy_keys=_optional_legacy_keys,
 )
 # Drop on-device slots whose GGUF is missing (toggle stays on; chip shows ready set).
 roster = [
@@ -2606,6 +2664,8 @@ if _eff_generic:
     _band_bits.append("generic local")
 if _eff_medical:
     _band_bits.append("medical local")
+if _optional_legacy_keys:
+    _band_bits.append(f"+{len(_optional_legacy_keys)} legacy")
 _band_label = " + ".join(_band_bits) if _band_bits else "no slots"
 st.markdown(
     f'<div class="sec-label">Models ({n_models} on the same case · {_band_label})</div>',
@@ -2613,7 +2673,7 @@ st.markdown(
 )
 if _medical_on_device_only:
     st.caption(
-        "**Medical on-device only** · 3 MedPsy + 3 medical local · "
+        "**Medical on-device only** · dual MedPsy + 3 medical local · "
         + track_ui_routing_blurb(benchmark_track)
     )
 else:
@@ -2623,15 +2683,20 @@ else:
             if include_cloud
             else "**Cloud API excluded** · "
         )
-        + ("**MedPsy** ×3 · " if _eff_medpsy else "")
+        + ("**MedPsy** 1.7B/4B Q4 · " if _eff_medpsy else "")
         + (
-            "**Generic local** Gemma/Llama/Phi · "
+            "**Generic local** Phi · "
             if _eff_generic
             else ""
         )
         + (
             "**Medical local** MedGemma/Med42/UltraMedical · "
             if _eff_medical
+            else ""
+        )
+        + (
+            f"**Optional legacy** {', '.join(_optional_legacy_keys)} · "
+            if _optional_legacy_keys
             else ""
         )
         + track_ui_routing_blurb(benchmark_track)
@@ -2682,6 +2747,7 @@ _cost_kwargs = dict(
     triple_qvac=_eff_triple,
     include_local_peers=_eff_generic,
     include_medical_peers=_eff_medical,
+    optional_legacy_keys=_optional_legacy_keys,
     include_extractor=not _extract_already,
     extraction_cost_usd=0.0 if _extract_already else None,
     history_artifacts=_hist_for_cost,
@@ -2701,6 +2767,7 @@ bd_local_only = estimate_cost_breakdown(
     triple_qvac=True,
     include_local_peers=_eff_generic,
     include_medical_peers=_eff_medical,
+    optional_legacy_keys=_optional_legacy_keys,
     include_extractor=not _extract_already,
     extraction_cost_usd=0.0 if _extract_already else None,
     history_artifacts=_hist_for_cost,
@@ -2715,6 +2782,7 @@ bd_local_only_multi = estimate_cost_breakdown(
     triple_qvac=True,
     include_local_peers=_eff_generic,
     include_medical_peers=_eff_medical,
+    optional_legacy_keys=_optional_legacy_keys,
     include_extractor=not _extract_already,
     extraction_cost_usd=0.0 if _extract_already else None,
     history_artifacts=_hist_for_cost,
@@ -2822,21 +2890,22 @@ with _run_r2[0]:
         key="qvac_only_btn",
         use_container_width=True,
         disabled=not qvac_run_ok,
-        help="Force 3× MedPsy only for this run (cloud/generic/medical skipped). "
+        help="Force MedPsy-only for this run (cloud/generic/medical skipped). "
+        "Default dual 1.7B/4B Q4; Q8 if optional legacy is on. "
         "KPI compare always; clinical ranking via DeepSeek if an OpenRouter key "
         "is present (judge $ only).",
     )
     st.markdown(
-        '<div class="cost-compact cost-multi run-cost-cell"><b>$0 collect</b> · 3 MedPsy · '
+        '<div class="cost-compact cost-multi run-cost-cell"><b>$0 collect</b> · MedPsy · '
         "KPI compare · judge only if key</div>",
         unsafe_allow_html=True,
     )
 with _run_r2[1]:
     st.info(
-        f"Roster now: **{n_models}** models (max 12). "
-        "Use the four band toggles or presets: "
-        "**Medical on-device only** (6) · **All on-device** (9) · "
-        "**Full roster** (≤12) · **Cloud only** (3)."
+        f"Roster now: **{n_models}** models (default ≤9 · optional ≤12). "
+        "Use the four band toggles, Optional / legacy slots, or presets: "
+        "**Medical on-device only** (5) · **All on-device** (≤6) · "
+        "**Full roster** (≤9) · **Cloud only** (3)."
     )
 st.caption(
     "**Minimum aggregate:** 5 valid runs per model (exploratory cohort); "
@@ -3441,8 +3510,9 @@ st.markdown(
 )
 st.caption(
     "Rebuild is always available here (before Live responses / run stop). "
-    "Pools all CURRENT_ROSTER_KEYS (up to 12) regardless of Step-2 toggles; "
-    "per-model N; independent of Live responses below. **No API calls**."
+    "Pools all CURRENT_ROSTER_KEYS (9 default + 3 optional/legacy labels) "
+    "regardless of Step-2 toggles; per-model N; independent of Live responses "
+    "below. **No API calls**."
 )
 
 _hist_for_case = artifacts_for_case(WORKSPACE_DIR, case_id)
@@ -3768,12 +3838,16 @@ st.caption(
     "Same prompt for all models · shorter answers = early stop, not a smaller prompt. "
     "Click **⛶ Full screen** · ✕ / Esc closes · collect/judge keep running."
     + (
-        " · Grid 3×3 · on-device GGUFs load one after another."
-        if triple_qvac and n_models >= 9
+        " · Grid 3×4 · on-device GGUFs load one after another."
+        if n_models >= 12
         else (
-            " · Grid 3+3+1 (3 cloud + 3 local + MedPsy)."
-            if n_models >= 7
-            else ""
+            " · Grid 3×3 · on-device GGUFs load one after another."
+            if n_models >= 9
+            else (
+                " · Grid rows follow the active roster."
+                if n_models >= 5
+                else ""
+            )
         )
     )
 )
@@ -5696,6 +5770,7 @@ if st.session_state.get("confirmed_run"):
             triple_qvac=_eff_triple,
             include_local_peers=_eff_generic,
             include_medical_peers=_eff_medical,
+            optional_legacy_keys=_optional_legacy_keys,
         )
     except RuntimeError as exc:
         _abort_run(str(exc))

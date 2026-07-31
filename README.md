@@ -48,19 +48,20 @@ Demo cases and rubric scoring are not part of the active protocol.
 
 ### 2. Candidates collect answers
 
-Nine roster slots answer the same five questions under the same prompt (up to
-**12** with all four bands enabled):
+Nine default roster slots answer the same five questions under the same prompt
+(up to **12** when Optional / legacy slots are re-enabled):
 
 - **Cloud** (toggle): OpenRouter API routes in [benchmark/models.yaml](benchmark/models.yaml)
   — `openai/gpt-5.5`, `anthropic/claude-sonnet-5`, `google/gemini-3.5-flash`
-- **QVAC MedPsy** (toggle): 1.7B Q4, 4B Q4, 4B Q8 via QVAC sidecar
-- **Generic local LLMs** (toggle): Gemma 2 2B IT Q4, Llama 3.2 3B Instruct Q4,
-  Phi-3.5 Mini Instruct Q4 — not medical-specialized
+- **QVAC MedPsy** (toggle): 1.7B Q4 + 4B Q4 via QVAC sidecar (4B Q8 is optional/legacy)
+- **Generic local LLMs** (toggle): Phi-3.5 Mini Instruct Q4 by default —
+  Gemma 2 2B and Llama 3.2 3B are optional/legacy Band B slots
 - **Medical local LLMs** (toggle): MedGemma 1.5 4B IT Q4, Med42 8B Q4,
   UltraMedical 8B Q4 — medical-specialized peers (not MedPsy)
 
-Dashboard presets (English): **Medical on-device only** (6 = MedPsy + medical),
-**All on-device** (9), **Full roster** (≤12), **Cloud only** (3). Download
+Dashboard presets (English): **Medical on-device only** (5 = dual MedPsy + medical),
+**All on-device** (≤6), **Full roster** (≤9; + optional legacy ≤12), **Cloud only** (3).
+Re-enable Gemma / Llama / MedPsy Q8 under **Optional / legacy slots**. Download
 medical weights with `./scripts/download_medical_peers.sh` (or
 `./scripts/download_all_ggufs.sh`).
 

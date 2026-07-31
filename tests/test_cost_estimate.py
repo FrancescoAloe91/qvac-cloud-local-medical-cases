@@ -283,7 +283,8 @@ def test_estimate_calibrates_from_history_artifacts():
     case = load_case("caseC")
     case = case.model_copy(update={"stem": "Chest pain vignette. " * 30})
     gold = "Diagnosis ACS. Plan cath. " * 20
-    history = [_hist_art(0.27) for _ in range(4)]
+    # Default full roster is 9 (3 cloud + 6 on-device); history must match shape.
+    history = [_hist_art(0.27, n_or=3, n_local=6) for _ in range(4)]
     bd = estimate_cost_breakdown(
         cfg,
         case,
