@@ -14,6 +14,21 @@ from benchmark.schema import ConfirmedGold, GoldClaim, GoldSection, ModelCallMet
 SECTION_IDS = ("diagnosis", "tests", "urgency", "safety", "plan")
 EXTRACTION_PROMPT_VERSION = "gold-extract-v2"
 SCORING_VERSION = "graded-clinical-v4"
+LOCAL_QNA_EXTRACTOR_MODEL = "local/qna-sections-v1"
+
+# Default-pack / New-case Q&A gold: Q1 [diagnosis] … A1: … through Q5 [plan] / A5:.
+_QNA_NUM_TO_SECTION = {
+    1: "diagnosis",
+    2: "tests",
+    3: "urgency",
+    4: "safety",
+    5: "plan",
+}
+_QNA_ANSWER_RE = re.compile(
+    r"(?P<head>Q(?P<num>[1-5])\s*\[(?P<label>[^\]]+)\]\s*:?[^\n]*\n)"
+    r"A(?P=num)\s*:\s*(?P<answer>.+?)(?=\n\nQ[1-5]\s*\[|\Z)",
+    re.IGNORECASE | re.DOTALL,
+)
 
 
 def _normalized(text: str) -> str:
@@ -50,6 +65,45 @@ def _quote_reject_message(claim_id: str, quote: str) -> str:
     )
 
 
+def format_prepare_error(exc: BaseException) -> str:
+    """User-facing Prepare error with an actionable next step."""
+    msg = str(exc).strip() or f"{type(exc).__name__} during Prepare"
+    lower = msg.casefold()
+    if "openrouter" in lower and ("key" in lower or "api" in lower or "auth" in lower):
+        return (
+            f"{msg} — paste a full OpenRouter key (sk-or-v1-…) in the sidebar, "
+            f"then click Prepare reference again."
+        )
+    if "too short" in lower:
+        return f"{msg} — paste a longer clinical reference (≥40 characters), then retry Prepare."
+    if "complete json" in lower or "empty response" in lower or "json object" in lower:
+        return (
+            f"{msg} — the extractor returned incomplete JSON (often a timeout/truncation). "
+            f"Click Prepare reference again; if it persists, shorten the reference slightly "
+            f"or check the OpenRouter key/credits."
+        )
+    if "overlapping source quote" in lower or "duplicate source quote" in lower:
+        return (
+            f"{msg} — click Prepare reference again (auto-dedupe retries nested quotes). "
+            f"If it persists, use Q1[diagnosis]/A1 … Q5[plan]/A5 form, or delete "
+            f"overlapping claims after a successful Prepare."
+        )
+    if "verbatim source quote" in lower or "paraphrase" in lower:
+        return (
+            f"{msg} — click Prepare reference again. Prefer Q1–A5 labeled answers so "
+            f"Prepare can extract locally without paraphrases."
+        )
+    if "missing extracted section" in lower or "no claims with verbatim" in lower:
+        return (
+            f"{msg} — ensure the reference covers diagnosis, tests, urgency, safety, "
+            f"and plan (Q1–A5 form works best), then retry Prepare."
+        )
+    return (
+        f"{msg} — click Prepare reference to retry. "
+        f"Check the OpenRouter key if the error mentions API/auth/network."
+    )
+
+
 def _validate_source_quotes(
     raw_text: str,
     sections: Mapping[str, GoldSection],
@@ -74,6 +128,82 @@ def _validate_source_quotes(
                         f"Overlapping source quote across scoring claims: {claim.source_quote}"
                     )
             seen.append(quote)
+
+
+def _drop_nested_overlapping_claims(
+    sections: Mapping[str, GoldSection],
+) -> Dict[str, GoldSection]:
+    """Keep earlier claims; drop later duplicates / nested-overlapping quotes."""
+    kept_quotes: list[str] = []
+    out: Dict[str, GoldSection] = {}
+    for section_id in SECTION_IDS:
+        section = sections[section_id]
+        kept: list[GoldClaim] = []
+        for claim in section.claims:
+            quote = _normalized(claim.source_quote)
+            if not quote:
+                continue
+            if quote in kept_quotes:
+                continue
+            if any(_quotes_overlap_substantially(quote, prior) for prior in kept_quotes):
+                continue
+            kept_quotes.append(quote)
+            kept.append(claim)
+        out[section_id] = section.model_copy(update={"claims": kept})
+    return out
+
+
+def try_extract_qna_sections(raw_text: str) -> Optional[Dict[str, GoldSection]]:
+    """Deterministic Prepare for Q1[section]/A1 … Q5[section]/A5 references.
+
+    Returns None when the reference is not a complete five-answer Q&A pack so
+    callers can fall back to the LLM extractor. All source_quote values are
+    exact contiguous substrings of ``raw_text`` (no paraphrase risk).
+    """
+    text = raw_text or ""
+    if len(text.strip()) < 40:
+        return None
+    found: Dict[str, str] = {}
+    for match in _QNA_ANSWER_RE.finditer(text):
+        num = int(match.group("num"))
+        section_id = _QNA_NUM_TO_SECTION.get(num)
+        if section_id is None:
+            continue
+        answer = (match.group("answer") or "").strip()
+        if not answer:
+            continue
+        # Prefer labeled mapping when present, but number wins for pack format.
+        found[section_id] = answer
+    if any(section_id not in found for section_id in SECTION_IDS):
+        return None
+    raw_norm = _normalized(text)
+    sections: Dict[str, GoldSection] = {}
+    for section_id in SECTION_IDS:
+        answer = found[section_id]
+        if _normalized(answer) not in raw_norm:
+            return None
+        summary = answer if len(answer) <= 240 else answer[:237].rstrip() + "..."
+        sections[section_id] = GoldSection(
+            summary=summary,
+            claims=[
+                GoldClaim(
+                    id=f"{section_id}-1",
+                    text=answer,
+                    source_quote=answer,
+                    critical=False,
+                )
+            ],
+        )
+    try:
+        _validate_source_quotes(text, sections)
+    except ValueError:
+        return None
+    return sections
+
+
+def looks_like_qna_reference(raw_text: str) -> bool:
+    """True when Prepare can run the local Q1–A5 path (no OpenRouter call)."""
+    return try_extract_qna_sections(raw_text) is not None
 
 
 def extract_json_object(raw: str) -> Mapping[str, Any]:
@@ -130,8 +260,9 @@ def extraction_messages(raw_text: str) -> list[dict[str, str]]:
                 "correct, or add medical information. Every claim requires an exact verbatim "
                 "source_quote copied character-for-character from REFERENCE (a contiguous "
                 "substring). Do not paraphrase source_quote. Prefer fewer claims with real "
-                "quotes over extra invented claims. If a section is absent, return an empty "
-                "summary and claims. Return JSON only."
+                "quotes over extra invented claims. Claims must not duplicate or nest inside "
+                "each other (no overlapping source_quote spans). If a section is absent, "
+                "return an empty summary and claims. Return JSON only."
             ),
         },
         {
@@ -158,8 +289,10 @@ def quote_repair_messages(
                 "You repair gold extraction JSON. Keep section structure and claim ids. "
                 "For each failed claim, replace source_quote with an exact contiguous "
                 "substring copied from REFERENCE (never paraphrase). If no verbatim quote "
-                "exists for a claim, remove that claim. Keep each section nonempty when "
-                "the reference supports it. Return JSON only with the same shape."
+                "exists for a claim, remove that claim. Remove duplicate or nested-"
+                "overlapping source_quote claims (keep the most specific non-nested "
+                "quote). Keep each section nonempty when the reference supports it. "
+                "Return JSON only with the same shape."
             ),
         },
         {
@@ -257,6 +390,22 @@ def parse_extraction(
             summary=str(item.get("summary") or "").strip(),
             claims=claims,
         )
+    if drop_invalid_claims:
+        sections = _drop_nested_overlapping_claims(sections)
+        emptied = [
+            sid
+            for sid in SECTION_IDS
+            if not sections[sid].claims
+            and isinstance(raw_sections.get(sid), Mapping)
+            and isinstance((raw_sections.get(sid) or {}).get("claims"), list)
+            and (raw_sections.get(sid) or {}).get("claims")
+        ]
+        if emptied:
+            raise ValueError(
+                f"Section {emptied[0]} has no claims with verbatim source_quote after "
+                f"dropping invalid/overlapping quotes. "
+                f"Add exact substrings from the raw reference for this section."
+            )
     _validate_source_quotes(raw_text, sections)
     return sections
 
@@ -271,6 +420,7 @@ def collect_quote_failures(
     except ValueError as exc:
         return [str(exc)]
     raw_norm = _normalized(raw_text)
+    seen: list[str] = []
     for section_id in SECTION_IDS:
         item = raw_sections.get(section_id)
         if not isinstance(item, Mapping):
@@ -287,8 +437,22 @@ def collect_quote_failures(
             claim = GoldClaim.model_validate(claim_raw)
             if not claim.id:
                 claim.id = f"{section_id}-{index}"
-            if _resolve_claim_quote(raw_norm, claim) is None:
+            resolved = _resolve_claim_quote(raw_norm, claim)
+            if resolved is None:
                 failures.append(_quote_reject_message(claim.id, claim.source_quote))
+                continue
+            quote = _normalized(resolved)
+            if quote in seen:
+                failures.append(
+                    f"Duplicate source quote across scoring claims: {claim.source_quote}"
+                )
+                continue
+            if any(_quotes_overlap_substantially(quote, prior) for prior in seen):
+                failures.append(
+                    f"Overlapping source quote across scoring claims: {claim.source_quote}"
+                )
+                continue
+            seen.append(quote)
     return failures
 
 
@@ -596,6 +760,18 @@ def _accumulate_extract_meta(
     )
 
 
+def _local_qna_meta() -> ModelCallMeta:
+    return ModelCallMeta(
+        model=LOCAL_QNA_EXTRACTOR_MODEL,
+        provider="local",
+        requested_model=LOCAL_QNA_EXTRACTOR_MODEL,
+        routed_model=LOCAL_QNA_EXTRACTOR_MODEL,
+        cost_usd=0.0,
+        prompt_tokens=0,
+        completion_tokens=0,
+    )
+
+
 def extract_with_chat(
     raw_text: str,
     *,
@@ -603,16 +779,27 @@ def extract_with_chat(
     chat: Callable[..., Tuple[str, Any]],
     api_key: Optional[str] = None,
 ) -> Tuple[Dict[str, GoldSection], Any]:
-    """Call a pinned extractor through an injected chat transport.
+    """Extract source-linked sections via local Q1–A5 parse or pinned chat.
 
-    On non-verbatim quotes: one quote-repair chat call, then drop remaining
-    invalid claims if each section still has ≥1 verifiable claim.
+    Order:
+    1. Deterministic Q1[diagnosis]/A1 … Q5[plan]/A5 local parse (no API).
+    2. Pinned extractor chat.
+    3. One quote-repair chat on verbatim/overlap failures.
+    4. Drop remaining invalid / nested-overlapping claims.
+    5. Local Q1–A5 fallback if the reference matches that shape.
     """
     if len(raw_text.strip()) < 40:
         raise ValueError("Reference is too short to extract safely")
+
+    local = try_extract_qna_sections(raw_text)
+    if local is not None:
+        return local, _local_qna_meta()
+
+    # Long clinical refs (Case 6/7 style) need headroom; truncation → incomplete JSON.
+    max_tokens = 8000 if len(raw_text.strip()) >= 1200 else 4000
     kwargs: Dict[str, Any] = {
         "temperature": 0.0,
-        "max_tokens": 4000,
+        "max_tokens": max_tokens,
         "response_format": {"type": "json_object"},
         "timeout": 180.0,
     }
@@ -623,26 +810,84 @@ def extract_with_chat(
     if getattr(meta, "error", None):
         raise RuntimeError(f"Gold extraction failed: {meta.error}")
 
-    payload = extract_json_object(raw)
+    try:
+        payload = extract_json_object(raw)
+    except ValueError as json_exc:
+        # One retry when the model truncated / wrapped JSON incompletely.
+        retry_raw, retry_meta = chat(
+            model,
+            extraction_messages(raw_text)
+            + [
+                {
+                    "role": "user",
+                    "content": (
+                        "Your previous reply was not a complete JSON object. "
+                        "Return ONLY the full JSON object with all five sections."
+                    ),
+                }
+            ],
+            **kwargs,
+        )
+        if getattr(retry_meta, "error", None):
+            raise RuntimeError(
+                f"Gold extraction failed after JSON retry: {retry_meta.error}. "
+                f"Primary issue: {json_exc}"
+            ) from json_exc
+        if isinstance(meta, ModelCallMeta) and isinstance(retry_meta, ModelCallMeta):
+            meta = _accumulate_extract_meta(meta, retry_meta, role="gold_json_retry")
+        else:
+            meta = retry_meta
+        payload = extract_json_object(retry_raw)
+
+    def _qna_or_raise(exc: BaseException) -> Tuple[Dict[str, GoldSection], Any]:
+        qna_fallback = try_extract_qna_sections(raw_text)
+        if qna_fallback is not None:
+            return qna_fallback, meta
+        raise exc
+
     try:
         return parse_extraction(raw_text, payload), meta
     except ValueError as first_exc:
         failures = collect_quote_failures(raw_text, payload) or [str(first_exc)]
         quote_related = any(
-            "source quote" in f.casefold() or "verbatim" in f.casefold()
+            "source quote" in f.casefold()
+            or "verbatim" in f.casefold()
+            or "overlapping" in f.casefold()
+            or "duplicate" in f.casefold()
             for f in failures
-        ) or ("source quote" in str(first_exc).casefold())
+        ) or any(
+            token in str(first_exc).casefold()
+            for token in (
+                "source quote",
+                "verbatim",
+                "overlapping",
+                "duplicate",
+            )
+        )
         if not quote_related:
-            raise
+            # Non-quote schema errors: try drop path, then local QnA if shape matches.
+            try:
+                return parse_extraction(
+                    raw_text, payload, drop_invalid_claims=True
+                ), meta
+            except ValueError:
+                return _qna_or_raise(first_exc)
 
         repair_raw, repair_meta = chat(
             model, quote_repair_messages(raw_text, payload, failures), **kwargs
         )
         if getattr(repair_meta, "error", None):
-            raise RuntimeError(
-                f"Gold quote repair failed: {repair_meta.error}. "
-                f"Primary issue: {first_exc}"
-            ) from first_exc
+            try:
+                return parse_extraction(
+                    raw_text, payload, drop_invalid_claims=True
+                ), meta
+            except ValueError:
+                return _qna_or_raise(
+                    RuntimeError(
+                        f"Gold quote repair failed: {repair_meta.error}. "
+                        f"Primary issue: {first_exc}"
+                    )
+                )
         if isinstance(meta, ModelCallMeta) and isinstance(repair_meta, ModelCallMeta):
             meta = _accumulate_extract_meta(
                 meta, repair_meta, role="gold_quote_repair"
@@ -651,26 +896,36 @@ def extract_with_chat(
             # Preserve whatever the transport returned when not ModelCallMeta.
             meta = repair_meta
 
-        repair_payload = extract_json_object(repair_raw)
         try:
-            sections = parse_extraction(raw_text, repair_payload)
-            return sections, meta
-        except ValueError as repair_exc:
+            repair_payload = extract_json_object(repair_raw)
+        except ValueError as repair_json_exc:
             try:
-                sections = parse_extraction(
-                    raw_text, repair_payload, drop_invalid_claims=True
-                )
-                return sections, meta
+                return parse_extraction(
+                    raw_text, payload, drop_invalid_claims=True
+                ), meta
             except ValueError:
-                # Last resort: drop from primary payload
-                try:
-                    sections = parse_extraction(
-                        raw_text, payload, drop_invalid_claims=True
+                return _qna_or_raise(
+                    ValueError(
+                        f"{repair_json_exc} (after quote-repair JSON parse failed; "
+                        f"primary issue: {first_exc})"
                     )
-                    return sections, meta
+                )
+
+        try:
+            return parse_extraction(raw_text, repair_payload), meta
+        except ValueError as repair_exc:
+            for candidate in (repair_payload, payload):
+                try:
+                    return parse_extraction(
+                        raw_text, candidate, drop_invalid_claims=True
+                    ), meta
                 except ValueError:
-                    raise ValueError(
-                        f"{repair_exc} "
-                        f"(after quote-repair; paraphrases are not allowed — copy "
-                        f"exact phrases from the raw reference into source_quote)"
-                    ) from repair_exc
+                    continue
+            return _qna_or_raise(
+                ValueError(
+                    f"{repair_exc} "
+                    f"(after quote-repair; paraphrases are not allowed — copy "
+                    f"exact phrases from the raw reference into source_quote, "
+                    f"or use Q1[diagnosis]/A1 … Q5[plan]/A5 form)"
+                )
+            )

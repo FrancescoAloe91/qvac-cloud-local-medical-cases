@@ -38,12 +38,15 @@ from benchmark.case_slots import (
 from benchmark.cases_loader import case_display_name, load_case
 from benchmark.config import is_usable_openrouter_key, load_models_config
 from benchmark.gold import (
+    LOCAL_QNA_EXTRACTOR_MODEL,
     SCORING_VERSION,
     SECTION_IDS,
     extract_with_chat,
+    format_prepare_error,
     gold_json,
     is_strict_track,
     load_confirmed_gold,
+    looks_like_qna_reference,
     source_quote_is_verbatim,
     track_ui_routing_blurb,
     uses_controlled_sampling,
@@ -778,6 +781,7 @@ def _clear_case_editor_state() -> None:
         "_prepared_extraction_cost",
         "_gold_confirmed_at",
         "_restored_cohort_id",
+        "_prepare_error",
     ):
         st.session_state.pop(_gk, None)
     for _wk in list(st.session_state.keys()):
@@ -814,6 +818,7 @@ def _select_case_slot(slot, *, as_new: bool = False) -> None:
         "_prepared_extraction_cost",
         "_gold_confirmed_at",
         "_restored_cohort_id",
+        "_prepare_error",
     ):
         st.session_state.pop(_gk, None)
     for _wk in list(st.session_state.keys()):
@@ -2022,6 +2027,7 @@ if st.session_state.get("_gold_source_fingerprint") != raw_gold_fingerprint:
         "_prepared_extraction_cost",
         "_gold_confirmed_at",
         "_restored_cohort_id",
+        "_prepare_error",
     ):
         st.session_state.pop(_gk, None)
     for _wk in list(st.session_state.keys()):
@@ -2092,13 +2098,17 @@ if _show_family_restore:
             st.error(t("bench.family_restore_fail", _lang, err=str(_rex)))
 
 _prep_col, _conf_col = st.columns(2)
+_qna_local_ok = looks_like_qna_reference(gold_reference)
 with _prep_col:
     prepare_clicked = st.button(
         "Prepare reference",
         use_container_width=True,
         disabled=len(gold_reference) < 40
         or bool(st.session_state.get("benchmark_running")),
-        help="Runs the pinned extractor once and caches editable sections.",
+        help=(
+            "Q1–A5 references extract locally (no API). "
+            "Free-form prose uses the pinned OpenRouter extractor once."
+        ),
     )
 with _conf_col:
     confirm_clicked = st.button(
@@ -2114,27 +2124,42 @@ with _conf_col:
     )
 
 if prepare_clicked:
+    st.session_state.pop("_prepare_error", None)
     extractor_model = os.environ.get(
         "BENCHMARK_GOLD_EXTRACTOR_MODEL", "openai/gpt-4o-mini"
     )
-    if not is_usable_openrouter_key(st.session_state.get("or_key_session")):
-        st.error(
-            "An OpenRouter key is required to prepare the reference."
+    has_or_key = is_usable_openrouter_key(st.session_state.get("or_key_session"))
+    if not _qna_local_ok and not has_or_key:
+        st.session_state["_prepare_error"] = format_prepare_error(
+            ValueError(
+                "An OpenRouter key is required to prepare free-form references "
+                "(Q1[diagnosis]/A1 … Q5[plan]/A5 form can Prepare without a key)"
+            )
         )
     else:
         try:
-            with st.spinner("Extracting source-linked claims (once)…"):
+            _spinner = (
+                "Extracting Q1–A5 claims locally…"
+                if _qna_local_ok
+                else "Extracting source-linked claims (once)…"
+            )
+            with st.spinner(_spinner):
                 sections, extract_meta = extract_with_chat(
                     gold_reference,
                     model=extractor_model,
                     chat=openrouter.chat,
                     api_key=st.session_state.get("or_key_session"),
                 )
+            used_model = str(
+                getattr(extract_meta, "model", None)
+                or getattr(extract_meta, "requested_model", None)
+                or extractor_model
+            )
             st.session_state["_prepared_gold_sections"] = {
                 sid: sections[sid].model_dump() for sid in SECTION_IDS
             }
             st.session_state["_prepared_extraction_meta"] = {
-                "model": extractor_model,
+                "model": used_model,
                 "cost_usd": float(getattr(extract_meta, "cost_usd", 0.0) or 0.0),
                 "prompt_tokens": int(getattr(extract_meta, "prompt_tokens", 0) or 0),
                 "completion_tokens": int(
@@ -2147,10 +2172,32 @@ if prepare_clicked:
             st.session_state.pop("_confirmed_gold_json", None)
             st.session_state.pop("_gold_confirmed_at", None)
             st.session_state.pop("_restored_cohort_id", None)
-            st.success("Reference prepared — review/edit claims, then Confirm.")
+            st.session_state.pop("_prepare_error", None)
+            if used_model == LOCAL_QNA_EXTRACTOR_MODEL:
+                st.success(
+                    "Reference prepared locally from Q1–A5 — review/edit claims, "
+                    "then Confirm."
+                )
+            else:
+                st.success("Reference prepared — review/edit claims, then Confirm.")
             st.rerun()
         except Exception as exc:
-            st.error(f"Prepare failed: {exc}")
+            st.session_state["_prepare_error"] = format_prepare_error(exc)
+
+_prepare_err = st.session_state.get("_prepare_error")
+if _prepare_err:
+    st.error(f"Prepare failed: {_prepare_err}")
+    _err_clear, _err_hint = st.columns([1, 3])
+    with _err_clear:
+        if st.button("Clear prepare error", use_container_width=True):
+            st.session_state.pop("_prepare_error", None)
+            st.rerun()
+    with _err_hint:
+        st.caption(
+            "Retry Prepare reference after fixing the issue. "
+            "Seeded Case 6/7 and Q1–A5 New cases extract locally (no API). "
+            "Free-form gold needs a full OpenRouter key in the sidebar."
+        )
 
 # Editable prepared sections
 _prepared = st.session_state.get("_prepared_gold_sections")

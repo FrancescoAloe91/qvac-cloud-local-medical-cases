@@ -364,3 +364,192 @@ def test_salvage_uses_claim_text_when_source_quote_paraphrased():
     sections = parse_extraction(RAW, payload)
     assert sections["tests"].claims[0].source_quote == "Order brain MRI."
 
+
+def test_case6_default_pack_gold_prepares_via_local_qna():
+    """Seeded Case 6 Q1–A5 gold must Prepare without OpenRouter (public UX P0)."""
+    from benchmark.case_slots import load_default_pack
+    from benchmark.gold import (
+        LOCAL_QNA_EXTRACTOR_MODEL,
+        confirmed_gold,
+        extract_with_chat,
+        looks_like_qna_reference,
+        try_extract_qna_sections,
+    )
+
+    pack = load_default_pack()
+    gold = pack[6]["gold_raw"]
+    assert "Q1 [diagnosis]:" in gold and "A5:" in gold
+    assert looks_like_qna_reference(gold)
+
+    sections = try_extract_qna_sections(gold)
+    assert sections is not None
+    for sid in SECTION_IDS:
+        assert sections[sid].claims, sid
+        assert sections[sid].claims[0].source_quote in gold
+
+    def boom(*_a, **_k):
+        raise AssertionError("OpenRouter chat must not run for Q1–A5 Case 6 gold")
+
+    out, meta = extract_with_chat(gold, model="openai/gpt-4o-mini", chat=boom)
+    assert meta.model == LOCAL_QNA_EXTRACTOR_MODEL
+    assert float(getattr(meta, "cost_usd", 0.0) or 0.0) == 0.0
+    confirmed_gold(
+        raw_text=gold, sections=out, extraction_model=LOCAL_QNA_EXTRACTOR_MODEL
+    )
+
+
+def test_case7_and_pack_qna_golds_prepare_locally():
+    from benchmark.case_slots import load_default_pack
+    from benchmark.gold import extract_with_chat, try_extract_qna_sections
+
+    pack = load_default_pack()
+
+    def boom(*_a, **_k):
+        raise AssertionError("chat must not run for pack Q1–A5 gold")
+
+    for slot in (2, 3, 4, 5, 6, 7):
+        gold = pack[slot]["gold_raw"]
+        assert try_extract_qna_sections(gold) is not None, slot
+        sections, meta = extract_with_chat(gold, model="x", chat=boom)
+        assert all(sections[sid].claims for sid in SECTION_IDS), slot
+        assert str(meta.model).startswith("local/qna")
+
+
+def test_drop_invalid_claims_removes_nested_overlapping_quotes():
+    raw = (
+        "Diagnosis is migraine with aura. Order brain MRI. Urgency is moderate. "
+        "Avoid triptans in this patient. Start preventive therapy."
+    )
+    payload = {
+        "sections": {
+            "diagnosis": {
+                "summary": "dx",
+                "claims": [
+                    {
+                        "id": "diagnosis-1",
+                        "text": "Diagnosis is migraine with aura.",
+                        "source_quote": "Diagnosis is migraine with aura.",
+                        "critical": False,
+                    },
+                    {
+                        "id": "diagnosis-2",
+                        "text": "migraine with aura",
+                        "source_quote": "migraine with aura.",
+                        "critical": False,
+                    },
+                ],
+            },
+            "tests": {
+                "summary": "t",
+                "claims": [
+                    {
+                        "id": "tests-1",
+                        "text": "Order brain MRI.",
+                        "source_quote": "Order brain MRI.",
+                        "critical": False,
+                    }
+                ],
+            },
+            "urgency": {
+                "summary": "u",
+                "claims": [
+                    {
+                        "id": "urgency-1",
+                        "text": "Urgency is moderate.",
+                        "source_quote": "Urgency is moderate.",
+                        "critical": False,
+                    }
+                ],
+            },
+            "safety": {
+                "summary": "s",
+                "claims": [
+                    {
+                        "id": "safety-1",
+                        "text": "Avoid triptans in this patient.",
+                        "source_quote": "Avoid triptans in this patient.",
+                        "critical": False,
+                    }
+                ],
+            },
+            "plan": {
+                "summary": "p",
+                "claims": [
+                    {
+                        "id": "plan-1",
+                        "text": "Start preventive therapy.",
+                        "source_quote": "Start preventive therapy.",
+                        "critical": False,
+                    }
+                ],
+            },
+        }
+    }
+    with pytest.raises(ValueError, match="Overlapping"):
+        parse_extraction(raw, payload)
+    sections = parse_extraction(raw, payload, drop_invalid_claims=True)
+    assert [c.id for c in sections["diagnosis"].claims] == ["diagnosis-1"]
+
+
+def test_extract_with_chat_recovers_from_nested_overlapping_quotes():
+    from types import SimpleNamespace
+
+    from benchmark.gold import extract_with_chat
+
+    raw = (
+        "Diagnosis is migraine with aura. Order brain MRI. Urgency is moderate. "
+        "Avoid triptans in this patient. Start preventive therapy."
+    )
+    payload = {
+        "sections": {
+            sid: {
+                "summary": quote,
+                "claims": [
+                    {
+                        "id": f"{sid}-1",
+                        "text": quote,
+                        "source_quote": quote,
+                        "critical": False,
+                    }
+                ],
+            }
+            for sid, quote in {
+                "diagnosis": "Diagnosis is migraine with aura.",
+                "tests": "Order brain MRI.",
+                "urgency": "Urgency is moderate.",
+                "safety": "Avoid triptans in this patient.",
+                "plan": "Start preventive therapy.",
+            }.items()
+        }
+    }
+    # Nested overlap that previously left Prepare stuck red after quote-repair.
+    payload["sections"]["diagnosis"]["claims"].append(
+        {
+            "id": "diagnosis-2",
+            "text": "migraine with aura",
+            "source_quote": "migraine with aura.",
+            "critical": False,
+        }
+    )
+    calls = {"n": 0}
+
+    def chat(model, messages, **kwargs):
+        calls["n"] += 1
+        meta = SimpleNamespace(
+            error=None, cost_usd=0.0, prompt_tokens=1, completion_tokens=1
+        )
+        return json.dumps(payload), meta
+
+    sections, _meta = extract_with_chat(raw, model="test/model", chat=chat)
+    assert calls["n"] == 2  # primary + repair, then drop nested claim
+    assert [c.id for c in sections["diagnosis"].claims] == ["diagnosis-1"]
+
+
+def test_format_prepare_error_is_actionable():
+    from benchmark.gold import format_prepare_error
+
+    msg = format_prepare_error(ValueError("Overlapping source quote across scoring claims: x"))
+    assert "Prepare reference" in msg or "retry" in msg.casefold()
+    key_msg = format_prepare_error(ValueError("An OpenRouter key is required"))
+    assert "sk-or-v1" in key_msg or "OpenRouter" in key_msg
+
