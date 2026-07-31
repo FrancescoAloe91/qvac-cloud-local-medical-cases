@@ -344,12 +344,13 @@ def test_migrate_does_not_auto_fill_slot_six():
     assert 6 not in bindings and 7 not in bindings
 
 
-def test_default_pack_loads_anaphylaxis_stemi_dka_stroke_qna():
+def test_default_pack_loads_anaphylaxis_stemi_dka_stroke_psych_qna():
     pack = load_default_pack()
     rev, force = load_default_pack_meta()
-    assert rev >= 2
-    assert 2 in force
-    assert set(pack.keys()) == {2, 3, 4, 5}
+    assert rev >= 3
+    assert 6 in force and 7 in force
+    assert 2 not in force  # Case 2 anaphylaxis migration already shipped; do not re-force
+    assert set(pack.keys()) == {2, 3, 4, 5, 6, 7}
     assert "anaphylaxis" in pack[2]["gold_raw"].lower() or "epinephrine" in pack[2]["gold_raw"].lower()
     assert "stridor" in pack[2]["stem"].lower() or "angioedema" in pack[2]["stem"].lower()
     assert "Q1 [diagnosis]:" in pack[2]["gold_raw"]
@@ -360,9 +361,14 @@ def test_default_pack_loads_anaphylaxis_stemi_dka_stroke_qna():
     assert "ketoacidosis" in pack[4]["gold_raw"].lower() or "DKA" in pack[4]["stem"]
     assert "stroke" in pack[5]["gold_raw"].lower()
     assert "Q5 [plan]:" in pack[5]["gold_raw"]
+    assert "amitriptyline" in pack[6]["stem"].lower() or "suicidal" in pack[6]["stem"].lower()
+    assert "Q1 [diagnosis]:" in pack[6]["gold_raw"] and "A5:" in pack[6]["gold_raw"]
+    assert "psychosis" in pack[7]["stem"].lower() or "hallucination" in pack[7]["stem"].lower()
+    assert "delirium" in pack[7]["gold_raw"].lower()
+    assert "Q5 [plan]:" in pack[7]["gold_raw"]
 
 
-def test_default_pack_fills_empty_slots_preserves_case_1_force_seeds_case_2(
+def test_default_pack_fills_empty_slots_preserves_case_1_2_force_seeds_6_7(
     tmp_path: Path,
 ):
     arts = [
@@ -381,30 +387,31 @@ def test_default_pack_fills_empty_slots_preserves_case_1_force_seeds_case_2(
             gold=GOLD_MARK,
         ),
     ]
-    slots, bindings, _count, drafts = ensure_owner_slots(tmp_path, arts)
+    slots, bindings, slot_count, drafts = ensure_owner_slots(tmp_path, arts)
     pack = load_default_pack()
     assert bindings[1] == stem_key(STEM_A)
-    # Pack revision force-seeds Case 2 (anaphylaxis); old STEM_B History stays on disk
-    # but is no longer bound to slot 2.
-    assert bindings[2] == pack[2]["stem_key"]
-    assert bindings[2] != stem_key(STEM_B)
+    # Occupied Case 1–2 History bindings stay; empty 3–5 get pack; 6–7 force-seed.
+    assert bindings[2] == stem_key(STEM_B)
     assert 3 in bindings and 4 in bindings and 5 in bindings
-    assert slots[1].filled and (
-        "anaphylaxis" in slots[1].gold_raw.lower()
-        or "epinephrine" in slots[1].gold_raw.lower()
-    )
-    assert "Q1 [diagnosis]:" in slots[1].gold_raw
+    assert bindings[6] == pack[6]["stem_key"]
+    assert bindings[7] == pack[7]["stem_key"]
+    assert slot_count >= 7
+    assert slots[0].stem == STEM_A
+    assert slots[1].stem == STEM_B
     assert slots[2].filled and "ST-segment elevation" in slots[2].stem
     assert "Q1 [diagnosis]:" in slots[2].gold_raw
     assert "Q1 [diagnosis]:" in slots[3].gold_raw
     assert "Q1 [diagnosis]:" in slots[4].gold_raw
-    assert slots[0].stem == STEM_A
-    assert "peanut" in slots[1].stem.lower() or "angioedema" in slots[1].stem.lower()
+    assert "amitriptyline" in slots[5].stem.lower() or "goodbye" in slots[5].stem.lower()
+    assert "Q1 [diagnosis]:" in slots[5].gold_raw
+    assert "psychosis" in slots[6].stem.lower() or "hallucination" in slots[6].stem.lower()
+    assert "Q1 [diagnosis]:" in slots[6].gold_raw
     # Drafts persisted for owner workspace.
     loaded = load_drafts(tmp_path)
-    assert set(loaded.keys()) >= {2, 3, 4, 5}
+    assert set(loaded.keys()) >= {3, 4, 5, 6, 7}
     assert "A1:" in loaded[3]["gold_raw"]
-    assert load_pack_revision(tmp_path) >= 2
+    assert "sodium bicarbonate" in loaded[6]["gold_raw"].lower() or "1:1" in loaded[6]["gold_raw"]
+    assert load_pack_revision(tmp_path) >= 3
 
 
 def test_apply_default_pack_does_not_overwrite_existing_binding():
@@ -417,50 +424,63 @@ def test_apply_default_pack_does_not_overwrite_existing_binding():
     assert out_b[3] == existing_key
     assert 3 not in out_d  # pack must not replace occupied slot
     assert 4 in out_b and 5 in out_b
+    assert 6 in out_b and 7 in out_b
     assert "Q1 [diagnosis]:" in out_d[4]["gold_raw"]
+    assert "Q1 [diagnosis]:" in out_d[6]["gold_raw"]
 
 
-def test_force_seed_overwrites_case_2_only():
+def test_force_seed_overwrites_listed_slots_only():
     pack = load_default_pack()
     old_key = stem_key("Old arthritis / SLE stem for case two")
-    bindings = {1: stem_key(STEM_A), 2: old_key, 3: pack[3]["stem_key"]}
+    bindings = {
+        1: stem_key(STEM_A),
+        2: old_key,
+        3: pack[3]["stem_key"],
+        6: stem_key("Old empty custom case six"),
+    }
     drafts = {3: pack[3]}
     out_b, out_d = force_seed_pack_slots(
-        bindings, drafts, slot_indexes_to_seed={2}, pack=pack
+        bindings, drafts, slot_indexes_to_seed={6, 7}, pack=pack
     )
     assert out_b[1] == stem_key(STEM_A)
-    assert out_b[2] == pack[2]["stem_key"]
+    assert out_b[2] == old_key  # not in force list
     assert out_b[3] == pack[3]["stem_key"]
-    assert "epinephrine" in out_d[2]["gold_raw"].lower()
+    assert out_b[6] == pack[6]["stem_key"]
+    assert out_b[7] == pack[7]["stem_key"]
+    assert "amitriptyline" in out_d[6]["stem"].lower() or "suicidal" in out_d[6]["gold_raw"].lower()
+    assert "delirium" in out_d[7]["gold_raw"].lower()
     assert 3 in out_d
 
 
 def test_pack_revision_force_seed_runs_once(tmp_path: Path):
     pack = load_default_pack()
-    old_stem = "Patient: 34-year-old female. History: chronic arthritis cohort."
-    save_bindings(tmp_path, {2: stem_key(old_stem)}, slot_count=5, pack_revision=0)
+    old_stem = "Patient: 34-year-old female. History: custom case six placeholder."
+    save_bindings(tmp_path, {6: stem_key(old_stem)}, slot_count=6, pack_revision=2)
     arts = [
         _art(
-            run_id="old2",
+            run_id="old6",
             stem=old_stem,
             finished_at="2026-07-30T10:00:00Z",
             cohort_id="cold",
             gold=GOLD_MARK,
         )
     ]
-    slots, bindings, _count, drafts = ensure_owner_slots(tmp_path, arts)
-    assert bindings[2] == pack[2]["stem_key"]
-    assert "anaphylaxis" in drafts[2]["gold_raw"].lower()
+    slots, bindings, slot_count, drafts = ensure_owner_slots(tmp_path, arts)
+    assert bindings[6] == pack[6]["stem_key"]
+    assert bindings[7] == pack[7]["stem_key"]
+    assert slot_count >= 7
+    assert "amitriptyline" in drafts[6]["stem"].lower() or "suicidal" in drafts[6]["gold_raw"].lower()
     rev = load_pack_revision(tmp_path)
-    assert rev >= 2
+    assert rev >= 3
     # Second ensure must not thrash a user re-bind away if revision already applied
     # and slot still matches pack (idempotent).
     slots2, bindings2, _, drafts2 = ensure_owner_slots(
         tmp_path, arts, session_bindings=bindings, session_drafts=drafts
     )
-    assert bindings2[2] == pack[2]["stem_key"]
-    assert drafts2[2]["stem"] == pack[2]["stem"]
-    assert slots2[1].stem_key == pack[2]["stem_key"]
+    assert bindings2[6] == pack[6]["stem_key"]
+    assert bindings2[7] == pack[7]["stem_key"]
+    assert drafts2[6]["stem"] == pack[6]["stem"]
+    assert slots2[5].stem_key == pack[6]["stem_key"]
 
 
 def test_resolve_slots_surfaces_draft_gold_without_artifact():
@@ -472,3 +492,15 @@ def test_resolve_slots_surfaces_draft_gold_without_artifact():
     assert slots[2].stem.startswith("Patient:")
     assert slots[2].gold_raw.startswith("Q1 [diagnosis]:")
     assert not slots[2].gold_reference
+
+
+def test_resolve_slots_surfaces_case_6_7_drafts_when_count_grows():
+    pack = load_default_pack()
+    bindings = {6: pack[6]["stem_key"], 7: pack[7]["stem_key"]}
+    drafts = {6: pack[6], 7: pack[7]}
+    slots = resolve_slots([], bindings, slot_count=7, drafts=drafts)
+    assert len(slots) == 7
+    assert slots[5].stem.startswith("Patient:")
+    assert slots[5].gold_raw.startswith("Q1 [diagnosis]:")
+    assert slots[6].gold_raw.startswith("Q1 [diagnosis]:")
+    assert not slots[5].gold_reference

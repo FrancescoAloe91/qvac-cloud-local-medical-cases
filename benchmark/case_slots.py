@@ -590,8 +590,8 @@ def ensure_owner_slots(
     """Load/migrate sticky bindings, seed empty defaults, resolve Case 1–N.
 
     Returns ``(slots, bindings, slot_count, drafts)``. Defaults fill only empty
-    slots, except ``force_seed_slots`` on a pack revision bump (Case 2 anaphylaxis
-    migration). Case 1/3/4/5 History bindings stay unless listed in force_seed.
+    slots, except ``force_seed_slots`` on a pack revision bump (e.g. Case 6–7
+    psych seeds). Slots not listed in force_seed keep sticky History bindings.
     """
     disk, disk_count = load_slot_state(workspace)
     disk_pack_rev = load_pack_revision(workspace)

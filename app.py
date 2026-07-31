@@ -1838,7 +1838,7 @@ _slots_locked = bool(
     st.session_state.get("benchmark_running") or st.session_state.get("confirmed_run")
 )
 
-# After a default-pack revision force-seed (e.g. Case 2 → anaphylaxis), reload the
+# After a default-pack revision force-seed (e.g. Case 6–7 psych seeds), reload the
 # active editor when that slot was remapped — without interrupting a live run.
 _pack_rev_now = load_pack_revision(WORKSPACE_DIR)
 _pack_rev_meta, _force_seed_slots = load_default_pack_meta()
