@@ -595,6 +595,53 @@ _STRINGS = {
             "**Case {n}** is empty — paste an anonymized case and reference, "
             "then Prepare / Confirm."
         ),
+        # Loud disclosure package (dashboard honesty + screenshot footers)
+        "disclosure.title": "How to read these results (known limitations)",
+        "disclosure.bullet_ref": (
+            "<b>Reference-relative</b> Clinical Composite · not clinical truth · "
+            "not an official MedPsy blog evaluation"
+        ),
+        "disclosure.bullet_api": (
+            "Cloud slots = <b>OpenRouter API routes</b> ≠ consumer ChatGPT / "
+            "Claude / Gemini web apps"
+        ),
+        "disclosure.bullet_judge": (
+            "Uncalibrated <b>single LLM-as-judge</b> (DeepSeek R1)"
+        ),
+        "disclosure.bullet_exploratory": (
+            "<b>Exploratory / amateur</b> comparison — not a powered clinical study"
+        ),
+        "disclosure.bullet_rebuild": (
+            "Rebuild mean = <b>scored-only</b> · technical failures excluded · "
+            "N = successful scores"
+        ),
+        "disclosure.bullet_scope": "Mean scope",
+        "disclosure.bullet_confirm": (
+            "<b>New Confirm = new cohort</b> (re-Prepare / claim-split edits too)"
+        ),
+        "disclosure.bullet_roster": (
+            "Roster version <b>default {n}</b> · MedPsy family · MedGemma 1.5 "
+            "peer where relevant — do not pool cross-roster eras silently"
+        ),
+        "disclosure.bullet_recovery": (
+            "Local recovery <b>capped</b> (≠ identical cloud repair/fill weapons)"
+        ),
+        "disclosure.scope_same": "Same-case",
+        "disclosure.scope_portfolio": "Portfolio",
+        "disclosure.footer_mean_std": "mean±std",
+        "disclosure.footer_n_default": "N=successful scores",
+        "disclosure.footer_scope": "scope",
+        "disclosure.footer_roster": "roster",
+        "disclosure.footer_cohort": "cohort",
+        "disclosure.footer_exploratory": "exploratory",
+        "disclosure.confirm_new_cohort": (
+            "**New Confirm = new cohort** — Rebuild pools only matching "
+            "`cohort_id`{hash}."
+        ),
+        "disclosure.rebuild_scope_loud": (
+            "**Mean scope: {scope}** — Same-case = one immutable gold cohort; "
+            "Portfolio = exploratory ≤N successful/model across cases."
+        ),
     },
     "it": {
         "page_title": "QVAC vs Cloud LLMs - Health Test",
@@ -1188,6 +1235,55 @@ _STRINGS = {
         "bench.case_slot_ready_empty": (
             "**Case {n}** è vuoto — incolla un caso anonimizzato e il "
             "riferimento, poi Prepare / Confirm."
+        ),
+        # Loud disclosure package (dashboard honesty + screenshot footers)
+        "disclosure.title": "Come leggere questi risultati (limiti noti)",
+        "disclosure.bullet_ref": (
+            "Clinical Composite <b>relativo al riferimento</b> · non verità "
+            "clinica · non valutazione ufficiale del blog MedPsy"
+        ),
+        "disclosure.bullet_api": (
+            "Slot cloud = <b>route API OpenRouter</b> ≠ app web consumer "
+            "ChatGPT / Claude / Gemini"
+        ),
+        "disclosure.bullet_judge": (
+            "<b>Singolo LLM-as-judge</b> non calibrato (DeepSeek R1)"
+        ),
+        "disclosure.bullet_exploratory": (
+            "Confronto <b>esplorativo / amatoriale</b> — non uno studio clinico "
+            "con potenza statistica"
+        ),
+        "disclosure.bullet_rebuild": (
+            "Rebuild mean = <b>solo scored</b> · fallimenti tecnici esclusi · "
+            "N = score riusciti"
+        ),
+        "disclosure.bullet_scope": "Ambito media",
+        "disclosure.bullet_confirm": (
+            "<b>Nuovo Confirm = nuovo cohort</b> (anche Re-Prepare / split claim)"
+        ),
+        "disclosure.bullet_roster": (
+            "Versione roster <b>default {n}</b> · famiglia MedPsy · peer "
+            "MedGemma 1.5 dove rilevante — non unire epoche di roster diverse "
+            "in silenzio"
+        ),
+        "disclosure.bullet_recovery": (
+            "Recovery locale <b>limitato</b> (≠ stesse armi repair/fill del cloud)"
+        ),
+        "disclosure.scope_same": "Same-case",
+        "disclosure.scope_portfolio": "Portfolio",
+        "disclosure.footer_mean_std": "media±std",
+        "disclosure.footer_n_default": "N=score riusciti",
+        "disclosure.footer_scope": "ambito",
+        "disclosure.footer_roster": "roster",
+        "disclosure.footer_cohort": "cohort",
+        "disclosure.footer_exploratory": "esplorativo",
+        "disclosure.confirm_new_cohort": (
+            "**Nuovo Confirm = nuovo cohort** — Rebuild raggruppa solo "
+            "`cohort_id` corrispondenti{hash}."
+        ),
+        "disclosure.rebuild_scope_loud": (
+            "**Ambito media: {scope}** — Same-case = un gold cohort immutabile; "
+            "Portfolio = esplorativo ≤N successful/modello tra casi."
         ),
     },
 }

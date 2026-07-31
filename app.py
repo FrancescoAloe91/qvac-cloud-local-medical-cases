@@ -134,6 +134,13 @@ from lib.benchmark_multi_ui import (
 )
 from lib.charts import fig_judge_accuracy_bars, fig_judge_mean_accuracy_bars
 from lib.deployment import is_local_install, is_streamlit_cloud
+from lib.disclosure import (
+    DEFAULT_ROSTER_VERSION,
+    honesty_block_html,
+    scope_label,
+    screenshot_footer_html,
+    short_cohort,
+)
 from lib.i18n import t
 from lib.model_labels import (
     OPTIONAL_LEGACY_SLOT_KEYS,
@@ -1539,11 +1546,45 @@ def history_mean_rebuild_dialog():
         )
     _rebuild_clean = bool(payload.get("successful_only", True))
     st.caption(reliability_caption(summary, successful_only=_rebuild_clean))
+    _dlg_cohort = str(
+        payload.get("cohort_id")
+        or getattr(summary, "cohort_id", None)
+        or st.session_state.get("_restored_cohort_id")
+        or ""
+    )
+    _dlg_roster_n = int(
+        payload.get("roster_n")
+        or len(filter_current_roster_rows(summary.ranking_mean or []))
+        or DEFAULT_ROSTER_VERSION
+    )
+    st.markdown(
+        honesty_block_html(
+            lang=_ui_lang(),
+            roster_n=_dlg_roster_n,
+            scope=_scope,
+            cohort_id=_dlg_cohort,
+        ),
+        unsafe_allow_html=True,
+    )
 
     st.markdown("##### Ranking table")
     st.markdown(
         _reliability_table_html(
             summary.ranking_mean, successful_only=_rebuild_clean
+        ),
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        screenshot_footer_html(
+            lang=_ui_lang(),
+            scope=_scope,
+            roster_n=_dlg_roster_n,
+            cohort_id=_dlg_cohort,
+            n_label=(
+                f"N≤{payload.get('n_per_model_cap') or '?'} successful/model · "
+                f"{payload.get('n_used') or summary.n} docs"
+            ),
+            extra="scored-only · technical failures excluded",
         ),
         unsafe_allow_html=True,
     )
@@ -1564,6 +1605,20 @@ def history_mean_rebuild_dialog():
         ),
         use_container_width=True,
         key="hm_dlg_mean_chart",
+    )
+    st.markdown(
+        screenshot_footer_html(
+            lang=_ui_lang(),
+            scope=_scope,
+            roster_n=_dlg_roster_n,
+            cohort_id=_dlg_cohort,
+            n_label=(
+                f"N≤{payload.get('n_per_model_cap') or '?'} successful/model · "
+                f"{payload.get('n_used') or summary.n} docs"
+            ),
+            extra="mean±std whiskers · scored-only",
+        ),
+        unsafe_allow_html=True,
     )
     st.markdown("##### Paired complete-case sensitivity analysis")
     if summary.paired_ranking:
@@ -1738,6 +1793,15 @@ st.markdown(
   <div class="step-pill"><b>Step 3</b> Run one protocol cohort</div>
 </div>
 """,
+    unsafe_allow_html=True,
+)
+st.markdown(
+    honesty_block_html(
+        lang=_ui_lang(),
+        roster_n=DEFAULT_ROSTER_VERSION,
+        cohort_id=st.session_state.get("_restored_cohort_id")
+        or st.session_state.get("_active_cohort_id"),
+    ),
     unsafe_allow_html=True,
 )
 st.caption(
@@ -2509,6 +2573,13 @@ if isinstance(_prepared, dict) and _prepared:
                     f"Reference confirmed at {contract.confirmed_at} · "
                     f"extractor cost ${extract_cost:.4f}"
                 )
+                st.warning(
+                    t(
+                        "disclosure.confirm_new_cohort",
+                        _ui_lang(),
+                        hash="",
+                    )
+                )
                 st.rerun()
             except Exception as exc:
                 st.error(f"Confirm failed: {exc}")
@@ -2522,6 +2593,17 @@ if st.session_state.get("_confirmed_gold_json"):
             else ""
         )
         + " · candidates unlocked."
+    )
+    st.caption(
+        t(
+            "disclosure.confirm_new_cohort",
+            _ui_lang(),
+            hash=(
+                f" · `{short_cohort(st.session_state.get('_restored_cohort_id'))}`"
+                if st.session_state.get("_restored_cohort_id")
+                else ""
+            ),
+        )
     )
 else:
     st.caption(
@@ -3646,6 +3728,7 @@ _rebuild_optional = [
     )
 ]
 _rebuild_model_ids = rebuild_model_ids(_rebuild_optional)
+_rebuild_roster_n = len(_rebuild_model_ids)
 st.caption(
     "Rebuild is always available here (before Live responses / run stop). "
     f"Mean chart/table = **{len(_rebuild_model_ids)}-model roster** "
@@ -3656,7 +3739,7 @@ st.caption(
         else "; optional Gemma/Llama/Q8 hidden until toggled"
     )
     + ") · last ≤N **successful** scored runs per model · "
-    "technical N/A skipped · **No API calls**."
+    "technical N/A skipped · **No API calls** · scored-only mean."
 )
 
 _hist_for_case = artifacts_for_case(WORKSPACE_DIR, case_id)
@@ -3747,13 +3830,32 @@ _rebuild_scope = st.radio(
     t("bench.rebuild_scope_label", _ui_lang()),
     options=["same_case", "portfolio"],
     format_func=lambda v: (
-        t("bench.rebuild_scope_same", _ui_lang())
-        if v == "same_case"
-        else t("bench.rebuild_scope_portfolio", _ui_lang())
+        f"● {scope_label(v, _ui_lang())} — "
+        + (
+            t("bench.rebuild_scope_same", _ui_lang())
+            if v == "same_case"
+            else t("bench.rebuild_scope_portfolio", _ui_lang())
+        )
     ),
     horizontal=True,
     key="history_rebuild_scope",
     on_change=_on_rebuild_n_pick_change,
+)
+st.markdown(
+    honesty_block_html(
+        lang=_ui_lang(),
+        roster_n=_rebuild_roster_n or DEFAULT_ROSTER_VERSION,
+        scope=_rebuild_scope,
+        cohort_id=_rebuild_cohort_id,
+    ),
+    unsafe_allow_html=True,
+)
+st.caption(
+    t(
+        "disclosure.rebuild_scope_loud",
+        _ui_lang(),
+        scope=scope_label(_rebuild_scope, _ui_lang()),
+    )
 )
 
 if _rebuild_scope == "portfolio":
@@ -3761,10 +3863,15 @@ if _rebuild_scope == "portfolio":
     _avail_n = _avail_portfolio
 else:
     st.caption(
-        f"**Case {_active_slot_idx}** · selected-case mean · one immutable cohort only. "
-        "Cohort hash = normalized case + confirmed gold (excl. timestamp) + models + track. "
-        "Other Case slots are excluded. A new Prepare that splits claims differently "
-        "starts a fresh cohort. **No API calls**."
+        f"**Case {_active_slot_idx}** · **Same-case** mean · one immutable cohort only"
+        + (
+            f" · cohort `{short_cohort(_rebuild_cohort_id)}`"
+            if _rebuild_cohort_id
+            else ""
+        )
+        + ". Cohort hash = normalized case + confirmed gold (excl. timestamp) + "
+        "models + track. Other Case slots are excluded. "
+        "**New Confirm = new cohort.** **No API calls.**"
     )
     _avail_n = _avail_same
 
@@ -5687,6 +5794,23 @@ if st.session_state.get("confirmed_run"):
                 )
                 st.caption(reliability_caption(summary))
                 _lo_art = all_artifacts[-1] if all_artifacts else None
+                _lo_cohort = (
+                    str(getattr(_lo_art, "cohort_id", None) or "")
+                    if _lo_art is not None
+                    else ""
+                )
+                _lo_roster_n = len(
+                    filter_current_roster_rows(summary.ranking_mean or [])
+                ) or DEFAULT_ROSTER_VERSION
+                st.markdown(
+                    honesty_block_html(
+                        lang=_ui_lang(),
+                        roster_n=_lo_roster_n,
+                        scope="same_case",
+                        cohort_id=_lo_cohort,
+                    ),
+                    unsafe_allow_html=True,
+                )
                 _lo_eff = (
                     ((_lo_art.reproducibility or {}).get("effective_judge") or "")
                     if _lo_art is not None
@@ -5698,6 +5822,16 @@ if st.session_state.get("confirmed_run"):
                 st.markdown(
                     _reliability_table_html(summary.ranking_mean), unsafe_allow_html=True
                 )
+                st.markdown(
+                    screenshot_footer_html(
+                        lang=_ui_lang(),
+                        scope="same_case",
+                        roster_n=_lo_roster_n,
+                        cohort_id=_lo_cohort,
+                        n_label=f"N={summary.n} runs · successful scores",
+                    ),
+                    unsafe_allow_html=True,
+                )
                 st.markdown("##### Chart (mean %; whiskers = ±1 std)")
                 st.plotly_chart(
                     fig_judge_mean_accuracy_bars(
@@ -5707,6 +5841,17 @@ if st.session_state.get("confirmed_run"):
                     ),
                     use_container_width=True,
                     key="rank_chart_local_only_mean",
+                )
+                st.markdown(
+                    screenshot_footer_html(
+                        lang=_ui_lang(),
+                        scope="same_case",
+                        roster_n=_lo_roster_n,
+                        cohort_id=_lo_cohort,
+                        n_label=f"N={summary.n} runs · successful scores",
+                        extra="mean±std whiskers",
+                    ),
+                    unsafe_allow_html=True,
                 )
                 if summary.outliers:
                     _exec_notes = [
@@ -6731,6 +6876,23 @@ if st.session_state.get("confirmed_run"):
                 )
                 st.caption(reliability_caption(summary))
                 _last_art = all_artifacts[-1] if all_artifacts else None
+                _multi_cohort = (
+                    str(getattr(_last_art, "cohort_id", None) or "")
+                    if _last_art is not None
+                    else ""
+                )
+                _multi_roster_n = len(
+                    filter_current_roster_rows(summary.ranking_mean or [])
+                ) or DEFAULT_ROSTER_VERSION
+                st.markdown(
+                    honesty_block_html(
+                        lang=_ui_lang(),
+                        roster_n=_multi_roster_n,
+                        scope="same_case",
+                        cohort_id=_multi_cohort,
+                    ),
+                    unsafe_allow_html=True,
+                )
                 _eff_multi = (
                     ((_last_art.reproducibility or {}).get("effective_judge") or "")
                     if _last_art is not None
@@ -6749,6 +6911,16 @@ if st.session_state.get("confirmed_run"):
                 st.markdown(
                     _reliability_table_html(summary.ranking_mean), unsafe_allow_html=True
                 )
+                st.markdown(
+                    screenshot_footer_html(
+                        lang=_ui_lang(),
+                        scope="same_case",
+                        roster_n=_multi_roster_n,
+                        cohort_id=_multi_cohort,
+                        n_label=f"N={summary.n} runs · successful scores",
+                    ),
+                    unsafe_allow_html=True,
+                )
                 st.markdown("##### Chart (mean %; whiskers = ±1 std)")
                 st.plotly_chart(
                     fig_judge_mean_accuracy_bars(
@@ -6758,6 +6930,17 @@ if st.session_state.get("confirmed_run"):
                     ),
                     use_container_width=True,
                     key="rank_chart_multi_mean",
+                )
+                st.markdown(
+                    screenshot_footer_html(
+                        lang=_ui_lang(),
+                        scope="same_case",
+                        roster_n=_multi_roster_n,
+                        cohort_id=_multi_cohort,
+                        n_label=f"N={summary.n} runs · successful scores",
+                        extra="mean±std whiskers",
+                    ),
+                    unsafe_allow_html=True,
                 )
                 st.markdown("##### Paired sensitivity ranking")
                 if summary.paired_ranking:

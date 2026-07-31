@@ -1,6 +1,6 @@
 # QVAC vs Cloud LLMs — Gold-only Health Benchmark
 
-Experimental, open-source comparison of pinned OpenRouter API models and
+Experimental, open-source comparison of pinned **OpenRouter API** models and
 on-device GGUFs through the QVAC SDK. It uses frozen, user-supplied source
 quotes as canonical claims, a blind DeepSeek R1 judge, strict evidence
 validation, and an independent whole-run verifier only when primary judging
@@ -8,10 +8,26 @@ fails systemically.
 
 This is a research/demo tool, not a medical device. It does not validate the
 clinical truth of user input. If the case or reference is wrong or incomplete,
-the result is not clinically meaningful.
+the result is not clinically meaningful. Cloud slots are API routes — not
+claims about consumer ChatGPT / Claude / Gemini web apps.
 
 Live app: https://francescoaloe91-qvac-vs-cloud-llms-health-test-app-wihxyd.streamlit.app
 Repository: https://github.com/FrancescoAloe91/qvac-vs-cloud-llms-health-test
+
+## Known limitations / How to read results
+
+- **Reference-relative** Clinical Composite — not clinical truth, not an official
+  MedPsy blog evaluation.
+- Cloud slots = **OpenRouter API routes** ≠ consumer ChatGPT / Claude / Gemini web.
+- **Uncalibrated single LLM-as-judge** (DeepSeek R1).
+- **Exploratory / amateur** comparison — default Multi N=5 is not a powered study.
+- Rebuild mean = **scored-only** · technical failures excluded · N = successful scores.
+- Label **Same-case** vs **Portfolio**; **New Confirm = new cohort** (short hash on UI).
+- Roster version **default 9** · MedPsy family · MedGemma 1.5 peer where relevant.
+- Local recovery is **capped** (not identical cloud repair/fill weapons).
+
+Screenshot rule: keep mean±std · N · scope · roster · cohort visible. Copy-paste
+post template: [docs/x-post-template.md](docs/x-post-template.md).
 
 ## How the system works (end-to-end)
 

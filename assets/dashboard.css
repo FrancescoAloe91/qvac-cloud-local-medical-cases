@@ -298,6 +298,48 @@ span[data-testid="stIconMaterial"],
   color: #94a3b8 !important; font-size: 0.7rem !important;
   margin: 0 0 0.3rem !important;
 }
+/* Loud honesty — hard to crop out of ranking / Rebuild screenshots */
+.honesty-block {
+  margin: 0.45rem 0 0.65rem !important;
+  padding: 0.65rem 0.8rem !important;
+  border-radius: 10px !important;
+  border: 1px solid #f59e0b !important;
+  background: linear-gradient(135deg, rgba(245,158,11,0.14), rgba(15,23,42,0.92)) !important;
+  color: #fde68a !important;
+  font-size: 0.78rem !important;
+  line-height: 1.35 !important;
+}
+.honesty-block-title {
+  font-weight: 750 !important;
+  color: #fbbf24 !important;
+  margin: 0 0 0.35rem !important;
+  font-size: 0.82rem !important;
+  letter-spacing: 0.01em !important;
+}
+.honesty-block-list {
+  margin: 0 !important;
+  padding-left: 1.1rem !important;
+}
+.honesty-block-list li {
+  margin: 0.12rem 0 !important;
+  color: #fef3c7 !important;
+}
+.honesty-block-list b,
+.honesty-block-list code {
+  color: #fff7ed !important;
+}
+.screenshot-footer {
+  margin: 0.35rem 0 0.75rem !important;
+  padding: 0.4rem 0.55rem !important;
+  border-radius: 8px !important;
+  border: 1px dashed #64748b !important;
+  background: #0f172a !important;
+  color: #cbd5e1 !important;
+  font-size: 0.72rem !important;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace !important;
+  line-height: 1.35 !important;
+  word-break: break-word !important;
+}
 .steps-bar {
   display: flex !important;
   flex-direction: row !important;

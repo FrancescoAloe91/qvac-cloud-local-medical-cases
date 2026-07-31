@@ -18,7 +18,20 @@ A **gold-only clinical LLM benchmark**: the same anonymized case and user-suppli
 | TTFT / TPS | Measured from API stream | Measured from local sidecar |
 | Models | Pinned API routes (GPT / Claude / Gemini) | MedPsy + open peer GGUFs |
 
-This is a **research/demo tool**. Artifact “accuracy” is a **Clinical Composite Score relative to the user reference**, not external clinical truth. The judge is an **uncalibrated LLM-as-judge** until human-reviewed fixtures exist. N=5 is exploratory — not a general claim that MedPsy beats consumer ChatGPT/Claude/Gemini web. **Controlled** track uses temp 0.2 (separate cohort from `native_defaults`). TTFT/TPS are ops metrics, not hardware-normalized. Crop screenshots so at least one honesty caption stays visible.
+This is a **research/demo tool**. Artifact “accuracy” is a **Clinical Composite Score relative to the user reference**, not external clinical truth. The judge is an **uncalibrated LLM-as-judge** until human-reviewed fixtures exist. N=5 is exploratory. **Controlled** track uses temp 0.2 (separate cohort from `native_defaults`). TTFT/TPS are ops metrics, not hardware-normalized. Keep the honesty block + mean footer visible in every screenshot.
+
+### Known limitations / How to read results
+
+- **Reference-relative** Clinical Composite — not clinical truth, not an official MedPsy blog evaluation.
+- Cloud slots = **OpenRouter API routes** ≠ consumer ChatGPT / Claude / Gemini web.
+- **Uncalibrated single LLM-as-judge** (DeepSeek R1).
+- **Exploratory / amateur** comparison — default Multi N=5 is not a powered study.
+- Rebuild mean = **scored-only** · technical failures excluded · N = successful scores.
+- Label **Same-case** vs **Portfolio**; **New Confirm = new cohort** (short hash on UI).
+- Roster version **default 9** · MedPsy family · MedGemma 1.5 peer where relevant.
+- Local recovery is **capped** (not identical cloud repair/fill weapons).
+
+Post template: [docs/x-post-template.md](docs/x-post-template.md).
 
 ## How it works (60 seconds)
 
@@ -48,7 +61,7 @@ Coverage is claim-level vs frozen quotes; quality is independent of coverage; un
 
 - Not a medical device and not clinical advice
 - Does not validate that the user’s case or reference is clinically correct
-- N=5 is exploratory — not a general claim that a 4B beats paid frontier models
+- N=5 is exploratory — not a general superiority claim about any model family
 - Cloud slots are **API routes**, not claims about consumer free web tiers
 - Hosted Streamlit demo is often **cloud roster only** (no QVAC sidecar); full on-device path needs a local install
 - Salvage/section-repair never invents clinical content; missing sections stay N/A

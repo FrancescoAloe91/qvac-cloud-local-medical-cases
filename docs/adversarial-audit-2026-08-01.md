@@ -134,4 +134,27 @@ No weight tweaks, forced tie-breaks, dropping high-variance runs, or silent
 rescore to flatten rankings. No repository language that frames protocol or case
 choices as optimizing for a favored local model.
 
+## Mitigation status (disclosure package)
+
+Critical and High items below are treated as **known limitations** mitigated by
+loud product disclosure — not as infinite scoring todos. Residual risk remains
+if screenshots crop captions or posts omit the template.
+
+| ID | Status | Where disclosure lands |
+|---|---|---|
+| C1 Gold ≠ clinical truth / ≠ MedPsy blog | Disclosure-mitigated | Dashboard honesty block · README/PRESENTATION box · X template |
+| C2 OpenRouter API ≠ consumer web | Disclosure-mitigated | Honesty block · GitHub-facing README lead · X template |
+| C3 Single uncalibrated DeepSeek R1 | Disclosure-mitigated | Honesty block · docs box · X template |
+| C4 Amateur / exploratory framing | Disclosure-mitigated | Honesty block · mean footer · X template |
+| C5 Case selection / pack revision | Disclosure-mitigated (process) | Pack revision captions; still disclose stem titles when posting |
+| H1 Rebuild scored-only | Disclosure-mitigated | Honesty block · Rebuild captions · screenshot footer |
+| H2 Roster 9 / cross-roster pooling | Disclosure-mitigated | Roster version on honesty + footer |
+| H3 Dual MedPsy + MedGemma 1.5 | Disclosure-mitigated | Honesty roster line · peer cutover tags in product state |
+| H4 New Confirm = new cohort | Disclosure-mitigated | Confirm caption · honesty block · short cohort hash |
+| H5 Portfolio ≠ Same-case | Disclosure-mitigated | Loud scope label · honesty · footer |
+| H6 Local recovery capped | Disclosure-mitigated | Honesty bullet · docs box |
+
+Medium/Low remain documented optics; no formula changes. X copy-paste:
+[docs/x-post-template.md](x-post-template.md).
+
 Canvas: `adversarial-x-audit-2026-08-01.canvas.tsx` (Cursor canvases directory).
