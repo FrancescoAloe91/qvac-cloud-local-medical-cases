@@ -121,6 +121,14 @@ def build_run_artifact(
     ]
     artifact_fields["candidates"] = candidates
     artifact_fields["judgments"] = judgments
+    # Callers (esp. Beta) may omit wall-clock stamps — never fail validation on that.
+    now_iso = utc_now_iso()
+    if not artifact_fields.get("started_at"):
+        artifact_fields["started_at"] = now_iso
+    if not artifact_fields.get("finished_at"):
+        artifact_fields["finished_at"] = now_iso
+    # RunArtifact has no n_total; tolerate Multi/Beta passing it as metadata.
+    artifact_fields.pop("n_total", None)
     track = str(artifact_fields.get("benchmark_track") or "controlled")
     judge_cfg = models_config.get("judge") or config_snapshot.get("judge") or {}
     configured_candidates = {
@@ -720,6 +728,7 @@ def _collect_candidate_once(
     api_key: Optional[str] = None,
     messages: Optional[List[Dict[str, str]]] = None,
     timeout: Optional[float] = None,
+    answer_parser: Optional[Callable[[Case, str], Dict[str, str]]] = None,
 ) -> CandidateAnswer:
     key = cand_cfg["key"]
     label = cand_cfg.get("label") or key
@@ -870,7 +879,8 @@ def _collect_candidate_once(
             error=f"Unknown provider: {provider}",
         )
 
-    answers = parse_candidate_answers(case, raw) if raw else {}
+    parser = answer_parser or parse_candidate_answers
+    answers = parser(case, raw) if raw else {}
     cand = CandidateAnswer(
         candidate_key=key,
         label=label,
@@ -955,6 +965,9 @@ def _collect_candidate(
     on_event: EventCallback = None,
     benchmark_track: str = "controlled",
     api_key: Optional[str] = None,
+    messages: Optional[List[Dict[str, str]]] = None,
+    answer_parser: Optional[Callable[[Case, str], Dict[str, str]]] = None,
+    allow_format_repair: bool = True,
 ) -> CandidateAnswer:
     """Collect once, then spend at most one bounded retry on a recoverable fault.
 
@@ -965,6 +978,9 @@ def _collect_candidate(
     sections regenerate only the affected questions in one targeted call.
     Local (qvac) recovery is hard-capped at one extra generate — format-repair
     XOR one multi-gap targeted call — never N sequential per-section regenerations.
+
+    Beta comprehension sets ``allow_format_repair=False`` and supplies free-form
+    ``messages`` + ``answer_parser`` so A1–A5 repair never runs.
     """
     first = _collect_candidate_once(
         case,
@@ -973,6 +989,8 @@ def _collect_candidate(
         on_event,
         benchmark_track,
         api_key,
+        messages=messages,
+        answer_parser=answer_parser,
     )
     return maybe_retry_candidate(
         case,
@@ -982,6 +1000,9 @@ def _collect_candidate(
         on_event=on_event,
         benchmark_track=benchmark_track,
         api_key=api_key,
+        messages=messages,
+        answer_parser=answer_parser,
+        allow_format_repair=allow_format_repair,
     )
 
 
@@ -1020,6 +1041,7 @@ def _recover_collect_once(
     messages: Optional[List[Dict[str, str]]] = None,
     timeout: Optional[float] = None,
     template: CandidateAnswer,
+    answer_parser: Optional[Callable[[Case, str], Dict[str, str]]] = None,
 ) -> CandidateAnswer:
     """One recovery generate with optional hard wall-clock timeout (local)."""
     if timeout is None:
@@ -1031,6 +1053,7 @@ def _recover_collect_once(
             benchmark_track,
             api_key,
             messages=messages,
+            answer_parser=answer_parser,
         )
     # Wall-clock cap so a slow/hung GGUF cannot leave the UI on Recovering forever.
     # urllib timeout alone can stall if tokens trickle; FuturesTimeout aborts wait.
@@ -1047,6 +1070,7 @@ def _recover_collect_once(
             api_key,
             messages,
             timeout,
+            answer_parser,
         )
         try:
             # Wall clock ≈ recovery budget; small grace for thread scheduling only.
@@ -1071,6 +1095,9 @@ def maybe_retry_candidate(
     on_event: EventCallback = None,
     benchmark_track: str = "controlled",
     api_key: Optional[str] = None,
+    messages: Optional[List[Dict[str, str]]] = None,
+    answer_parser: Optional[Callable[[Case, str], Dict[str, str]]] = None,
+    allow_format_repair: bool = True,
 ) -> CandidateAnswer:
     """Run format-repair / section recovery on an already-collected candidate.
 
@@ -1102,11 +1129,15 @@ def maybe_retry_candidate(
     # Skip format-repair when the model mostly echoed the prompt template — that
     # content has no clinical substance to re-label; targeted regen is better.
     needs_format_repair = (
-        section_gap
+        allow_format_repair
+        and section_gap
         and len(first.answers or {}) < 2
         and len(raw_blob) > 40
         and not is_prompt_template_echo(raw_blob, case)
     )
+    # Beta / free-form: never chase graded A# gaps; only retry transport/truncation.
+    if not allow_format_repair:
+        section_gap = False
     if not (transport_failure or truncation or section_gap):
         return first
 
@@ -1205,8 +1236,10 @@ def maybe_retry_candidate(
             on_event,
             benchmark_track,
             api_key,
+            messages=messages,
             timeout=recovery_timeout,
             template=first,
+            answer_parser=answer_parser,
         )
         _merge_collect_meta(first, second)
         return second
@@ -1226,8 +1259,10 @@ def maybe_retry_candidate(
         on_event,
         benchmark_track,
         api_key,
+        messages=messages,
         timeout=recovery_timeout,
         template=first,
+        answer_parser=answer_parser,
     )
     _merge_collect_meta(first, second)
     # Timed-out / failed recovery: keep first answers; leave gaps as N/A.
@@ -1301,6 +1336,9 @@ def iter_collect_live(
     blind_map: Dict[str, str],
     benchmark_track: str = "controlled",
     api_key: Optional[str] = None,
+    messages: Optional[List[Dict[str, str]]] = None,
+    answer_parser: Optional[Callable[[Case, str], Dict[str, str]]] = None,
+    allow_format_repair: bool = True,
 ):
     """Cloud parallel + sequential QVAC with live token events for UI.
 
@@ -1432,6 +1470,9 @@ def iter_collect_live(
                 on_event,
                 benchmark_track,
                 api_key,
+                messages=messages,
+                answer_parser=answer_parser,
+                allow_format_repair=allow_format_repair,
             )
             q.put({"type": "done", "candidate": cand})
         except Exception as exc:

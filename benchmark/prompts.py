@@ -457,6 +457,32 @@ def strip_reasoning_blocks(text: str) -> str:
     return _REASONING_OPEN_RE.sub(" ", _REASONING_CLOSE_RE.sub(" ", cleaned))
 
 
+def clinical_answer_text(raw: str) -> str:
+    """Clinical text for scoring/judging: strip reasoning, keep medical prose.
+
+    Prefer content outside ``<think>`` / similar blocks. If the model only
+    produced a scratchpad, keep the tag-stripped body rather than emptying the
+    answer (caller still treats true blanks as N/A).
+    """
+    normalized = unicodedata.normalize("NFKC", raw or "")
+    cleaned = strip_reasoning_blocks(normalized).strip()
+    if cleaned:
+        return cleaned
+    # Everything was inside an unterminated scratchpad — keep the monologue.
+    return _REASONING_OPEN_RE.sub(
+        " ", _REASONING_CLOSE_RE.sub(" ", normalized)
+    ).strip()
+
+
+def sanitize_candidate_answers(answers: Dict[str, str]) -> Dict[str, str]:
+    """Strip reasoning blocks from every section before the judge sees them."""
+    return {
+        qid: clinical_answer_text(text)
+        for qid, text in (answers or {}).items()
+        if clinical_answer_text(text)
+    }
+
+
 def _resolve_label(raw_label: Optional[str]) -> Optional[str]:
     if not raw_label:
         return None

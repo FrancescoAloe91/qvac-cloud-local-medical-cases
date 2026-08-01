@@ -1,6 +1,8 @@
 """Plotly charts for the benchmark dashboard."""
 
-from typing import Optional
+from __future__ import annotations
+
+from typing import List, Optional
 
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
@@ -559,11 +561,16 @@ def fig_judge_mean_accuracy_bars(
     title: str = "Mean Clinical Composite Score ± std",
     height: int = 280,
     hide_partial_labels: bool = False,
+    rank_by: str = "mean",
+    compact: bool = False,
 ) -> go.Figure:
     """Mean Clinical Composite Score with ±1 std error bars.
 
     ``hide_partial_labels`` (Rebuild mean): never append the yellow ``partial``
     chart suffix — pool is successful scored runs only.
+    ``rank_by``: ``mean`` (default) or ``median`` — reorder bars/ranks only;
+    bars still encode mean ±1 std with ◆ median markers.
+    ``compact``: thinner per-row height for Rebuild dialog.
     """
     ranking_mean_rows = filter_current_roster_rows(ranking_mean_rows)
     # Mean bars include models with ≥1 scored observation. Rows with zero scored
@@ -580,7 +587,11 @@ def fig_judge_mean_accuracy_bars(
         fig.update_layout(**_base_layout(title, height=height))
         return fig
 
-    rows = rerank_rows(ranking_mean_rows, score_field="accuracy_mean")
+    score_field = "median" if str(rank_by).lower() == "median" else "accuracy_mean"
+    rows = rerank_rows(ranking_mean_rows, score_field=score_field)
+    # Drop unranked when sorting by median (missing median).
+    if score_field == "median":
+        rows = [r for r in rows if r.get("rank") is not None]
     labels = []
     for r in rows:
         label = ranking_chart_label(
@@ -597,47 +608,151 @@ def fig_judge_mean_accuracy_bars(
     stds = [float(r.get("std") or 0) for r in rows]
     cvs = [float(r.get("cv_pct") or 0) for r in rows]
     n_runs_list = [int(r.get("n_runs") or r.get("n") or 0) for r in rows]
+    medians: List[Optional[float]] = []
+    for r in rows:
+        raw_med = r.get("median")
+        if raw_med is None:
+            medians.append(None)
+            continue
+        try:
+            medians.append(float(raw_med))
+        except (TypeError, ValueError):
+            medians.append(None)
     colors = [MODEL_COLORS.get(r.get("key"), "#94a3b8") for r in rows]
     n = max(1, len(rows))
-    bar_h = max(height, 64 + n * 52)
+    row_px = 34 if compact else 52
+    base_pad = 48 if compact else 64
+    bar_h = max(height, base_pad + n * row_px)
 
-    # Name + version on Y; Mean / ±Std / CV / Runs live in the table under the chart.
-    fig = go.Figure(
+    y_rev = labels[::-1]
+    means_rev = means[::-1]
+    stds_rev = stds[::-1]
+    cvs_rev = cvs[::-1]
+    n_rev = n_runs_list[::-1]
+    med_rev = medians[::-1]
+    colors_rev = colors[::-1]
+    hover_cd = list(
+        zip(
+            stds_rev,
+            cvs_rev,
+            n_rev,
+            [m if m is not None else float("nan") for m in med_rev],
+        )
+    )
+
+    # Dual whisker (±1 std) drawn ABOVE bars so tips past the bar stay readable:
+    # thick white outline + black core (black-with-white-outline). Works on
+    # saturated bar fills and on the dark plot background beyond bar tips.
+    fig = go.Figure()
+    fig.add_trace(
         go.Bar(
-            y=labels[::-1],
-            x=means[::-1],
+            y=y_rev,
+            x=means_rev,
             orientation="h",
-            marker=dict(color=colors[::-1], line=dict(color="#1e293b", width=1)),
-            error_x=dict(
-                type="data",
-                array=stds[::-1],
-                visible=True,
-                color="rgba(148,163,184,0.85)",
-                thickness=1.2,
-                width=5,
-            ),
-            text=[f"{m:.1f}%" for m in means[::-1]],
+            marker=dict(color=colors_rev, line=dict(color="#1e293b", width=1)),
+            text=[f"{m:.1f}%" for m in means_rev],
             textposition="inside",
             insidetextanchor="middle",
             textfont=dict(color="#0f172a", size=13, family="Inter, system-ui, sans-serif"),
             hovertemplate=(
                 "%{y}<br>Mean %{x:.1f}% ± %{customdata[0]:.1f}"
+                "<br>Median %{customdata[3]:.1f}%"
                 "<br>CV %{customdata[1]:.0f}%"
                 "<br>Runs %{customdata[2]}<extra></extra>"
             ),
-            customdata=list(zip(stds[::-1], cvs[::-1], n_runs_list[::-1])),
+            customdata=hover_cd,
+            cliponaxis=False,
+            showlegend=False,
+        )
+    )
+    # White outline (halo) — always on top of bars.
+    fig.add_trace(
+        go.Scatter(
+            y=y_rev,
+            x=means_rev,
+            mode="markers",
+            marker=dict(size=1, opacity=0),
+            error_x=dict(
+                type="data",
+                array=stds_rev,
+                visible=True,
+                color="rgba(255,255,255,1)",
+                thickness=5.5,
+                width=11,
+            ),
+            hoverinfo="skip",
+            showlegend=False,
             cliponaxis=False,
         )
     )
+    # Black core — sits inside the white outline.
+    fig.add_trace(
+        go.Scatter(
+            y=y_rev,
+            x=means_rev,
+            mode="markers",
+            marker=dict(size=1, opacity=0),
+            error_x=dict(
+                type="data",
+                array=stds_rev,
+                visible=True,
+                color="rgba(15,23,42,1)",
+                thickness=2.4,
+                width=7,
+            ),
+            hoverinfo="skip",
+            showlegend=False,
+            cliponaxis=False,
+        )
+    )
+    med_y = [y for y, m in zip(y_rev, med_rev) if m is not None]
+    med_x = [m for m in med_rev if m is not None]
+    if med_x:
+        fig.add_trace(
+            go.Scatter(
+                y=med_y,
+                x=med_x,
+                mode="markers",
+                marker=dict(
+                    symbol="diamond",
+                    size=9,
+                    color="#f8fafc",
+                    line=dict(color="#0f172a", width=1.4),
+                ),
+                name="Median",
+                hovertemplate="Median %{x:.1f}%<extra></extra>",
+                cliponaxis=False,
+                showlegend=False,
+            )
+        )
     layout = _base_layout(title, height=bar_h)
-    layout["margin"] = dict(l=168, r=28, t=48, b=36)
+    layout["margin"] = (
+        dict(l=140, r=20, t=36, b=28) if compact else dict(l=168, r=28, t=48, b=36)
+    )
     xmax = max(means[i] + stds[i] for i in range(len(means))) if means else 100
+    for m in medians:
+        if m is not None:
+            xmax = max(xmax, m)
+    axis_title = "Mean Clinical Composite (±1 std) · ◆ median"
+    if score_field == "median":
+        axis_title += " · ranked by median"
     layout["xaxis"] = dict(
         range=[0, min(110, max(40, xmax * 1.12))],
-        title="Mean Clinical Composite Score  (±1 std whiskers)",
+        title=axis_title,
         gridcolor="rgba(51,65,85,0.5)",
+        title_font=dict(size=11 if compact else 12),
     )
-    layout["yaxis"] = dict(title="", tickfont=dict(size=11), automargin=True)
+    layout["yaxis"] = dict(
+        title="",
+        tickfont=dict(size=10 if compact else 11),
+        automargin=True,
+    )
+    layout["barmode"] = "overlay"
+    if compact:
+        layout["title"] = dict(
+            text=title,
+            font=dict(size=13),
+        )
     fig.update_layout(**layout)
     return fig
 

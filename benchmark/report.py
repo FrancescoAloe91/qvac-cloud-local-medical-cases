@@ -11,7 +11,10 @@ from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from benchmark.cases_loader import load_case
-from benchmark.case_slots import count_distinct_stem_keys
+from benchmark.case_slots import (
+    artifact_stem_key,
+    count_distinct_stem_keys,
+)
 from benchmark.gold import case_family_key, load_confirmed_gold
 from benchmark.prompts import use_gold_ground_truth
 from benchmark.schema import MultiRunSummary, RunArtifact
@@ -745,6 +748,25 @@ def rescore_artifact_current_formula(art: RunArtifact) -> Dict[str, Any]:
             "preserved_stored_ranking": True,
             "scoring_version_stamp": stored_version or "graded-clinical-v3",
         }
+    # Beta (and any non-graded protocol): never silently re-stamp as graded-v4.
+    if stored_version and not stored_version.startswith("graded-clinical"):
+        return {
+            "run_id": art.run_id,
+            "case_id": art.case_id,
+            "n_index": art.n_index,
+            "gold_mode": use_gold_ground_truth(
+                str((art.models_config or {}).get("gold_reference") or "")
+            ),
+            "ranking": list(art.ranking or []),
+            "sections": {},
+            "stored_ranking": list(art.ranking or []),
+            "recovered_keys": [],
+            "unrecovered_na": [],
+            "effective_judgments": list(art.judgments or []),
+            "formula": stored_version,
+            "preserved_stored_ranking": True,
+            "scoring_version_stamp": stored_version,
+        }
 
     cfg = art.models_config or {}
     gold_ref = str(cfg.get("gold_reference") or "")
@@ -1442,6 +1464,7 @@ def rebuild_multi_from_history(
     cohort_id: Optional[str] = None,
     model_ids: Optional[Sequence[str]] = None,
     preloaded: Optional[Sequence[RunArtifact]] = None,
+    scoring_version: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Offline Multi×N: same immutable cohort only; ``n`` = max **successful**
@@ -1454,12 +1477,21 @@ def rebuild_multi_from_history(
     rebuild that immutable cohort instead of the newest case cohort.
     ``model_ids`` defaults to the active 9-roster (optional legacy only when
     passed in by the UI).
+    When ``scoring_version`` is set, only artifacts with that stamp are pooled
+    (keeps Beta ``beta-comprehension-v1`` out of graded same-case Rebuild).
     """
     n = max(1, min(int(n), 100))
     want_keys = list(model_ids) if model_ids is not None else rebuild_model_ids()
+    want_sv = str(scoring_version or "").strip() or None
     all_pairs = artifacts_for_case(
         out_dir, case_id, limit=None, preloaded=preloaded
     )
+    if want_sv:
+        all_pairs = [
+            pair
+            for pair in all_pairs
+            if str(pair[1].scoring_version or "").strip() == want_sv
+        ]
     if not all_pairs:
         return {
             "ok": False,
@@ -1497,6 +1529,10 @@ def rebuild_multi_from_history(
         for pair in all_pairs
         if pair[1].cohort_id == target_cohort
         and is_mean_poolable_run(pair[1])
+        and (
+            want_sv is None
+            or str(pair[1].scoring_version or "").strip() == want_sv
+        )
     ]
     if len(pairs) < 1:
         return {
@@ -1683,6 +1719,219 @@ def rebuild_portfolio_from_history(
         "case_ids": sorted({a.case_id for a in rescored_arts}),
         "ops_reliability": ops_reliability,
         "mixed_case_exploratory": True,
+    }
+
+
+def _trim_rescored_balanced_round_robin(
+    rescored_pairs: Sequence[Tuple[RunArtifact, Dict[str, Any]]],
+    *,
+    n: int,
+    model_ids: Sequence[str],
+    ordered_stem_keys: Sequence[str],
+) -> Tuple[List[RunArtifact], List[Dict[str, Any]], Dict[str, int]]:
+    """≤N successful non-zero scores/model via Case1→K→1… round-robin.
+
+    For each model, walk ordered case stems in a cycle and take the newest
+    unused successful observation on that stem before advancing. Empty stems
+    are skipped; a full cycle with zero picks stops the fill for that model.
+    Unlike portfolio trim (global newest-N), this balances case weight so a
+    recent binge on one case cannot dominate the mean.
+    """
+    from collections import defaultdict, deque
+
+    n = max(1, min(int(n), 100))
+    want = frozenset(str(k) for k in model_ids)
+    slots = [str(s).strip() for s in ordered_stem_keys if str(s).strip()]
+    if not slots:
+        return [], [], {}
+
+    # Newest-first queues of (art, ranking_row, per_run_row) per (model, stem).
+    queues: Dict[Tuple[str, str], deque] = defaultdict(deque)
+    for clone, row in rescored_pairs:
+        sk = artifact_stem_key(clone)
+        if sk not in slots:
+            continue
+        for r in list(clone.ranking or []):
+            key = str(r.get("key") or "")
+            if key not in want or not is_current_roster_key(key):
+                continue
+            if not _is_scored_ranking_row(r):
+                continue
+            queues[(key, sk)].append((clone, r, row))
+
+    # Per model: round-robin picks.
+    picks_by_run: Dict[str, Dict[str, Any]] = {}
+    # run_id -> {clone, per_run_row, ranking_rows[]}
+    scored_counts: Dict[str, int] = {k: 0 for k in want}
+
+    for model in want:
+        picks = 0
+        slot_i = 0
+        no_progress = 0
+        while picks < n and no_progress < len(slots):
+            sk = slots[slot_i % len(slots)]
+            slot_i += 1
+            q = queues.get((model, sk))
+            if not q:
+                no_progress += 1
+                continue
+            clone, r, row = q.popleft()
+            run_id = str(clone.run_id or "")
+            bucket = picks_by_run.get(run_id)
+            if bucket is None:
+                bucket = {
+                    "clone": clone,
+                    "row": row,
+                    "ranking": [],
+                }
+                picks_by_run[run_id] = bucket
+            bucket["ranking"].append(dict(r))
+            picks += 1
+            scored_counts[model] = picks
+            no_progress = 0
+
+    # Preserve newest-first order of selected run docs.
+    order_index = {
+        str(clone.run_id or ""): i for i, (clone, _) in enumerate(rescored_pairs)
+    }
+    arts: List[RunArtifact] = []
+    per_run: List[Dict[str, Any]] = []
+    for run_id, bucket in sorted(
+        picks_by_run.items(),
+        key=lambda kv: order_index.get(kv[0], 10**9),
+    ):
+        clone = bucket["clone"].model_copy(deep=True)
+        clone.ranking = list(bucket["ranking"])
+        arts.append(clone)
+        trimmed_row = dict(bucket["row"])
+        trimmed_row["ranking"] = list(bucket["ranking"])
+        per_run.append(trimmed_row)
+    return arts, per_run, scored_counts
+
+
+def rebuild_balanced_cases_from_history(
+    out_dir: Path,
+    *,
+    n: int = 5,
+    scoring_version: str = "graded-clinical-v4",
+    track: str = "controlled",
+    model_ids: Optional[Sequence[str]] = None,
+    ordered_stem_keys: Optional[Sequence[str]] = None,
+    preloaded: Optional[Sequence[RunArtifact]] = None,
+) -> Dict[str, Any]:
+    """Offline mean: ≤N obs/model round-robin across Case slots (1→K→1…).
+
+    Same filters as portfolio (track + scoring_version, scored-only), but
+    observations are filled by cycling case stems so each case is weighted
+    roughly equally — unlike portfolio newest-N which can overweight the
+    cases you ran most recently. Exploratory; not clinical validation.
+    """
+    n = max(1, min(int(n), 100))
+    want_keys = list(model_ids) if model_ids is not None else rebuild_model_ids()
+    all_eligible = list_portfolio_runs(
+        out_dir,
+        n=None,
+        scoring_version=scoring_version,
+        track=track,
+        model_ids=want_keys,
+        preloaded=preloaded,
+    )
+    # Ordered stems: caller Case1…K bindings, else discover by newest activity.
+    slots = [str(s).strip() for s in (ordered_stem_keys or []) if str(s).strip()]
+    if not slots:
+        seen = []
+        seen_set = set()
+        for _, art in all_eligible:  # newest first
+            sk = artifact_stem_key(art)
+            if sk and sk not in seen_set:
+                seen_set.add(sk)
+                seen.append(sk)
+        slots = list(reversed(seen))  # oldest-discovered first ≈ Case order proxy
+    n_cases_all = len(slots) if slots else count_distinct_stem_keys(
+        a for _, a in all_eligible
+    )
+    if len(all_eligible) < 1 or not slots:
+        return {
+            "ok": False,
+            "reason": (
+                "Need at least 1 eligible run and ≥1 Case stem for balanced "
+                "round-robin rebuild (Case1→…→K→1…). Same track + scoring_version."
+            ),
+            "available": len(all_eligible),
+            "n_cases": n_cases_all,
+            "scope": "balanced_cases",
+            "scoring_version": scoring_version,
+            "track": track,
+        }
+
+    rescored_pairs: List[Tuple[RunArtifact, Dict[str, Any]]] = []
+    for path, art in all_eligible:
+        clone, row = _offline_rescore_pair(path, art)
+        rescored_pairs.append((clone, row))
+
+    # Ops window still uses global newest-N scan for honesty chart.
+    ops_reliability = collect_rebuild_ops_reliability(
+        rescored_pairs, n=n, model_ids=want_keys
+    )
+    rescored_arts, per_run, _counts = _trim_rescored_balanced_round_robin(
+        rescored_pairs,
+        n=n,
+        model_ids=want_keys,
+        ordered_stem_keys=slots,
+    )
+    if not rescored_arts:
+        return {
+            "ok": False,
+            "reason": (
+                "Need at least 1 successful non-zero observation after "
+                "balanced Case round-robin trim."
+            ),
+            "available": len(all_eligible),
+            "n_cases": n_cases_all,
+            "scope": "balanced_cases",
+            "scoring_version": scoring_version,
+            "track": track,
+            "ops_reliability": ops_reliability,
+        }
+
+    summary = _finalize_clean_rebuild_summary(
+        summarize_runs(
+            rescored_arts, allow_mixed_cohorts=True, min_valid_for_ranking=1
+        )
+    )
+    mean_rank = _mean_ranks_from_per_run(per_run)
+    if hasattr(summary, "ranking_mean"):
+        for row in summary.ranking_mean:
+            key = str(row.get("key") or "")
+            if key in mean_rank:
+                row["mean_rank"] = mean_rank[key]
+    n_cases = count_distinct_stem_keys(rescored_arts)
+    return {
+        "ok": True,
+        "available": len(all_eligible),
+        "n_used": len(rescored_arts),
+        "n_per_model_cap": n,
+        "n_cases": n_cases,
+        "summary": summary,
+        "per_run": per_run,
+        "formula": (
+            "exploratory balanced-cases mean · Case1→K round-robin · "
+            "≤N successful non-zero scored obs/model · each case weighted "
+            "roughly equally · N/A and exact-zero skipped · not clinical validation"
+        ),
+        "api_cost_usd": 0.0,
+        "official": False,
+        "scope": "balanced_cases",
+        "scoring_version": scoring_version,
+        "track": track,
+        "successful_only": True,
+        "model_ids": list(want_keys),
+        "mean_rank": mean_rank,
+        "case_ids": sorted({a.case_id for a in rescored_arts}),
+        "ordered_stem_keys": list(slots),
+        "ops_reliability": ops_reliability,
+        "mixed_case_exploratory": True,
+        "balanced_round_robin": True,
     }
 
 

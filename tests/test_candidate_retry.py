@@ -152,6 +152,7 @@ def test_local_format_repair_does_not_stack_targeted(monkeypatch):
         messages=None,
         timeout=None,
         template=None,
+        answer_parser=None,
     ):
         return fake_once(case_arg, messages=messages)
 
@@ -210,6 +211,7 @@ def test_local_prompt_echo_skips_format_repair_uses_targeted(monkeypatch):
         messages=None,
         timeout=None,
         template=None,
+        answer_parser=None,
     ):
         return fake_once(case_arg, messages=messages)
 

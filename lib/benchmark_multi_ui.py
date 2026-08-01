@@ -3,9 +3,263 @@
 from __future__ import annotations
 
 import html
-from typing import Any, Dict, List, Optional
+import json
+import time
+from typing import Any, Callable, Dict, List, Optional
 
-from lib.model_labels import full_model_label, name_and_version
+from lib.model_labels import (
+    filter_current_roster_rows,
+    full_model_label,
+    name_and_version,
+    rerank_rows,
+)
+
+# #region agent log
+_DEBUG_LOG_PATH = (
+    "/Users/m1/QVAC vs Cloud LLMs - Health Test/.cursor/debug-a76cc5.log"
+)
+
+
+def _agent_dbg(hypothesis_id: str, location: str, message: str, data: dict) -> None:
+    try:
+        with open(_DEBUG_LOG_PATH, "a", encoding="utf-8") as _f:
+            _f.write(
+                json.dumps(
+                    {
+                        "sessionId": "a76cc5",
+                        "hypothesisId": hypothesis_id,
+                        "location": location,
+                        "message": message,
+                        "data": data,
+                        "timestamp": int(time.time() * 1000),
+                    },
+                    ensure_ascii=True,
+                )
+                + "\n"
+            )
+    except Exception:
+        pass
+
+
+# #endregion
+
+
+def na_failure_label(status: str, reason: str) -> str:
+    """Compact UI label for technical N/A; include missing section ids when known."""
+    low = (reason or "").lower()
+    st = (status or "").lower()
+    if (
+        st == "candidate_partial"
+        or "missing required sections" in low
+        or "partial candidate" in low
+    ):
+        detail = ""
+        marker = "missing required sections:"
+        if marker in low:
+            idx = low.find(marker)
+            detail = (reason or "")[idx + len(marker) :].strip()
+            if len(detail) > 48:
+                detail = detail[:45].rstrip(", ") + "…"
+        return (
+            f"N/A · missing sections ({detail})"
+            if detail
+            else "N/A · missing sections"
+        )
+    if st == "candidate_empty" or "empty answer" in low:
+        return "N/A · empty"
+    if st == "collect_failed" or "candidate error" in low:
+        return "N/A · collect error"
+    return "N/A · technical"
+
+
+class LiveJudgingBoard:
+    """FIFO judge queue + provisional ranking board (same UX as graded Multi).
+
+    Wire ``on_progress`` to ``PipelinedJudge``, call ``ensure_queued`` when a
+    candidate finishes collect, and ``paint`` / progress bar update themselves.
+    """
+
+    def __init__(
+        self,
+        *,
+        title: str = "Live judging · collect order + provisional ranking",
+        label_by_key: Optional[Dict[str, str]] = None,
+        status_boxes: Optional[Dict[str, Any]] = None,
+        status_pill_fn: Optional[Callable[[str, str], str]] = None,
+    ) -> None:
+        self.title = title
+        self.label_by_key = dict(label_by_key or {})
+        self.status_boxes = status_boxes or {}
+        self.status_pill_fn = status_pill_fn
+        self.board: Dict[str, Dict[str, Any]] = {}
+        self.started: set[str] = set()
+        self.highlight: Optional[str] = None
+        self.queue_i = 0
+        self.board_slot: Any = None
+        self.progress_slot: Any = None
+        self.judge_status: Any = None
+
+    def bind(
+        self,
+        *,
+        board_slot: Any,
+        progress_slot: Any = None,
+        judge_status: Any = None,
+    ) -> "LiveJudgingBoard":
+        self.board_slot = board_slot
+        self.progress_slot = progress_slot
+        self.judge_status = judge_status
+        return self
+
+    def paint(self) -> None:
+        if self.board_slot is None:
+            return
+        self.board_slot.markdown(
+            live_judging_board_html(
+                self.board,
+                highlight_key=self.highlight,
+                title=self.title,
+            ),
+            unsafe_allow_html=True,
+        )
+
+    def ensure_queued(self, key: str, label: Optional[str] = None) -> None:
+        """Append to FIFO board as soon as collect finishes (before DeepSeek returns)."""
+        if not key or key in self.started:
+            return
+        self.started.add(key)
+        self.queue_i = int(self.queue_i) + 1
+        self.board[key] = {
+            "label": label or self.label_by_key.get(key) or key,
+            "status": "judging",
+            "accuracy": None,
+            "queue_i": self.queue_i,
+            "progress_pct": 10,
+            "progress_label": "queued",
+            "elapsed_s": 0,
+        }
+        self.paint()
+
+    def _set_status_pill(self, key: str, kind: str, text: str) -> None:
+        box = self.status_boxes.get(key) if self.status_boxes else None
+        if box is None or self.status_pill_fn is None:
+            return
+        box.markdown(self.status_pill_fn(kind, text), unsafe_allow_html=True)
+
+    def on_progress(self, evt: dict) -> None:
+        phase = evt.get("phase")
+        key = str(evt.get("key") or "")
+        name = self.label_by_key.get(key) or evt.get("label") or key
+        done_n = int(evt.get("done") or 0)
+        tot = int(evt.get("total") or max(1, done_n))
+
+        if phase == "queued" and key and key not in self.started:
+            self.started.add(key)
+            if key not in self.board or self.board[key].get("status") not in (
+                "judging",
+                "scored",
+                "failed",
+            ):
+                self.queue_i = int(self.queue_i) + 1
+                qi = self.queue_i
+            else:
+                qi = (self.board.get(key) or {}).get("queue_i") or self.queue_i
+            self.board[key] = {
+                "label": name,
+                "status": "judging",
+                "accuracy": None,
+                "queue_i": qi,
+                "progress_pct": int(evt.get("percent") or 10),
+                "progress_label": str(evt.get("stage") or "queued"),
+                "elapsed_s": float(evt.get("elapsed_s") or 0),
+            }
+            self.paint()
+        elif phase == "progress" and key:
+            prev = self.board.get(key) or {}
+            if prev.get("status") == "scored" or (
+                prev.get("status") == "failed" and not evt.get("active_attempt")
+            ):
+                pass
+            else:
+                self.board[key] = {
+                    **prev,
+                    "label": name,
+                    "status": "judging",
+                    "accuracy": None,
+                    "progress_pct": int(evt.get("percent") or 10),
+                    "progress_label": str(evt.get("stage") or "judging"),
+                    "elapsed_s": float(evt.get("elapsed_s") or 0),
+                }
+                self.paint()
+        elif phase == "retry" and key:
+            prev = self.board.get(key) or {}
+            if prev.get("status") == "scored" or (
+                prev.get("status") == "failed" and not evt.get("active_attempt")
+            ):
+                pass
+            else:
+                self.board[key] = {
+                    **prev,
+                    "label": name,
+                    "status": "judging",
+                    "accuracy": None,
+                    "progress_pct": int(evt.get("percent") or 75),
+                    "progress_label": str(evt.get("stage") or "corrective retry"),
+                    "elapsed_s": float(evt.get("elapsed_s") or 0),
+                }
+                self.paint()
+        elif phase in ("done", "retry_done") and key:
+            prev_q = (self.board.get(key) or {}).get("queue_i")
+            if evt.get("failed"):
+                reason = str(
+                    evt.get("failure_reason")
+                    or evt.get("note")
+                    or evt.get("status")
+                    or ""
+                )
+                status = str(evt.get("status") or "").lower()
+                na_label = na_failure_label(status, reason)
+                self.board[key] = {
+                    "label": name,
+                    "status": "failed",
+                    "accuracy": None,
+                    "queue_i": prev_q,
+                    "progress_pct": 100,
+                    "progress_label": "complete",
+                    "elapsed_s": float(evt.get("elapsed_s") or 0),
+                }
+                self._set_status_pill(key, "err", na_label)
+            else:
+                acc = float(evt.get("accuracy") or 0)
+                self.board[key] = {
+                    "label": name,
+                    "status": "scored",
+                    "accuracy": acc,
+                    "coverage": evt.get("coverage"),
+                    "quality": evt.get("quality"),
+                    "discipline": evt.get("discipline"),
+                    "queue_i": prev_q,
+                    "progress_pct": 100,
+                    "progress_label": "complete",
+                    "elapsed_s": float(evt.get("elapsed_s") or 0),
+                }
+                self._set_status_pill(key, "done", f"Judged · {acc:.0f}%")
+            self.highlight = key
+            self.paint()
+            if self.judge_status is not None:
+                try:
+                    self.judge_status.update(
+                        label=f"DeepSeek R1 · {done_n}/{tot} scored · pipelined",
+                        state="running",
+                    )
+                except Exception:
+                    pass
+
+        if self.progress_slot is not None:
+            self.progress_slot.progress(
+                min(1.0, done_n / max(1, tot)),
+                text=f"Judge · {done_n}/{tot} (overlap with collect)",
+            )
 
 
 def short_model(key: str) -> str:
@@ -15,6 +269,149 @@ def short_model(key: str) -> str:
 
 def model_name_version(key: str) -> tuple:
     return name_and_version(key or "")
+
+
+def ops_reliability_has_scan_data(ops_rows: Optional[list]) -> bool:
+    """True when Rebuild fill-N ops rows include any scan-window observations."""
+    return sum(int(r.get("n_seen") or 0) for r in (ops_rows or [])) > 0
+
+
+def paint_rebuild_ops_reliability_panels(
+    st_mod: Any,
+    ops_rows: list,
+    *,
+    n_per_model_cap: Any = None,
+    chart_key: str = "rebuild_ops_chart",
+    table_footer_html: Optional[str] = None,
+    chart_footer_html: Optional[str] = None,
+) -> bool:
+    """Render Rebuild honesty panels 3–4: Failures/N/A table + stacked % chart.
+
+    Shared by graded ``history_mean_rebuild_dialog`` and Beta rebuild mean.
+    ``st_mod`` is the Streamlit module (or a test double). Returns True when
+    panels were painted.
+    """
+    rows = list(ops_rows or [])
+    if not ops_reliability_has_scan_data(rows):
+        return False
+
+    from lib.charts import fig_rebuild_ops_reliability_bars
+
+    cap = n_per_model_cap if n_per_model_cap is not None else "?"
+    st_mod.markdown("##### Failures / N/A · relative % (like live Multi Failed %)")
+    st_mod.caption(
+        "Honesty view of the Rebuild fill-N scan window — same role as the "
+        "Failed column on the live Multi ranking table: counts + relative % "
+        "of exact Clinical Composite == 0 and technical N/A. Excluded from "
+        "the scored-only mean above — not a clinical ranking."
+    )
+    st_mod.markdown(
+        ops_reliability_table_html(rows),
+        unsafe_allow_html=True,
+    )
+    if table_footer_html:
+        st_mod.markdown(table_footer_html, unsafe_allow_html=True)
+    st_mod.markdown("##### Ops reliability chart · zeros + technical N/A")
+    st_mod.plotly_chart(
+        fig_rebuild_ops_reliability_bars(
+            rows,
+            title=(
+                "Ops reliability · zeros + technical N/A vs scored "
+                f"· ≤{cap} scored/model scan"
+            ),
+            height=220,
+        ),
+        use_container_width=True,
+        key=chart_key,
+    )
+    if chart_footer_html:
+        st_mod.markdown(chart_footer_html, unsafe_allow_html=True)
+    return True
+
+
+def ops_reliability_table_html(ops_rows: list) -> str:
+    """Dashboard-styled failures / N/A table with relative % (Rebuild honesty).
+
+    Mirrors the live Multi Failed column idea (counts + %), but for the Rebuild
+    fill-N scan window: scored vs exact-zero vs technical N/A. Not a clinical
+    ranking.
+    """
+    rows = [
+        r
+        for r in filter_current_roster_rows(ops_rows or [])
+        if int(r.get("n_seen") or 0) > 0
+    ]
+    if not rows:
+        return (
+            "<div style='font-size:0.85rem;color:#94a3b8;margin:0.35rem 0 0.75rem'>"
+            "No scan-window observations for failures / N/A.</div>"
+        )
+    _td = "padding:0.45rem 0.55rem;border-bottom:1px solid #1e293b"
+    body = []
+    for r in rows:
+        nm, ver = name_and_version(
+            str(r.get("key") or ""),
+            label=r.get("label"),
+            model=r.get("model"),
+        )
+        n_seen = int(r.get("n_seen") or 0)
+        n_scored = int(r.get("n_scored") or 0)
+        n_zero = int(r.get("n_zero") or 0)
+        n_na = int(r.get("n_technical_na") or 0)
+        n_excl = int(r.get("n_excluded") or (n_zero + n_na))
+        try:
+            pct_scored = float(r.get("pct_scored") or 0)
+            pct_zero = float(r.get("pct_zero") or 0)
+            pct_na = float(r.get("pct_technical_na") or 0)
+            pct_excl = float(r.get("pct_excluded") or (pct_zero + pct_na))
+        except (TypeError, ValueError):
+            pct_scored = pct_zero = pct_na = pct_excl = 0.0
+        excl_color = "#fca5a5" if n_excl else "#94a3b8"
+        na_color = "#fca5a5" if n_na else "#94a3b8"
+        zero_color = "#fbbf24" if n_zero else "#94a3b8"
+        body.append(
+            "<tr>"
+            f"<td style='{_td};font-weight:600;color:#e2e8f0'>{html.escape(nm)}</td>"
+            f"<td style='{_td};color:#94a3b8'>{html.escape(ver)}</td>"
+            f"<td style='{_td};text-align:right;color:#86efac;font-variant-numeric:tabular-nums'>"
+            f"{n_scored} ({pct_scored:.0f}%)</td>"
+            f"<td style='{_td};text-align:right;color:{zero_color};font-variant-numeric:tabular-nums'>"
+            f"{n_zero} ({pct_zero:.0f}%)</td>"
+            f"<td style='{_td};text-align:right;color:{na_color};font-variant-numeric:tabular-nums'>"
+            f"{n_na} ({pct_na:.0f}%)</td>"
+            f"<td style='{_td};text-align:right;color:{excl_color};font-weight:700;"
+            f"font-variant-numeric:tabular-nums'>"
+            f"{n_excl} ({pct_excl:.0f}%)</td>"
+            f"<td style='{_td};text-align:right;color:#e2e8f0;font-variant-numeric:tabular-nums'>"
+            f"{n_seen}</td>"
+            "</tr>"
+        )
+    footer = (
+        "<b>Failed / excluded %</b> = exact Clinical Composite == 0 + technical N/A "
+        "in the Rebuild fill-N scan window (same idea as live Multi Failed %) — "
+        "not a clinical zero. These observations are excluded from the scored-only "
+        "mean above. Chart below stacks scored / zero / N/A as relative % of "
+        "n seen per model."
+    )
+    return (
+        "<div style='overflow-x:auto;margin:0.35rem 0 0.75rem;border:1px solid #334155;"
+        "border-radius:12px;background:#0f172a'>"
+        "<table style='width:100%;border-collapse:collapse;color:#e2e8f0;font-size:0.9rem'>"
+        "<thead><tr style='color:#94a3b8;text-align:left;font-size:0.75rem;"
+        "letter-spacing:0.04em;text-transform:uppercase'>"
+        "<th style='padding:0.55rem'>Name</th>"
+        "<th style='padding:0.55rem'>Version</th>"
+        "<th style='padding:0.55rem;text-align:right'>Scored</th>"
+        "<th style='padding:0.55rem;text-align:right'>Exact zero</th>"
+        "<th style='padding:0.55rem;text-align:right'>Technical N/A</th>"
+        "<th style='padding:0.55rem;text-align:right'>Failed / excluded</th>"
+        "<th style='padding:0.55rem;text-align:right'>n seen</th>"
+        "</tr></thead><tbody>"
+        + "".join(body)
+        + "</tbody></table></div>"
+        "<div style='font-size:0.78rem;color:#94a3b8;margin-bottom:0.5rem'>"
+        f"{footer}</div>"
+    )
 
 
 def _is_na_rank_row(row: Dict[str, Any]) -> bool:
@@ -504,12 +901,17 @@ def progressive_multi_panel_html(
                 f"{short_model(str(best.get('key')))} "
                 f"{float(best.get('accuracy') or 0):.1f}%"
             )
+        tab_label = str(snap.get("tab_label") or "").strip() or f"Run {i}"
+        modal_title = (
+            str(snap.get("modal_title") or "").strip()
+            or f"{tab_label} · table + histogram"
+        )
         chips.append(
             f'<button type="button" onclick="document.getElementById(\'{mid}\').style.display=\'flex\'" '
             f'style="display:inline-flex;align-items:center;gap:0.35rem;cursor:pointer;'
             f'padding:0.4rem 0.75rem;border-radius:999px;margin:0.15rem 0.3rem 0.15rem 0;'
             f'background:#1e293b;border:1px solid #fbbf24;color:#e2e8f0;font-size:0.84rem;">'
-            f'<b style="color:#fbbf24">Run {i}</b>'
+            f'<b style="color:#fbbf24">{html.escape(tab_label)}</b>'
             f'<span style="color:#64748b">·</span>'
             f'<span>{html.escape(top)}</span>'
             f'<span style="color:#94a3b8;font-size:0.75rem">open</span></button>'
@@ -523,7 +925,7 @@ def progressive_multi_panel_html(
             f'<div style="display:flex;justify-content:space-between;align-items:center;'
             f'margin-bottom:0.55rem;">'
             f'<div style="font-weight:700;color:#f8fafc;font-size:1.1rem;">'
-            f"Run {i} · table + histogram</div>"
+            f"{html.escape(modal_title)}</div>"
             f'<button type="button" onclick="document.getElementById(\'{mid}\').style.display=\'none\'" '
             f'style="border:0;background:#334155;color:#e2e8f0;border-radius:8px;padding:0.35rem 0.7rem;'
             f'cursor:pointer;">Close</button></div>'
@@ -647,3 +1049,314 @@ def cv_reliability_cells_html(
     else:
         cv_td = f"<td style='{td_style};color:#64748b;text-align:right'>—</td>"
     return cv_td, badge, band
+
+
+def _partial_badge_html() -> str:
+    """Compact English badge for incomplete mean / single-run coverage."""
+    return (
+        "<span style='display:inline-block;margin-left:0.35rem;padding:0.08rem 0.4rem;"
+        "border-radius:999px;font-size:0.68rem;font-weight:700;letter-spacing:0.04em;"
+        "text-transform:uppercase;color:#78350f;background:#fbbf24;"
+        "border:1px solid #f59e0b;vertical-align:middle'>partial</span>"
+    )
+
+
+def _score_bar_cell_html(
+    value,
+    *,
+    bar_from: str = "#38bdf8",
+    bar_to: str = "#7dd3fc",
+    label_color: str = "#e2e8f0",
+    bold: bool = False,
+) -> str:
+    """Conditional bar + label for a 0–100 Clinical Composite-style score."""
+    if value is None:
+        return "<span style='color:#94a3b8'>N/A</span>"
+    try:
+        val = float(value)
+    except (TypeError, ValueError):
+        return "<span style='color:#94a3b8'>N/A</span>"
+    pct = max(0.0, min(100.0, val))
+    weight = "700" if bold else "500"
+    size = "1.05rem" if bold else "0.85rem"
+    return (
+        "<div style='display:flex;align-items:center;gap:0.45rem;min-width:8.2rem'>"
+        "<div style='flex:1;height:0.55rem;border-radius:999px;background:#1e293b;"
+        "overflow:hidden;border:1px solid #334155'>"
+        f"<div style='width:{pct:.1f}%;height:100%;background:linear-gradient("
+        f"90deg,{bar_from},{bar_to});border-radius:999px'></div></div>"
+        f"<span style='color:{label_color};font-weight:{weight};font-size:{size};"
+        f"font-variant-numeric:tabular-nums;min-width:2.8rem;text-align:right'>"
+        f"{val:.1f}%</span>"
+        "</div>"
+    )
+
+
+def _reliability_table_html(
+    ranking_mean: list,
+    *,
+    successful_only: bool = False,
+    rank_by: str = "mean",
+) -> str:
+    """Mean ranking table: CV% + Reliability cells tinted by CV band (legend).
+
+    Shared by graded dashboard and Beta comprehension so Rebuild / Multi mean
+    boards stay pixel-identical (bars, CV colors, C/Q/D, footer legend).
+
+    ``successful_only`` (Rebuild mean): no yellow partial badge/banner, no Failed
+    column theater — pool is already clean successful scored observations.
+    ``rank_by``: ``mean`` (default) or ``median`` — updates # order only.
+    """
+    score_field = "median" if str(rank_by).lower() == "median" else "accuracy_mean"
+    _n_in = len(ranking_mean or [])
+    ranking_mean = rerank_rows(
+        filter_current_roster_rows(ranking_mean or []),
+        score_field=score_field,
+    )
+    _n_after_roster = len(ranking_mean)
+    if successful_only:
+        ranking_mean = [
+            r
+            for r in ranking_mean
+            if r.get("eligible", True)
+            and r.get("accuracy_mean") is not None
+            and r.get("rank") is not None
+        ]
+    _n_after_clean = len(ranking_mean)
+    _td = "padding:0.45rem 0.55rem;border-bottom:1px solid #1e293b"
+    n_partial = (
+        0
+        if successful_only
+        else sum(1 for r in ranking_mean if r.get("partial"))
+    )
+
+    def _fmt_pct(value, *, digits: int = 1, suffix: str = "%") -> str:
+        if value is None:
+            return "N/A"
+        try:
+            return f"{float(value):.{digits}f}{suffix}"
+        except (TypeError, ValueError):
+            return "N/A"
+
+    rows_html = []
+    for r in ranking_mean:
+        raw_cv = r.get("cv_pct")
+        try:
+            cv_val = float(raw_cv) if raw_cv is not None else None
+        except (TypeError, ValueError):
+            cv_val = None
+        cv_cell, badge, _band = cv_reliability_cells_html(cv_val, td_style=_td)
+        nm, ver = name_and_version(
+            str(r.get("key") or ""),
+            label=r.get("label"),
+            model=r.get("model"),
+        )
+        n_runs = int(r.get("n_runs") or r.get("n") or 0)
+        n_req = int(r.get("n_requested") or n_runs)
+        n_failed = 0 if successful_only else int(r.get("n_failed") or 0)
+        try:
+            fail_pct = (
+                0.0
+                if successful_only
+                else 100.0 * float(r.get("failure_rate") or 0)
+            )
+        except (TypeError, ValueError):
+            fail_pct = 0.0
+        rank = r.get("rank")
+        is_partial = (not successful_only) and bool(r.get("partial"))
+        if rank is None:
+            rank_cell = "—"
+        elif is_partial:
+            rank_cell = f"#{rank} · {_partial_badge_html()}"
+        else:
+            rank_cell = f"#{rank}"
+        mean = r.get("accuracy_mean")
+        cov = r.get("coverage_mean")
+        qual = r.get("quality_mean")
+        disc = r.get("discipline_mean")
+        if cov is None and qual is None and disc is None:
+            cqd = "N/A"
+        else:
+            cqd = (
+                f"{_fmt_pct(cov, digits=0, suffix='')}/"
+                f"{_fmt_pct(qual, digits=0, suffix='')}/"
+                f"{_fmt_pct(disc, digits=0, suffix='')}"
+            )
+        std = r.get("std")
+        med = r.get("median")
+        mn = r.get("min")
+        mx = r.get("max")
+        range_cell = (
+            "N/A"
+            if mn is None or mx is None
+            else f"{float(mn):.0f}–{float(mx):.0f}"
+        )
+        fail_color = "#fca5a5" if n_failed else "#94a3b8"
+        row_bg = (
+            "background:rgba(251,191,36,0.10);" if is_partial else ""
+        )
+        mean_color = "#f59e0b" if is_partial else "#fbbf24"
+        fail_cell = (
+            ""
+            if successful_only
+            else (
+                f"<td style='{_td};color:{fail_color};text-align:right'>"
+                f"{n_failed} ({fail_pct:.0f}%)</td>"
+            )
+        )
+        runs_cell = (
+            f"<td style='{_td};font-weight:700;color:#e2e8f0;text-align:right'>"
+            f"{n_runs}</td>"
+            if successful_only
+            else (
+                f"<td style='{_td};font-weight:700;color:#e2e8f0;text-align:right'>"
+                f"{n_runs}"
+                f"<span style='color:#64748b;font-weight:500;font-size:0.8rem'>"
+                f"/{n_req}</span></td>"
+            )
+        )
+        med_bar = _score_bar_cell_html(
+            med,
+            bar_from="#38bdf8",
+            bar_to="#7dd3fc",
+            label_color="#bae6fd",
+            bold=False,
+        )
+        rows_html.append(
+            f"<tr style='{row_bg}'>"
+            f"<td style='{_td}'>{rank_cell}</td>"
+            f"<td style='{_td};font-weight:600'>{html.escape(nm)}</td>"
+            f"<td style='{_td};color:#cbd5e1;font-size:0.85rem'>"
+            f"{html.escape(ver)}</td>"
+            f"<td style='{_td}'>"
+            f"{_score_bar_cell_html(mean, bar_from='#f59e0b' if is_partial else '#fbbf24', bar_to='#fde68a' if is_partial else '#fcd34d', label_color=mean_color, bold=True)}"
+            f"</td>"
+            f"<td style='{_td};color:#cbd5e1'>{cqd}</td>"
+            f"<td style='{_td};color:#cbd5e1'>"
+            f"{'—' if std is None else f'± {float(std):.1f}'}</td>"
+            f"{cv_cell}"
+            f"<td style='{_td}'>{badge}</td>"
+            f"<td style='{_td}'>{med_bar}</td>"
+            f"<td style='{_td};color:#64748b;font-size:0.85rem'>"
+            f"{range_cell}</td>"
+            f"{runs_cell}"
+            f"{fail_cell}"
+            "</tr>"
+        )
+    banner = ""
+    if n_partial:
+        banner = (
+            "<div style='margin:0.35rem 0 0.55rem;padding:0.55rem 0.75rem;"
+            "border-radius:10px;border:1px solid #f59e0b;"
+            "background:rgba(251,191,36,0.12);color:#fde68a;font-size:0.85rem'>"
+            f"{_partial_badge_html()} "
+            "<b style='color:#fbbf24'>Partial results in this mean window.</b> "
+            "Models with technical N/A stay ranked by the mean of scored runs "
+            f"({n_partial} model"
+            f"{'s' if n_partial != 1 else ''}). "
+            "Failed % is not a clinical zero.</div>"
+        )
+    fail_th = (
+        ""
+        if successful_only
+        else "<th style='padding:0.55rem;text-align:right'>Failed</th>"
+    )
+    runs_th = (
+        "<th style='padding:0.55rem;text-align:right'>n scored</th>"
+        if successful_only
+        else "<th style='padding:0.55rem;text-align:right'>Runs</th>"
+    )
+    footer = (
+        (
+            f"{reliability_badge('super_high')} CV ≤ 5% &nbsp; "
+            f"{reliability_badge('high')} CV ≤ 10% &nbsp; "
+            f"{reliability_badge('medium')} CV ≤ 15% &nbsp; "
+            f"{reliability_badge('low')} CV ≤ 20% &nbsp; "
+            f"{reliability_badge('very_low')} CV &gt; 20% &nbsp;·&nbsp; "
+            "cell color = CV band · lower CV = stabler mean · "
+            "<b>CV band ≠ clinical validation</b> · "
+            "<b>n scored</b> = last ≤N error-free non-zero scored runs per model "
+            "(technical N/A and exact-zero composites skipped; older successful "
+            "History used) · Failed%/zeros live in the separate ops reliability "
+            "chart below · models with only failures are omitted · "
+            "N=5 exploratory · ~10 better for CV eye-check · 20–50 diminishing · 100 max · "
+            "<b>C/Q/D</b> = coverage / quality / discipline "
+            "(quality is independent of coverage; a high board % can still have low C)"
+        )
+        if successful_only
+        else (
+            f"{reliability_badge('super_high')} CV ≤ 5% &nbsp; "
+            f"{reliability_badge('high')} CV ≤ 10% &nbsp; "
+            f"{reliability_badge('medium')} CV ≤ 15% &nbsp; "
+            f"{reliability_badge('low')} CV ≤ 20% &nbsp; "
+            f"{reliability_badge('very_low')} CV &gt; 20% &nbsp;·&nbsp; "
+            "cell color = CV band · lower CV = stabler mean · "
+            "<b>CV band ≠ clinical validation</b> · "
+            "<b>Runs</b> = scored / requested for that model "
+            "(can differ across models) · "
+            "<b>Failed</b> = technical N/A rate "
+            "(collect / judge / timeout / partial / empty) — not clinical 0% · "
+            "<b>partial</b> = ranked by mean of scored runs despite incomplete coverage · "
+            "unranked rows (#—) have zero scored observations · "
+            "≤N non-zero scored obs/model; N/A and exact-zero skipped, older scored used · "
+            "N=5 exploratory · ~10 better for CV eye-check · 20–50 diminishing · 100 max · "
+            "<b>C/Q/D</b> = coverage / quality / discipline "
+            "(quality is independent of coverage; a high board % can still have low C)"
+        )
+    )
+    out = (
+        banner
+        + "<div style='overflow-x:auto;margin:0.35rem 0 0.75rem;border:1px solid #334155;"
+        "border-radius:12px;background:#0f172a'>"
+        "<table style='width:100%;border-collapse:collapse;color:#e2e8f0;font-size:0.9rem'>"
+        "<thead><tr style='color:#94a3b8;text-align:left;font-size:0.75rem;"
+        "letter-spacing:0.04em;text-transform:uppercase'>"
+        "<th style='padding:0.55rem'>#</th><th style='padding:0.55rem'>Name</th>"
+        "<th style='padding:0.55rem'>Version</th>"
+        "<th style='padding:0.55rem'>Clin. Composite</th>"
+        "<th style='padding:0.55rem'>C/Q/D</th><th style='padding:0.55rem'>± Std</th>"
+        "<th style='padding:0.55rem'>CV %</th><th style='padding:0.55rem'>Reliability</th>"
+        "<th style='padding:0.55rem'>Median</th><th style='padding:0.55rem'>Min–Max</th>"
+        f"{runs_th}"
+        f"{fail_th}"
+        "</tr></thead><tbody>"
+        + "".join(rows_html)
+        + "</tbody></table></div>"
+        "<div style='font-size:0.78rem;color:#94a3b8;margin-bottom:0.5rem'>"
+        f"{footer}</div>"
+    )
+    # #region agent log
+    _r0 = ranking_mean[0] if ranking_mean else {}
+    _agent_dbg(
+        "H3",
+        "lib/benchmark_multi_ui.py:_reliability_table_html",
+        "reliability_table_html built",
+        {
+            "n_in": _n_in,
+            "n_after_roster": _n_after_roster,
+            "n_after_clean": _n_after_clean,
+            "successful_only": bool(successful_only),
+            "rank_by": str(rank_by),
+            "n_body_rows": len(rows_html),
+            "has_linear_gradient": "linear-gradient" in out,
+            "gradient_count": out.count("linear-gradient"),
+            "has_reliability_th": "Reliability" in out,
+            "has_super_high_token": "SUPER HIGH" in out.upper(),
+            "has_cv_band_bg": ("background:#064e3b" in out or "background:#14532d" in out
+                               or "background:#713f12" in out or "background:#9a3412" in out
+                               or "background:#7f1d1d" in out),
+            "row0": {
+                "key": _r0.get("key"),
+                "accuracy_mean": _r0.get("accuracy_mean"),
+                "median": _r0.get("median"),
+                "cv_pct": _r0.get("cv_pct"),
+            },
+            "html_len": len(out),
+        },
+    )
+    # #endregion
+    return out
+
+
+# Public alias — graded app.py and Beta pages should import this name.
+reliability_table_html = _reliability_table_html

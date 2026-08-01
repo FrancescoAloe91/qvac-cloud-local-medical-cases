@@ -597,12 +597,13 @@ def cohort_id(
     prompt_version: str,
     model_config: Mapping[str, Any],
     benchmark_track: str,
+    scoring_version: str = SCORING_VERSION,
 ) -> str:
     canonical = json.dumps(
         {
             "case_stem": _normalized(case_stem),
             "gold": scoring_contract_dump(gold),
-            "scoring_version": SCORING_VERSION,
+            "scoring_version": str(scoring_version or SCORING_VERSION),
             "prompt_version": prompt_version,
             "models": model_config,
             "track": benchmark_track,

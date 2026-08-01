@@ -230,6 +230,28 @@ section[data-testid="stSidebar"][aria-expanded="false"] iframe,
 .sidebar-guides-block .guide-open-btn {
   margin: 0.28rem 0 !important;
 }
+/* Structured A1–A5 (secondary track) — amber chip in sidebar */
+[data-testid="stSidebar"] a[href*="structured_graded"] {
+  display: block !important;
+  margin: 0.45rem 0 0.65rem 0 !important;
+  padding: 0.45rem 0.65rem !important;
+  border-radius: 10px !important;
+  background: #fbbf24 !important;
+  color: #78350f !important;
+  font-weight: 700 !important;
+  border: 1px solid #f59e0b !important;
+  text-decoration: none !important;
+  box-shadow: 0 1px 0 rgba(120, 53, 15, 0.15) !important;
+}
+[data-testid="stSidebar"] a[href*="structured_graded"]:hover {
+  background: #f59e0b !important;
+  color: #451a03 !important;
+}
+[data-testid="stSidebar"] a[href*="structured_graded"] span,
+[data-testid="stSidebar"] a[href*="structured_graded"] p {
+  color: #78350f !important;
+  font-weight: 700 !important;
+}
 .sidebar-guides-block .guides-hint {
   display: block !important;
   font-size: 0.65rem !important;

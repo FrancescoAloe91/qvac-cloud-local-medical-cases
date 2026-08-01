@@ -56,6 +56,22 @@ def test_shared_artifact_builder_records_reproducibility_and_judge_cohort():
     assert manifest["scoring_sha256"]
 
 
+def test_build_run_artifact_defaults_missing_timestamps():
+    """Beta historically omitted started_at/finished_at — builder must fill them."""
+    artifact = build_run_artifact(
+        config_snapshot={"judge": {"model": "judge"}},
+        run_id="run-no-ts",
+        case_id="beta_comprehension",
+        candidates=[],
+        judgments=[],
+        ranking=[],
+        n_total=7,  # extra Multi/Beta field — must be ignored, not crash
+    )
+    assert artifact.started_at
+    assert artifact.finished_at
+    assert "T" in artifact.started_at
+
+
 def test_build_run_artifact_accepts_foreign_candidate_class_instances():
     """Streamlit reloads can leave instances whose class id != current CandidateAnswer."""
     candidate = CandidateAnswer(

@@ -29,6 +29,8 @@ not an official MedPsy blog evaluation. Do not lead with “beat ChatGPT.”
 - Cloud slots = **OpenRouter API routes** ≠ consumer ChatGPT / Claude / Gemini web.
 - **Uncalibrated single LLM-as-judge** (DeepSeek R1).
 - **Exploratory** Multi default N=5 — show mean±std and N per model.
+- **Beta comprehension** (sidebar): undivided reference prose track; protocol
+  `beta-comprehension-v1`; do not pool with graded A1–A5 means.
 - **Rebuild mean = scored-only.** Technical failures and exact Clinical Composite == 0
   are treated like N/A (excluded from N). Rationale: a rare exact 0 would crush the
   mean, so it is equated to a non-score. Exact 0 usually = candidate **refusal** or

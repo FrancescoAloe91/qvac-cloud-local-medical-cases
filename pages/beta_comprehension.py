@@ -1,11 +1,7 @@
-"""Comprehension (discursive) — **main** Streamlit entry (home).
+"""Comprehension (discursive) — free-form collect with isolated History / Rebuild.
 
-Free-form clinical collect with isolated History / Rebuild.
-Internal protocol ids stay ``beta_comprehension`` / ``beta-comprehension-v1``
-so existing History / Multi artifacts keep pooling.
-
-Rigid A1–A5 live collect lives on ``pages/structured_graded.py``
-(**Structured · A1–A5**) — KPIs never pool across tracks.
+UI label: Comprehension. Internal protocol ids stay ``beta_comprehension`` /
+``beta-comprehension-v1`` so existing History / Multi artifacts keep pooling.
 """
 
 from __future__ import annotations
@@ -67,9 +63,8 @@ from lib.benchmark_multi_ui import (
     reliability_table_html,
     snapshot_from_artifact,
 )
-from lib.boot_welcome import run_boot_dialogs
 from lib.charts import fig_judge_accuracy_bars, fig_judge_mean_accuracy_bars
-from lib.disclosure import honesty_block_html, screenshot_footer_html
+from lib.disclosure import screenshot_footer_html
 from lib.run_store import LocalRunStore
 from lib.run_timer import (
     _flash_collect_done,
@@ -119,8 +114,8 @@ except Exception:  # pragma: no cover
     qvac_bridge = None  # type: ignore
 
 st.set_page_config(
-    page_title="Comprehension · QVAC vs Cloud",
-    page_icon="🩺",
+    page_title="Comprehension · discursive",
+    page_icon="β",
     layout="wide",
     initial_sidebar_state="expanded",
 )
@@ -163,8 +158,8 @@ div[class*="st-key-beta_case_btn_"] button[data-testid="baseButton-secondary"] s
     unsafe_allow_html=True,
 )
 
-# Same rank-live / provisional board chrome as Structured dashboard.
-_ASSETS = Path(__file__).resolve().parent / "assets" / "dashboard.css"
+# Same rank-live / provisional board chrome as graded dashboard.
+_ASSETS = Path(__file__).resolve().parents[1] / "assets" / "dashboard.css"
 if _ASSETS.is_file():
     _css = _ASSETS.read_text(encoding="utf-8")
     _css_js = _css.replace("\\", "\\\\").replace("`", "\\`").replace("${", "\\${")
@@ -188,7 +183,7 @@ if _ASSETS.is_file():
         height=0,
     )
 
-# --- workspace (same owner scope when key is in session) ---
+# --- workspace (same owner scope as graded home when key is in session) ---
 _session_key = (st.session_state.get("or_key_session") or "").strip()
 if _session_key and not is_usable_openrouter_key(_session_key):
     st.session_state.pop("or_key_session", None)
@@ -196,15 +191,6 @@ if _session_key and not is_usable_openrouter_key(_session_key):
 has_key = is_usable_openrouter_key(_session_key)
 WORKSPACE_DIR = scoped_artifacts_dir(_session_key)
 RUN_STORE = LocalRunStore(WORKSPACE_DIR)
-
-# Boot: API key every session · QVAC SDK OK remembered locally (not mid-run).
-_qvac_online = bool(qvac_bridge and qvac_bridge.reachable())
-_qvac_loaded = bool(qvac_bridge and qvac_bridge.available())
-run_boot_dialogs(
-    qvac_online=_qvac_online,
-    qvac_loaded=_qvac_loaded,
-    running=bool(st.session_state.get("beta_running")),
-)
 
 
 def _persist(artifact) -> None:
@@ -492,46 +478,35 @@ if st.session_state.get("show_beta_mean_popup") and not st.session_state.get(
 
 st.markdown(
     """
-<div class="demo-hero" style="margin:0 0 0.35rem 0">QVAC vs Cloud · Comprehension</div>
-<div style="display:flex;align-items:center;gap:0.75rem;flex-wrap:wrap;margin-bottom:0.5rem">
+<div style="display:flex;align-items:center;gap:0.75rem;margin-bottom:0.35rem">
   <span style="font-size:0.7rem;font-weight:800;letter-spacing:0.08em;padding:0.25rem 0.55rem;
   border-radius:999px;background:#fbbf24;color:#78350f;border:1px solid #f59e0b">COMPREHENSION</span>
-  <span style="color:#94a3b8;font-size:0.95rem">Discursive free-form · main track · isolated KPIs</span>
+  <span style="color:#94a3b8;font-size:0.9rem">Discursive free-form track · Single / Multi · isolated KPIs</span>
 </div>
-<p class="demo-sub" style="margin:0 0 0.75rem 0">
-Local MedPsy via QVAC SDK · BYOK OpenRouter · DeepSeek R1 blind judge ·
-reference-relative Clinical Composite · exploratory amateur bench — not a medical device.
-</p>
 """,
     unsafe_allow_html=True,
 )
-st.markdown(
-    honesty_block_html(scope="comprehension", roster_n=9),
-    unsafe_allow_html=True,
-)
 st.caption(
-    f"Protocol `{PROTOCOL_ID}` · case_id `{CASE_ID}` · "
-    "**never pooled** with Structured A1–A5 History / Rebuild. "
-    "Same five Clinical Composite dimensions (C/Q/D → section → weighted mean)."
+    f"Free-form candidates · same Clinical Composite dimensions · protocol `{PROTOCOL_ID}` · "
+    f"case_id `{CASE_ID}` · **never pooled** with graded A1–A5 Rebuild. "
+    "Exploratory amateur bench — not medical validation."
 )
 
 with st.sidebar:
-    st.markdown("**Tracks**")
-    st.page_link("app.py", label="Comprehension · home", icon="🏠")
+    st.caption("Legacy URL · prefer **Comprehension home** for new sessions.")
+    st.page_link("app.py", label="← Comprehension · home", icon="🏠")
     st.page_link(
         "pages/structured_graded.py",
         label="Structured · A1–A5",
         icon="📋",
-        help="Rigid slot Q&A · separate History / Rebuild · never pool with Comprehension",
+        help="Rigid slot Q&A · separate KPIs",
     )
-    if Path("pages/beta_comprehension.py").is_file():
-        st.caption("Legacy URL `Beta` page kept for in-flight Multi — prefer Home.")
     st.markdown("**OpenRouter**")
     if has_key:
         st.success("Key OK · session")
         st.caption("Reload clears the key (BYOK).")
     else:
-        st.warning("No key · use boot dialog or paste below")
+        st.warning("No key · paste on home or below")
         key_in = st.text_input("OPENROUTER_API_KEY", type="password", key="beta_or_key")
         if key_in and is_usable_openrouter_key(key_in):
             st.session_state["or_key_session"] = key_in.strip()

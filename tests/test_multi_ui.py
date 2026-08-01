@@ -1,9 +1,11 @@
 from lib.benchmark_multi_ui import (
     RELIABILITY_BAND_COLORS,
+    LiveJudgingBoard,
     _ranking_table_html,
     cv_reliability_cells_html,
     finished_multi_progress,
     live_judging_board_html,
+    na_failure_label,
     progressive_multi_panel_html,
     reliability_band_from_cv,
     snapshot_from_artifact,
@@ -22,6 +24,66 @@ from benchmark.schema import (
     QuestionScore,
     RunArtifact,
 )
+
+
+def test_progressive_panel_uses_tab_label_for_beta_rounds():
+    html = progressive_multi_panel_html(
+        [
+            {
+                "n_index": 8,
+                "run_id": "beta-abc",
+                "tab_label": "R8 · Case 1",
+                "modal_title": "R8 · Case 1 · AKI · table + histogram",
+                "total_cost_usd": 0.01,
+                "ranking": [
+                    {"key": "chatgpt", "accuracy": 80.0, "status": "ok", "rank": 1}
+                ],
+            }
+        ],
+        n_total=14,
+        batch_done=False,
+    )
+    assert "R8 · Case 1" in html
+    assert "R8 · Case 1 · AKI · table + histogram" in html
+    assert "Waiting for all runs" in html
+    assert "Completed <b style=\"color:#fbbf24\">1</b> / 14" in html or "1</b> / 14" in html
+
+
+def test_live_judging_session_updates_provisional_scores():
+    board = LiveJudgingBoard(
+        title="Live judging · Comprehension",
+        label_by_key={"chatgpt": "ChatGPT", "claude": "Claude"},
+    )
+    board.ensure_queued("chatgpt")
+    board.on_progress(
+        {
+            "phase": "progress",
+            "key": "chatgpt",
+            "done": 0,
+            "total": 2,
+            "percent": 40,
+            "stage": "scoring sections",
+            "elapsed_s": 5,
+        }
+    )
+    assert board.board["chatgpt"]["progress_pct"] == 40
+    board.on_progress(
+        {
+            "phase": "done",
+            "key": "chatgpt",
+            "done": 1,
+            "total": 2,
+            "accuracy": 77.0,
+            "coverage": 70,
+            "quality": 80,
+            "discipline": 90,
+            "failed": False,
+            "elapsed_s": 11,
+        }
+    )
+    assert board.board["chatgpt"]["status"] == "scored"
+    assert board.highlight == "chatgpt"
+    assert na_failure_label("collect_failed", "candidate error") == "N/A · collect error"
 
 
 def test_live_judging_board_shows_stage_progress_and_elapsed_time():
@@ -258,3 +320,212 @@ def test_ops_reliability_chart_stacks_percentages():
     assert len(fig.data) == 3
     assert fig.layout.barmode == "stack"
     assert "not clinical mean" in (fig.layout.title.text or "").lower()
+
+
+def test_mean_chart_whiskers_are_outlined_above_bars():
+    """±1 std whiskers: white outline + black core, drawn above bars."""
+    from lib.charts import fig_judge_mean_accuracy_bars
+
+    fig = fig_judge_mean_accuracy_bars(
+        [
+            {
+                "key": "chatgpt",
+                "eligible": True,
+                "rank": 1,
+                "accuracy_mean": 80.0,
+                "std": 12.0,
+                "cv_pct": 15.0,
+                "n_runs": 5,
+                "median": 81.0,
+            }
+        ]
+    )
+    assert fig.data[0].type == "bar"
+    # Whiskers must not live only under the bar (tips past bar top vanish).
+    outline = fig.data[1]
+    core = fig.data[2]
+    assert outline.type == "scatter" and core.type == "scatter"
+    assert "255,255,255" in str(outline.error_x.color)
+    assert float(outline.error_x.thickness) > float(core.error_x.thickness)
+    assert "15,23,42" in str(core.error_x.color)
+    assert list(outline.error_x.array) == [12.0]
+
+
+def test_reliability_table_html_rebuild_mean_has_bars_and_cv_bands():
+    """Shared graded/Beta Rebuild mean table: score bars + CV tint + n scored."""
+    from lib.benchmark_multi_ui import reliability_table_html
+
+    html = reliability_table_html(
+        [
+            {
+                "key": "chatgpt",
+                "rank": 1,
+                "accuracy_mean": 82.5,
+                "coverage_mean": 80,
+                "quality_mean": 85,
+                "discipline_mean": 78,
+                "std": 3.2,
+                "cv_pct": 3.9,
+                "median": 83.0,
+                "min": 78.0,
+                "max": 86.0,
+                "n_runs": 5,
+                "eligible": True,
+            },
+            {
+                "key": "claude",
+                "rank": 2,
+                "accuracy_mean": 70.0,
+                "coverage_mean": 72,
+                "quality_mean": 68,
+                "discipline_mean": 71,
+                "std": 12.0,
+                "cv_pct": 17.1,
+                "median": 69.0,
+                "min": 55.0,
+                "max": 88.0,
+                "n_runs": 5,
+                "eligible": True,
+            },
+        ],
+        successful_only=True,
+    )
+    assert "Clin. Composite" in html
+    assert "C/Q/D" in html
+    assert "Reliability" in html
+    assert "n scored" in html
+    # Rebuild scored-only: no Failed <th> column (footer may mention Failed%)
+    assert ">Failed</th>" not in html
+    assert "linear-gradient" in html  # mean + median conditional bars
+    assert "82.5%" in html
+    assert "83.0%" in html  # median bar label
+    assert "80/85/78" in html
+    assert "3.9%" in html
+    assert "SUPER HIGH" in html.upper() or "Super High" in html
+    assert "17.1%" in html
+    # CV cell tint uses band background
+    assert "background:#064e3b" in html or "background:#9a3412" in html
+
+
+def test_reliability_table_html_live_mean_keeps_failed_and_partial():
+    from lib.benchmark_multi_ui import reliability_table_html
+
+    html = reliability_table_html(
+        [
+            {
+                "key": "chatgpt",
+                "rank": 1,
+                "accuracy_mean": 90.0,
+                "std": 1.0,
+                "cv_pct": 1.1,
+                "median": 90.0,
+                "min": 89.0,
+                "max": 91.0,
+                "n_runs": 2,
+                "n_requested": 3,
+                "n_failed": 1,
+                "failure_rate": 1 / 3,
+                "partial": True,
+                "eligible": True,
+            }
+        ],
+        successful_only=False,
+    )
+    assert ">Failed</th>" in html
+    assert ">Runs</th>" in html
+    assert "partial" in html.lower()
+    assert "1 (33%)" in html
+
+
+def test_ops_reliability_table_html_shows_relative_percentages():
+    from lib.benchmark_multi_ui import ops_reliability_table_html
+
+    html = ops_reliability_table_html(
+        [
+            {
+                "key": "chatgpt",
+                "n_scored": 3,
+                "n_zero": 1,
+                "n_technical_na": 2,
+                "n_excluded": 3,
+                "n_seen": 6,
+                "pct_scored": 50.0,
+                "pct_zero": 16.7,
+                "pct_technical_na": 33.3,
+                "pct_excluded": 50.0,
+            }
+        ]
+    )
+    assert "Technical N/A" in html
+    assert "Failed / excluded" in html
+    assert "2 (33%)" in html
+    assert "3 (50%)" in html
+    assert "1 (17%)" in html or "1 (16%)" in html
+
+
+def test_paint_rebuild_ops_reliability_panels_order_and_skip_empty():
+    """Shared graded/Beta helper paints table then chart when scan data exists."""
+    from lib.benchmark_multi_ui import (
+        ops_reliability_has_scan_data,
+        paint_rebuild_ops_reliability_panels,
+    )
+
+    class _St:
+        def __init__(self):
+            self.calls = []
+
+        def markdown(self, *a, **k):
+            self.calls.append(("markdown", a, k))
+
+        def caption(self, *a, **k):
+            self.calls.append(("caption", a, k))
+
+        def plotly_chart(self, *a, **k):
+            self.calls.append(("plotly_chart", a, k))
+
+    empty = _St()
+    assert not ops_reliability_has_scan_data([])
+    assert paint_rebuild_ops_reliability_panels(empty, []) is False
+    assert empty.calls == []
+
+    rows = [
+        {
+            "key": "chatgpt",
+            "n_scored": 3,
+            "n_zero": 1,
+            "n_technical_na": 2,
+            "n_excluded": 3,
+            "n_seen": 6,
+            "pct_scored": 50.0,
+            "pct_zero": 16.7,
+            "pct_technical_na": 33.3,
+            "pct_excluded": 50.0,
+        }
+    ]
+    st_mod = _St()
+    assert ops_reliability_has_scan_data(rows)
+    assert (
+        paint_rebuild_ops_reliability_panels(
+            st_mod,
+            rows,
+            n_per_model_cap=10,
+            chart_key="beta_rebuild_ops_chart",
+            table_footer_html="<div>table-foot</div>",
+            chart_footer_html="<div>chart-foot</div>",
+        )
+        is True
+    )
+    kinds = [c[0] for c in st_mod.calls]
+    assert kinds.count("markdown") >= 3  # headings + table + footers
+    assert "plotly_chart" in kinds
+    # Table heading before chart heading; chart before final footer.
+    md_texts = [str(c[1][0]) for c in st_mod.calls if c[0] == "markdown"]
+    fail_idx = next(i for i, t in enumerate(md_texts) if "Failures / N/A" in t)
+    chart_idx = next(
+        i for i, t in enumerate(md_texts) if "Ops reliability chart" in t
+    )
+    assert fail_idx < chart_idx
+    assert any("table-foot" in t for t in md_texts)
+    assert any("chart-foot" in t for t in md_texts)
+    chart_call = next(c for c in st_mod.calls if c[0] == "plotly_chart")
+    assert chart_call[2].get("key") == "beta_rebuild_ops_chart"

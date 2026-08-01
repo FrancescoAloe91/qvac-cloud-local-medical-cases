@@ -5,6 +5,7 @@ venv/
 data/wallet.json
 .session_rankings.json
 .case_snapshots.json
+.ui_prefs.json
 .streamlit/secrets.toml
 .env
 .cache/

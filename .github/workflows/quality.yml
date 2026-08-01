@@ -27,13 +27,13 @@ jobs:
 
       - name: Compile active Python modules
         run: |
-          python -m compileall -q app.py benchmark lib tests
+          python -m compileall -q app.py pages benchmark lib tests
 
       - name: Static checks
         run: >-
           ruff check --select F,E9
-          app.py benchmark
-          lib/benchmark_multi_ui.py lib/model_labels.py
+          app.py pages benchmark
+          lib/benchmark_multi_ui.py lib/model_labels.py lib/boot_welcome.py
           lib/secure_account_store.py lib/deployment.py tests
 
       - name: Run offline test suite

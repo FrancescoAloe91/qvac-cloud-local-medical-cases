@@ -516,7 +516,10 @@ _STRINGS = {
         "bench.rebuild_scope_label": "Mean scope",
         "bench.rebuild_scope_same": "Selected case only",
         "bench.rebuild_scope_portfolio": (
-            "All cases (portfolio · mixed-case exploratory)"
+            "All cases (portfolio · newest-N / model)"
+        ),
+        "bench.rebuild_scope_balanced": (
+            "All cases balanced (Case1→K round-robin)"
         ),
         "bench.rebuild_n_label": "Average over ≤N successful / model",
         "bench.rebuild_btn": "Rebuild mean · ≤{n} successful / model · open KPI popup · $0",
@@ -533,16 +536,30 @@ _STRINGS = {
             "for this API key: for each active roster model, average its own newest "
             "≤N **successful** non-zero scored observations (same track + "
             "scoring_version; N/A and exact-zero skipped, older successful used). "
-            "No partial badge. "
+            "No partial badge. Can overweight cases you ran most recently. "
             "Mixed-case / mixed-gold — not clinical validation. Zero API cost."
+        ),
+        "bench.rebuild_btn_help_balanced": (
+            "Offline exploratory mean: for each model, fill ≤N successful "
+            "non-zero scores by cycling Case 1→2→…→K→1… (round-robin). "
+            "Example N=10 with 7 cases → one pass of all cases + Case 1–3 again. "
+            "Balances case weight vs portfolio newest-N. Same track + "
+            "scoring_version. Not clinical validation. Zero API cost."
         ),
         "bench.rebuild_portfolio_intro": (
             "**All cases (portfolio)** — exploratory mean across every Case "
             "slot with data for this key. **≤N successful non-zero scored "
-            "obs/model**; N/A and exact-zero skipped, older successful used. "
+            "obs/model** newest-first; N/A and exact-zero skipped, older successful used. "
             "Same track + scoring_version. "
             "Gold contracts are **not** merged; scores stay reference-relative "
-            "per run. Default 9-roster (+ optional/legacy only when toggled). "
+            "per run. Can overweight recent cases. Default 9-roster (+ optional/legacy only when toggled). "
+            "**No API calls.**"
+        ),
+        "bench.rebuild_balanced_intro": (
+            "**All cases balanced** — same ≤N successful/model budget, but "
+            "filled Case1→K→1… round-robin so each clinical case is weighted "
+            "roughly equally (N=10 / 7 cases → all cases once + first 3 twice). "
+            "Better than newest-50 when you want case balance. Exploratory · "
             "**No API calls.**"
         ),
         "bench.rebuild_portfolio_stats": (
@@ -550,16 +567,29 @@ _STRINGS = {
             "{avail}) · track `{track}` · mixed-case exploratory · "
             "N/A and exact-zero skipped, older successful used"
         ),
+        "bench.rebuild_balanced_stats": (
+            "**≤{n} successful/model · Case1→{cases} round-robin** (eligible runs: "
+            "{avail}) · track `{track}` · balanced mixed-case · "
+            "N/A and exact-zero skipped"
+        ),
         "bench.rebuild_portfolio_quiet": (
             "Scores stay reference-relative per case; portfolio = exploratory "
-            "mixed-case mean (≤N successful non-zero scored obs/model; N/A and "
+            "mixed-case mean (≤N successful non-zero scored obs/model newest-first; N/A and "
             "exact-zero skipped, older successful used), not clinical validation. "
             "Mixed rosters OK. Incompatible scoring versions are never auto-merged."
+        ),
+        "bench.rebuild_balanced_quiet": (
+            "Balanced scope cycles Case slots so one recently spammed case cannot "
+            "dominate the mean. Still exploratory mixed-gold — not clinical validation."
         ),
         "bench.rebuild_portfolio_success": (
             "**All cases (portfolio)** · **≤N successful/model · {n} run docs · "
             "{cases} case stems** · mixed-case exploratory · "
             "mixed rosters OK · **$0 API**"
+        ),
+        "bench.rebuild_balanced_success": (
+            "**All cases balanced** · **≤N successful/model · Case round-robin · "
+            "{n} run docs · {cases} case stems** · exploratory · **$0 API**"
         ),
         "bench.rebuild_portfolio_caption": (
             "Each run's Clinical Composite is still relative to that case's "
@@ -571,6 +601,12 @@ _STRINGS = {
             "refusal / no usable clinical content vs gold. Models with only "
             "failures are omitted."
         ),
+        "bench.rebuild_balanced_caption": (
+            "Each score stays reference-relative to that case's gold. "
+            "Fill order is Case1→K→1… (e.g. N=10 with 7 cases = all once + "
+            "Case 1–3 again). Prefer this over portfolio newest-N when you want "
+            "roughly equal case weight. Not clinical validation."
+        ),
         "bench.rebuild_portfolio_mean_rank": "Mean rank (lower better): {ranks}",
         "bench.rebuild_need_portfolio": (
             "Need at least **1** portfolio-eligible complete/partial run "
@@ -579,6 +615,10 @@ _STRINGS = {
         ),
         "bench.rebuild_reopen_portfolio": (
             "Re-open all-cases portfolio mean · ≤N/model · {n} docs · "
+            "{cases} stems · $0"
+        ),
+        "bench.rebuild_reopen_balanced": (
+            "Re-open balanced-cases mean · ≤N/model · round-robin · {n} docs · "
             "{cases} stems · $0"
         ),
         "bench.case_slots_label": "Clinical cases",
@@ -646,6 +686,7 @@ _STRINGS = {
         ),
         "disclosure.scope_same": "Same-case",
         "disclosure.scope_portfolio": "Portfolio",
+        "disclosure.scope_balanced": "Balanced cases",
         "disclosure.footer_mean_std": "mean±std",
         "disclosure.footer_n_default": "N=successful scores",
         "disclosure.footer_scope": "scope",
@@ -658,7 +699,9 @@ _STRINGS = {
         ),
         "disclosure.rebuild_scope_loud": (
             "**Mean scope: {scope}** — Same-case = one immutable gold cohort; "
-            "Portfolio = exploratory ≤N successful/model across cases."
+            "Portfolio = newest ≤N successful/model across cases (can overweight "
+            "recent cases); Balanced = Case1→K round-robin for roughly equal "
+            "case weight."
         ),
     },
     "it": {
@@ -1175,7 +1218,10 @@ _STRINGS = {
         "bench.rebuild_scope_label": "Ambito media",
         "bench.rebuild_scope_same": "Solo caso selezionato",
         "bench.rebuild_scope_portfolio": (
-            "Tutti i casi (portfolio · esplorativo misti)"
+            "Tutti i casi (portfolio · ultimi N / modello)"
+        ),
+        "bench.rebuild_scope_balanced": (
+            "Tutti i casi bilanciati (Case1→K a rotazione)"
         ),
         "bench.rebuild_n_label": "Media su ≤N successful / modello",
         "bench.rebuild_btn": "Ricostruisci media · ≤{n} successful / modello · apri popup KPI · $0",
@@ -1192,33 +1238,61 @@ _STRINGS = {
             "questa chiave: per ogni modello del roster attivo, media delle "
             "proprie ≤N osservazioni **successful** scored non-zero (stesso "
             "track + scoring_version; N/A e zero esatti saltati, successful "
-            "più vecchi usati). "
+            "più vecchi usati). Può sovrappesare i casi runnati di recente. "
             "Nessun badge partial. Casi/gold misti — non validazione clinica. "
             "Costo API zero."
+        ),
+        "bench.rebuild_btn_help_balanced": (
+            "Media esplorativa: per ogni modello riempie ≤N score successful "
+            "ciclando Case 1→2→…→K→1… (round-robin). Esempio N=10 con 7 casi → "
+            "un giro di tutti i casi + Case 1–3 di nuovo. Bilancia il peso dei "
+            "casi rispetto al portfolio ultimi-N. Stesso track + scoring_version. "
+            "Non validazione clinica. Costo API zero."
         ),
         "bench.rebuild_portfolio_intro": (
             "**Tutti i casi (portfolio)** — media esplorativa su ogni slot Case "
             "con dati per questa chiave. **≤N successful scored non-zero "
-            "obs/modello**; N/A e zero esatti saltati, successful più vecchi "
-            "usati. Stesso track + scoring_version. I contratti gold **non** "
-            "vengono uniti. Roster default 9 (+ optional/legacy solo se toggle "
-            "ON). **Nessuna chiamata API.**"
+            "obs/modello** più recenti; N/A e zero esatti saltati. Stesso track + "
+            "scoring_version. I contratti gold **non** vengono uniti. Può "
+            "sovrappesare i casi recenti. Roster default 9 (+ optional/legacy "
+            "solo se toggle ON). **Nessuna chiamata API.**"
+        ),
+        "bench.rebuild_balanced_intro": (
+            "**Tutti i casi bilanciati** — stesso budget ≤N successful/modello, "
+            "ma riempito Case1→K→1… a rotazione così ogni caso pesa circa "
+            "uguale (N=10 / 7 casi → tutti una volta + i primi 3 due volte). "
+            "Meglio del portfolio ultimi-50 se vuoi equilibrio tra casi. "
+            "Esplorativo · **Nessuna chiamata API.**"
         ),
         "bench.rebuild_portfolio_stats": (
             "**≤{n} successful/modello · {cases} stem di caso distinti** "
             "(run eleggibili: {avail}) · track `{track}` · esplorativo misti · "
             "N/A e zero esatti saltati, successful più vecchi usati"
         ),
+        "bench.rebuild_balanced_stats": (
+            "**≤{n} successful/modello · Case1→{cases} a rotazione** "
+            "(run eleggibili: {avail}) · track `{track}` · casi bilanciati · "
+            "N/A e zero esatti saltati"
+        ),
         "bench.rebuild_portfolio_quiet": (
             "Gli score restano relativi al riferimento di ciascun caso; "
             "portfolio = media esplorativa misti (≤N successful scored "
-            "non-zero/modello; N/A e zero esatti saltati, successful più "
-            "vecchi usati), non validazione clinica. Roster misti ok. Versioni "
-            "di scoring incompatibili non vengono mai unite."
+            "non-zero/modello più recenti; N/A e zero esatti saltati), non "
+            "validazione clinica. Roster misti ok. Versioni di scoring "
+            "incompatibili non vengono mai unite."
+        ),
+        "bench.rebuild_balanced_quiet": (
+            "Lo scope bilanciato cicla gli slot Case così un caso runnato di "
+            "recente non domina la media. Resta esplorativo misti — non "
+            "validazione clinica."
         ),
         "bench.rebuild_portfolio_success": (
             "**Tutti i casi (portfolio)** · **≤N successful/modello · {n} doc run · "
             "{cases} stem** · esplorativo misti · roster misti ok · **$0 API**"
+        ),
+        "bench.rebuild_balanced_success": (
+            "**Tutti i casi bilanciati** · **≤N successful/modello · rotazione Case · "
+            "{n} doc run · {cases} stem** · esplorativo · **$0 API**"
         ),
         "bench.rebuild_portfolio_caption": (
             "Il Clinical Composite di ogni run resta relativo al gold confermato "
@@ -1230,6 +1304,12 @@ _STRINGS = {
             "esatto di solito = rifiuto / nessun contenuto clinico "
             "utilizzabile vs gold. Modelli solo-failure omessi."
         ),
+        "bench.rebuild_balanced_caption": (
+            "Ogni score resta relativo al gold di quel caso. L'ordine di "
+            "riempimento è Case1→K→1… (es. N=10 con 7 casi = tutti una volta + "
+            "Case 1–3 di nuovo). Preferiscilo al portfolio ultimi-N se vuoi "
+            "peso circa uguale tra casi. Non validazione clinica."
+        ),
         "bench.rebuild_portfolio_mean_rank": "Rank medio (più basso = meglio): {ranks}",
         "bench.rebuild_need_portfolio": (
             "Serve almeno **1** run complete/partial eleggibile per il portfolio "
@@ -1237,6 +1317,10 @@ _STRINGS = {
         ),
         "bench.rebuild_reopen_portfolio": (
             "Riapri media portfolio tutti i casi · ≤N/modello · {n} doc · "
+            "{cases} stem · $0"
+        ),
+        "bench.rebuild_reopen_balanced": (
+            "Riapri media casi bilanciati · ≤N/modello · rotazione · {n} doc · "
             "{cases} stem · $0"
         ),
         "bench.case_slots_label": "Casi clinici",
@@ -1308,6 +1392,7 @@ _STRINGS = {
         ),
         "disclosure.scope_same": "Same-case",
         "disclosure.scope_portfolio": "Portfolio",
+        "disclosure.scope_balanced": "Casi bilanciati",
         "disclosure.footer_mean_std": "media±std",
         "disclosure.footer_n_default": "N=score riusciti",
         "disclosure.footer_scope": "ambito",
@@ -1320,7 +1405,9 @@ _STRINGS = {
         ),
         "disclosure.rebuild_scope_loud": (
             "**Ambito media: {scope}** — Same-case = un gold cohort immutabile; "
-            "Portfolio = esplorativo ≤N successful/modello tra casi."
+            "Portfolio = ultimi ≤N successful/modello tra casi (può "
+            "sovrappesare i casi recenti); Bilanciati = Case1→K a rotazione "
+            "per peso circa uguale tra casi."
         ),
     },
 }

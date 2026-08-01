@@ -19,9 +19,14 @@ def short_cohort(cohort_id: Optional[str], *, n: int = 8) -> str:
 
 
 def scope_label(scope: str, lang: Optional[str] = None) -> str:
-    """Human label for Same-case vs Portfolio."""
-    if str(scope or "").strip().lower() == "portfolio":
+    """Human label for Same-case / Portfolio / Balanced-cases / Comprehension."""
+    s = str(scope or "").strip().lower()
+    if s == "portfolio":
         return t("disclosure.scope_portfolio", lang)
+    if s in {"balanced_cases", "balanced", "round_robin"}:
+        return t("disclosure.scope_balanced", lang)
+    if s in {"comprehension", "discursive", "beta", "beta_comprehension"}:
+        return "Comprehension (discursive)"
     return t("disclosure.scope_same", lang)
 
 

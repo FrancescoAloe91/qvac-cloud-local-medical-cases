@@ -17,7 +17,12 @@ from benchmark.gold import (
     uses_controlled_sampling,
 )
 from benchmark.run_control import is_cancelled
-from benchmark.prompts import judge_system, judge_user
+from benchmark.prompts import (
+    clinical_answer_text,
+    judge_system,
+    judge_user,
+    sanitize_candidate_answers,
+)
 from benchmark.schema import (
     Case,
     CandidateAnswer,
@@ -323,7 +328,17 @@ def _normalize_judge_item(item: Dict[str, Any]) -> Dict[str, Any]:
     return normalized
 
 
+def _json_payload_richness(parsed: Any) -> int:
+    """Prefer objects that actually carry graded section rows over junk fragments."""
+    data = _normalize_judge_data(parsed)
+    qs = data.get("question_scores")
+    if isinstance(qs, list):
+        return sum(1 for row in qs if isinstance(row, dict) and row.get("question_id"))
+    return 0
+
+
 def _extract_json(text: str) -> Dict[str, Any]:
+    """Parse judge JSON; when R1 emits noise plus a real object, keep the richest."""
     text = (text or "").strip().lstrip("\ufeff")
     if not text:
         return {}
@@ -331,25 +346,27 @@ def _extract_json(text: str) -> Dict[str, Any]:
     fenced = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", text, re.IGNORECASE)
     if fenced:
         candidates.insert(0, fenced.group(1).strip())
-    parsed: Any = None
+    found: List[Any] = []
     decoder = json.JSONDecoder()
     for candidate in candidates:
         try:
-            parsed = json.loads(candidate)
-            break
+            found.append(json.loads(candidate))
         except json.JSONDecodeError:
-            parsed = None
+            pass
         for match in re.finditer(r"[\{\[]", candidate):
             try:
                 parsed, _ = decoder.raw_decode(candidate[match.start() :])
-                break
+                found.append(parsed)
             except json.JSONDecodeError:
                 continue
-        if parsed is not None:
-            break
-    if parsed is None:
+    if not found:
         return {}
-    return _normalize_judge_data(parsed)
+    best = max(found, key=_json_payload_richness)
+    # If nothing looks like graded sections, still return the first normalize
+    # (preserves prior empty/unusable behavior for callers).
+    if _json_payload_richness(best) == 0:
+        return _normalize_judge_data(found[0])
+    return _normalize_judge_data(best)
 
 
 def _weighted_accuracy_raw(case: Case, scores: List[QuestionScore]) -> float:
@@ -534,10 +551,11 @@ def _score_from_judge_item(
         evidence_rows: List[Dict[str, Any]] = []
         for row in assessments_raw:
             if not isinstance(row, dict):
-                raise ValueError("Invalid claim_assessments object")
+                continue
             claim_id = str(row.get("reference_claim_id") or "")
+            # Unknown / duplicate ids: skip locally (do not force a paid retry).
             if claim_id not in reference_ids or claim_id in coverage_by_id:
-                raise ValueError("Unknown or duplicate graded reference claim id")
+                continue
             coverage = _as_unit_float(
                 row.get("coverage"),
                 field="Claim coverage",
@@ -567,8 +585,23 @@ def _score_from_judge_item(
                     "rationale": str(row.get("rationale") or ""),
                 }
             )
-        if set(coverage_by_id) != reference_ids:
+        # Empty / all-unknown assessments still fail (repair). Partial omissions
+        # become coverage=0 — honest absent, not N/A and not invented credit.
+        if not coverage_by_id:
             raise ValueError(f"Judge did not grade every reference claim for {qid}")
+        for claim in reference_claims:
+            if claim.id in coverage_by_id:
+                continue
+            coverage_by_id[claim.id] = 0.0
+            evidence_rows.append(
+                {
+                    "reference_claim_id": claim.id,
+                    "coverage": 0.0,
+                    "candidate_quotes": [],
+                    "rationale": "",
+                    "audit": "judge_omitted_claim_zeroed",
+                }
+            )
 
         additions_raw = item.get("additional_claims")
         if additions_raw is None:
@@ -1035,7 +1068,7 @@ def _score_sections_from_payload(
         if not has_graded and not has_legacy:
             section_errors[qid] = "graded claim_assessments schema is required"
             continue
-        answer = (
+        answer = clinical_answer_text(
             (candidate.answers or {}).get(qid) or candidate.raw_response or ""
         )
         try:
@@ -1054,6 +1087,26 @@ def _score_sections_from_payload(
 # answers (see caseC-a0d375f208). Give headroom; repairs go section-by-section.
 _JUDGE_PRIMARY_MAX_TOKENS = 16384
 _JUDGE_SECTION_MAX_TOKENS = 4096
+# Cap per-section candidate text in the judge prompt (after <think> strip).
+# Beta photocopies the same note into all five sections — uncapped dumps blow
+# context and push DeepSeek into empty/truncated JSON → MedPsy N/A.
+_JUDGE_ANSWER_MAX_CHARS = 3200
+
+
+def _cap_answer_for_judge(text: str, *, max_chars: int = _JUDGE_ANSWER_MAX_CHARS) -> str:
+    """Trim overlong clinical prose for the judge; keep head + tail."""
+    body = (text or "").strip()
+    if max_chars <= 0 or len(body) <= max_chars:
+        return body
+    marker = "\n…\n"
+    if max_chars <= len(marker) + 8:
+        return body[:max_chars].rstrip()
+    # Prefer opening diagnosis / assessment; preserve closing plan lines.
+    head = max(1, int(max_chars * 0.65))
+    tail = max_chars - head - len(marker)
+    if tail < 1:
+        return body[:max_chars].rstrip()
+    return body[:head].rstrip() + marker + body[-tail:].lstrip()
 
 
 def _judge_output_truncated(meta: Optional[ModelCallMeta], *, cap: int) -> bool:
@@ -1098,12 +1151,26 @@ def judge_candidate(
     allow_fallbacks: bool = True,
 ) -> JudgeResult:
     load_confirmed_gold(gold_reference)  # validate before any paid request
+    # Hygiene only: strip <think>/reasoning so evidence quotes target clinical prose.
+    # Does not invent content or change clinical scoring criteria.
+    clean_answers = sanitize_candidate_answers(candidate.answers or {})
+    if not clean_answers and (candidate.raw_response or "").strip():
+        clinical = clinical_answer_text(candidate.raw_response)
+        if clinical:
+            clean_answers = {q.id: clinical for q in case.questions}
+    clean_answers = {
+        qid: _cap_answer_for_judge(text) for qid, text in clean_answers.items()
+    }
+    judge_candidate_view = candidate.model_copy(update={"answers": clean_answers})
     messages = [
         {"role": "system", "content": judge_system()},
         {
             "role": "user",
             "content": judge_user(
-                case, candidate.blind_id, candidate.answers, gold_reference=gold_reference
+                case,
+                judge_candidate_view.blind_id,
+                judge_candidate_view.answers,
+                gold_reference=gold_reference,
             ),
         },
     ]
@@ -1149,7 +1216,7 @@ def judge_candidate(
     data = _extract_json(raw)
     scored, section_errors = _score_sections_from_payload(
         case,
-        candidate,
+        judge_candidate_view,
         data if isinstance(data, dict) else {},
         gold_reference=gold_reference,
         target_ids=required,
@@ -1161,13 +1228,17 @@ def judge_candidate(
     # invented-quote mismatches already zero coverage locally and never land here.
     # When the primary hit the length cap (common on long Claude/OpenAI answers),
     # repair ONE section at a time — a single multi-section corrective also truncates.
+    # When the primary returned total empty/unusable JSON without a length stop,
+    # one batch repair avoids five serial 180s calls that blow the wall-clock.
     if retry_ids:
         details = "; ".join(
             f"{qid}: {section_errors.get(qid, 'invalid')}"
             for qid in sorted(retry_ids)
         )
         last_validation_error = details
-        per_section = primary_truncated or len(retry_ids) >= 2
+        per_section = primary_truncated or (
+            bool(accepted) and len(retry_ids) >= 2
+        )
         # UI shows 75% only when a paid repair HTTP call is about to start.
         if progress_callback:
             progress_callback("corrective retry", 75)
@@ -1213,7 +1284,7 @@ def judge_candidate(
             repair_data = _extract_json(raw_repair)
             repaired, repair_errors = _score_sections_from_payload(
                 case,
-                candidate,
+                judge_candidate_view,
                 repair_data if isinstance(repair_data, dict) else {},
                 gold_reference=gold_reference,
                 target_ids=batch,

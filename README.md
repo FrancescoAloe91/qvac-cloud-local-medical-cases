@@ -1,18 +1,25 @@
-# QVAC vs Cloud LLMs — Gold-only Health Benchmark
+# QVAC vs Cloud LLMs — Gold-relative Health Benchmark
 
 Experimental, open-source comparison of pinned **OpenRouter API** models and
-on-device GGUFs through the QVAC SDK. It uses frozen, user-supplied source
-quotes as canonical claims, a blind DeepSeek R1 judge, strict evidence
-validation, and an independent whole-run verifier only when primary judging
-fails systemically.
+on-device GGUFs through the QVAC SDK. Blind DeepSeek R1 judge, evidence-linked
+scoring, frozen author-supplied reference. Research/demo tool — **not** a
+medical device and **not** an official MedPsy blog evaluation.
 
-This is a research/demo tool, not a medical device. It does not validate the
-clinical truth of user input. If the case or reference is wrong or incomplete,
-the result is not clinically meaningful. Cloud slots are API routes — not
-claims about consumer ChatGPT / Claude / Gemini web apps.
-
-Live app: https://francescoaloe91-qvac-vs-cloud-llms-health-test-app-wihxyd.streamlit.app
+Live app: https://francescoaloe91-qvac-vs-cloud-llms-health-test-app-wihxyd.streamlit.app  
 Repository: https://github.com/FrancescoAloe91/qvac-vs-cloud-llms-health-test
+
+## Two tracks (KPIs never pool)
+
+| Track | Entry | What it measures | Protocol / History |
+|-------|--------|------------------|--------------------|
+| **Comprehension** (discursive) | **Home** (`app.py`) | Free-form clinical notes vs undivided reference prose | `beta-comprehension-v1` · `case_id=beta_comprehension` |
+| **Structured A1–A5** | Sidebar → **Structured · A1–A5** (`pages/structured_graded.py`) | Rigid slot Q&A (`A1:`…`A5:`) vs sectioned gold | Graded / caseC History · A1–A5 Rebuild |
+
+Same Clinical Composite math (Coverage / Quality / Discipline → section → weighted mean).
+**Never** mix Comprehension and Structured means, Rebuild windows, or screenshot claims.
+
+Boot (every fresh session): OpenRouter BYOK key dialog → QVAC SDK status OK
+(QVAC ack remembered in local `.ui_prefs.json`; keys are never stored there).
 
 ## Known limitations / How to read results
 
@@ -25,6 +32,10 @@ ChatGPT / Claude / Gemini.”
 - Cloud slots = **OpenRouter API routes** ≠ consumer ChatGPT / Claude / Gemini web.
 - **Uncalibrated single LLM-as-judge** (DeepSeek R1).
 - **Exploratory** Multi default N=5 — show mean±std and N per model.
+- **Comprehension is the main product surface** for free-form / “official-bench-like”
+  comparisons (e.g. MedPsy vs MedGemma). Structured A1–A5 remains the contract /
+  format-stress track — useful, but easy to misread as “clinical IQ” when it
+  mostly stresses schema compliance.
 - **Rebuild mean = scored-only.** Technical failures and exact Clinical Composite
   == 0 are treated like N/A (excluded from N). Rationale: a rare exact 0 would
   crush the mean, so it is equated to a non-score for the clean comparison.

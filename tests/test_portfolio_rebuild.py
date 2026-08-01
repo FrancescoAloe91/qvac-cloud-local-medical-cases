@@ -9,8 +9,10 @@ from lib.model_labels import (
     DEFAULT_ACTIVE_ROSTER_KEYS,
     OPTIONAL_LEGACY_SLOT_KEYS,
 )
+from benchmark.case_slots import stem_key
 from benchmark.report import (
     list_portfolio_runs,
+    rebuild_balanced_cases_from_history,
     rebuild_model_ids,
     rebuild_multi_from_history,
     rebuild_portfolio_from_history,
@@ -736,8 +738,8 @@ def test_trim_n_skips_exact_zero_and_uses_older_nonzero(tmp_path: Path):
     assert float(p_by["chatgpt"]["accuracy_mean"]) == 62.0
 
 
-def test_rebuild_accepts_per_model_n_40_50_and_100(tmp_path: Path):
-    """UI selectbox offers 40/50/100; backend must not clamp those caps to 30."""
+def test_rebuild_accepts_per_model_n_50_and_100(tmp_path: Path):
+    """UI selectbox offers 5/10/20/30/50/100; backend must not clamp those caps to 30."""
     for i in range(3):
         _write(
             tmp_path,
@@ -746,7 +748,7 @@ def test_rebuild_accepts_per_model_n_40_50_and_100(tmp_path: Path):
             finished_at=f"2026-01-01T1{i}:00:00Z",
             cohort_id=f"cohort-p-{i}",
         )
-    for n in (40, 50, 100):
+    for n in (50, 100):
         port = rebuild_portfolio_from_history(
             tmp_path, n=n, scoring_version="graded-clinical-v4", track="controlled"
         )
@@ -1005,3 +1007,65 @@ def test_rebuild_ops_reliability_counts_zeros_and_technical_na(tmp_path: Path):
     assert ops_by["claude"]["n_scored"] == 3
     assert ops_by["claude"]["n_zero"] == 0
     assert ops_by["claude"]["n_technical_na"] == 0
+
+
+def test_balanced_round_robin_weights_cases_not_just_newest(tmp_path: Path):
+    """N=10 with 7 cases → Case1→7 once then Case1–3 again (not newest-global)."""
+    keys = ["chatgpt"]
+    stems = [f"stem-case-{i}" for i in range(1, 8)]
+    ordered = [stem_key(s) for s in stems]
+    # Two scored runs per case; make Case7 the newest so portfolio would bias it.
+    t = 0
+    for pass_i in range(2):
+        for i, stem in enumerate(stems, start=1):
+            t += 1
+            art = RunArtifact(
+                run_id=f"bal-c{i}-p{pass_i}",
+                case_id="caseC",
+                started_at=f"2026-03-01T{t:02d}:00:00Z",
+                finished_at=f"2026-03-01T{t:02d}:00:00Z",
+                n_index=1,
+                batch_id="bal",
+                models_config={
+                    "candidates": [{"key": "chatgpt", "model": "test/chatgpt"}],
+                    "judge": {"model": "deepseek/deepseek-r1"},
+                    "gold_reference": "{}",
+                    "case_stem": stem,
+                },
+                ranking=[
+                    {
+                        "key": "chatgpt",
+                        "accuracy": 50.0 + i + pass_i,
+                        "status": "ok",
+                        "rank": 1,
+                        "coverage": 70.0,
+                        "quality": 80.0,
+                        "discipline": 90.0,
+                    }
+                ],
+                judgments=[],
+                candidates=[],
+                total_cost_usd=0.0,
+                scoring_version="graded-clinical-v4",
+                benchmark_track="controlled",
+                cohort_id=f"cohort-c{i}",
+                run_status="complete",
+            )
+            write_artifact(art, tmp_path)
+
+    bal = rebuild_balanced_cases_from_history(
+        tmp_path,
+        n=10,
+        scoring_version="graded-clinical-v4",
+        track="controlled",
+        model_ids=keys,
+        ordered_stem_keys=ordered,
+    )
+    assert bal["ok"] is True
+    assert bal["scope"] == "balanced_cases"
+    mean_by = {r["key"]: r for r in bal["summary"].ranking_mean}
+    assert int(mean_by["chatgpt"]["n_runs"]) == 10
+    # Newest-first per stem, then Case1→7→1→2→3:
+    # pass1 of all 7 (52..58) + pass0 of Case1–3 (51,52,53).
+    expected = (52 + 53 + 54 + 55 + 56 + 57 + 58 + 51 + 52 + 53) / 10.0
+    assert abs(float(mean_by["chatgpt"]["accuracy_mean"]) - expected) < 0.05

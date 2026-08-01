@@ -8,6 +8,7 @@ from benchmark.cases_loader import load_case
 from benchmark.gold import confirmed_gold, gold_json
 from benchmark.judge import (
     PipelinedJudge,
+    _cap_answer_for_judge,
     _evidence_normalized,
     _evidence_quote_present,
     _extract_json,
@@ -1145,4 +1146,164 @@ def test_na_judgment_does_not_reuse_candidate_meta_cost():
     assert result.status == "candidate_partial"
     assert float(result.judge_meta.cost_usd or 0.0) == 0.0
     assert result.judge_meta.paid_attempts == []
+
+
+def test_extract_json_prefers_question_scores_over_noise_fragments():
+    """R1 sometimes emits junk arrays before the real graded object."""
+    rich = {
+        "blind_id": "Candidate 1",
+        "question_scores": [
+            {
+                "question_id": "diagnosis",
+                "claim_assessments": [
+                    {
+                        "reference_claim_id": "diagnosis-1",
+                        "coverage": 1,
+                        "candidate_quotes": ["STEMI"],
+                    }
+                ],
+                "additional_claims": [],
+                "quality": 0.75,
+            }
+        ],
+    }
+    noisy = "[1]\n" + __import__("json").dumps(rich)
+    data = _extract_json(noisy)
+    assert isinstance(data.get("question_scores"), list)
+    assert data["question_scores"][0]["question_id"] == "diagnosis"
+
+
+def test_omitted_reference_claims_zeroed_locally_not_na():
+    """Partial claim_assessments → missing claims = 0 coverage, not schema N/A."""
+    raw_bits = []
+    sections = {}
+    for section in ("diagnosis", "tests", "urgency", "safety", "plan"):
+        q1 = f"{section} primary"
+        q2 = f"{section} secondary"
+        raw_bits.extend([q1, q2])
+        sections[section] = GoldSection(
+            summary=f"{section} reference",
+            claims=[
+                GoldClaim(id=f"{section}-1", text=q1, source_quote=q1),
+                GoldClaim(id=f"{section}-2", text=q2, source_quote=q2),
+            ],
+        )
+    contract = gold_json(
+        confirmed_gold(
+            raw_text=" ".join(raw_bits),
+            sections=sections,
+            extraction_model="test",
+        )
+    )
+    item = {
+        "question_id": "diagnosis",
+        "claim_assessments": [
+            {
+                "reference_claim_id": "diagnosis-1",
+                "coverage": 1.0,
+                "candidate_quotes": ["anterior STEMI"],
+            },
+            # diagnosis-2 intentionally omitted by the judge
+            {
+                "reference_claim_id": "diagnosis-unknown",
+                "coverage": 1.0,
+                "candidate_quotes": ["noise"],
+            },
+        ],
+        "additional_claims": [],
+        "quality": 0.8,
+    }
+    score = _score_from_judge_item(
+        load_case("caseC"),
+        item,
+        answer_text="Anterior STEMI — activate PCI.",
+        gold_reference=contract,
+    )
+    assert score.claim_coverage == {"diagnosis-1": 1.0, "diagnosis-2": 0.0}
+    assert score.recall == 0.5
+    # 0.5*50 + 0.8*35 + 1*15 = 25 + 28 + 15 = 68
+    assert score.score == 68.0
+
+
+def test_cap_answer_for_judge_keeps_head_and_tail():
+    body = (
+        "HEAD-DIAGNOSIS start. "
+        + ("middle filler words " * 120)
+        + "TAIL-PLAN finish."
+    )
+    capped = _cap_answer_for_judge(body, max_chars=400)
+    assert len(capped) <= 400
+    assert "HEAD-DIAGNOSIS" in capped
+    assert "TAIL-PLAN" in capped
+    assert "…" in capped
+
+
+def test_total_empty_primary_uses_one_batch_repair(monkeypatch):
+    """Non-truncated empty JSON must not spend five serial section repairs."""
+    case = load_case("caseC")
+    answers = {q.id: f"{q.id} clinical answer with enough text" for q in case.questions}
+    candidate = CandidateAnswer(
+        candidate_key="qvac",
+        label="MedPsy",
+        blind_id="Candidate 1",
+        answers=answers,
+        raw_response="\n".join(answers.values()),
+        meta=ModelCallMeta(model="medpsy", provider="qvac"),
+    )
+
+    def item(qid: str) -> dict:
+        return {
+            "question_id": qid,
+            "claim_assessments": [
+                {
+                    "reference_claim_id": f"{qid}-1",
+                    "coverage": 1,
+                    "candidate_quotes": [answers[qid]],
+                }
+            ],
+            "additional_claims": [],
+            "quality": 0.8,
+        }
+
+    calls = {"n": 0}
+
+    def fake_chat(model, messages, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return (
+                "not json at all",
+                ModelCallMeta(
+                    model=model,
+                    provider="openrouter",
+                    cost_usd=0.01,
+                    completion_tokens=200,
+                    finish_reason="stop",
+                ),
+            )
+        # One batch repair covering every rejected section.
+        content = messages[-1]["content"]
+        assert "rejected ONLY these sections" in content
+        return (
+            __import__("json").dumps(
+                {"question_scores": [item(q.id) for q in case.questions]}
+            ),
+            ModelCallMeta(
+                model=model,
+                provider="openrouter",
+                cost_usd=0.02,
+                completion_tokens=800,
+                finish_reason="stop",
+            ),
+        )
+
+    monkeypatch.setattr("benchmark.judge.openrouter.chat", fake_chat)
+    result = judge_candidate(
+        case,
+        candidate,
+        "judge",
+        gold_reference=_contract(),
+    )
+    assert result.status == "valid", result.failure_reason
+    assert calls["n"] == 2
+    assert len(result.question_scores) == 5
 

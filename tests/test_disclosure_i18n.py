@@ -27,6 +27,7 @@ DISCLOSURE_KEYS = [
     "disclosure.bullet_recovery",
     "disclosure.scope_same",
     "disclosure.scope_portfolio",
+    "disclosure.scope_balanced",
     "disclosure.footer_mean_std",
     "disclosure.footer_n_default",
     "disclosure.footer_scope",
