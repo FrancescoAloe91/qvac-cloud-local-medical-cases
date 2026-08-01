@@ -58,6 +58,8 @@ def test_honesty_block_includes_core_phrases():
     assert "OpenRouter" in html
     assert "DeepSeek R1" in html
     assert "scored-only" in html
+    assert "treated like N/A" in html
+    assert "MedGemma" in html and "~2/105" in html
     assert "Same-case" in html
     assert "abcdef01" in html
     assert str(DEFAULT_ROSTER_VERSION) in html

@@ -30,7 +30,7 @@ Agents must poll Quality gate to **success** on HEAD after every push.
 | Legacy opt-in | Gemma 2 2B, Llama 3.2 3B, MedPsy 4B Q8 (History labels retained; OFF by default) |
 | Cases | Base Case 1–5 + growable Case 6+; default pack revision 3 seeds slots **2–7** (anaphylaxis, STEMI, DKA, stroke, suicidal OD, psychosis vs delirium). **Case 1 is not in the current pack** |
 | Medical peer cutover | MedGemma-1.5-4B-IT Q4 |
-| Rebuild mean | Per-model **scored-N** fill; **successful-only** pool (no partial badge / Failed% theater on the clean mean) |
+| Rebuild mean | Per-model **scored-N** fill; **successful-only** pool; exact Clinical Composite == 0 treated like N/A (MedGemma ~2% zeros on caseC empirically; MedPsy/main peers 0) |
 | Prepare | Structured Q1–A5 gold prepares **locally**; free-form still uses OpenRouter extract |
 | Cost forecast | Typical completions + History priors — not `max_tokens` as billable; billed truth = OpenRouter `usage.cost` |
 | Judge | Single primary DeepSeek R1 (blind); optional whole-run verifier only on systemic failure |
@@ -67,7 +67,7 @@ Agents must poll Quality gate to **success** on HEAD after every push.
 ### H1 — Rebuild scored-only / successful-only hides failure theater
 - **Attack:** Clean leaderboard after Rebuild; Failed%/partial gone → “you buried N/A.”
 - **Fair?** Mostly fair. Intentional scored-only comparison; reliability optics need captions.
-- **Mitigation:** “Scored-only mean · technical failures excluded · N = successful scores.” Offer a separate reliability view when posting ops honesty.
+- **Mitigation:** Disclose that exact Clinical Composite == 0 is treated like N/A in Rebuild mean (excluded from scored-N). Empirically MedGemma ~2/105 (~2%) zeros on caseC; MedPsy/main peers 0. Caption: “Scored-only · N = successful non-zero scores.” Offer a separate reliability view when posting ops honesty.
 
 ### H2 — Default 9 vs legacy ≤12 / History cross-roster pooling
 - **Attack:** Means mix eras with Gemma/Llama/Q8 on vs default-9 runs.

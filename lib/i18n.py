@@ -524,8 +524,9 @@ _STRINGS = {
             "Offline mean for the selected Case slot's immutable cohort only "
             "(same clinical stem + confirmed gold contract). N = max **successful** "
             "non-zero scored observations per model (newest first); technical N/A "
-            "and exact-zero composites skipped, older successful used. No partial "
-            "badge. Optional/legacy models only when toggled. Zero API cost."
+            "and exact Clinical Composite == 0 treated like N/A (skipped), older "
+            "successful used. No partial badge. Optional/legacy models only when "
+            "toggled. Zero API cost."
         ),
         "bench.rebuild_btn_help_portfolio": (
             "Offline exploratory mean across all Case slots that have History "
@@ -565,8 +566,9 @@ _STRINGS = {
             "confirmed gold. Averaging across Case slots is exploratory "
             "mixed-case analysis — not a clinical validation claim. "
             "Mean over last ≤N **successful** non-zero scored runs per model; "
-            "technical N/A and exact-zero composites skipped. Models with only "
-            "failures are omitted."
+            "technical N/A and exact Clinical Composite == 0 treated like N/A "
+            "(skipped). Empirically MedGemma ~2/105 (~2%) zeros on caseC; "
+            "MedPsy/main peers 0. Models with only failures are omitted."
         ),
         "bench.rebuild_portfolio_mean_rank": "Mean rank (lower better): {ranks}",
         "bench.rebuild_need_portfolio": (
@@ -615,8 +617,10 @@ _STRINGS = {
             "<b>Exploratory / amateur</b> comparison — not a powered clinical study"
         ),
         "disclosure.bullet_rebuild": (
-            "Rebuild mean = <b>scored-only</b> · technical failures and "
-            "exact-zero composites excluded · N = successful non-zero scores"
+            "Rebuild mean = <b>scored-only</b> · technical failures and exact "
+            "Clinical Composite == 0 are treated like N/A (excluded) · "
+            "N = successful non-zero scores · Empirically MedGemma ~2/105 "
+            "(~2%) zeros on caseC; MedPsy/main peers 0"
         ),
         "disclosure.bullet_scope": "Mean scope",
         "disclosure.bullet_confirm": (
@@ -1168,8 +1172,8 @@ _STRINGS = {
             "Media offline solo per il cohort immutabile dello slot Case "
             "selezionato (stesso stem + gold confermato). N = max osservazioni "
             "**successful** scored non-zero per modello (più recenti prima); "
-            "N/A tecnici e composite esatti a zero saltati, si usano "
-            "successful più vecchi. Nessun badge partial. "
+            "N/A tecnici e Clinical Composite esatto == 0 trattati come N/A "
+            "(saltati), si usano successful più vecchi. Nessun badge partial. "
             "Modelli optional/legacy solo se toggle ON. Costo API zero."
         ),
         "bench.rebuild_btn_help_portfolio": (
@@ -1210,8 +1214,9 @@ _STRINGS = {
             "di quel caso. La media tra gli slot Case è analisi esplorativa "
             "misti — non una claim di validazione clinica. "
             "Media sulle ultime ≤N run **successful** scored non-zero per "
-            "modello; N/A tecnici e composite esatti a zero saltati. Modelli "
-            "solo-failure omessi."
+            "modello; N/A tecnici e Clinical Composite esatto == 0 trattati "
+            "come N/A (saltati). Empiricamente MedGemma ~2/105 (~2%) zeri su "
+            "caseC; MedPsy/peer principali 0. Modelli solo-failure omessi."
         ),
         "bench.rebuild_portfolio_mean_rank": "Rank medio (più basso = meglio): {ranks}",
         "bench.rebuild_need_portfolio": (
@@ -1260,8 +1265,10 @@ _STRINGS = {
             "con potenza statistica"
         ),
         "disclosure.bullet_rebuild": (
-            "Rebuild mean = <b>solo scored</b> · fallimenti tecnici e "
-            "composite esatti a zero esclusi · N = score riusciti non-zero"
+            "Rebuild mean = <b>solo scored</b> · fallimenti tecnici e Clinical "
+            "Composite esatto == 0 trattati come N/A (esclusi) · N = score "
+            "riusciti non-zero · Empiricamente MedGemma ~2/105 (~2%) zeri su "
+            "caseC; MedPsy/peer principali 0"
         ),
         "disclosure.bullet_scope": "Ambito media",
         "disclosure.bullet_confirm": (

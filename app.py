@@ -1586,7 +1586,9 @@ def history_mean_rebuild_dialog():
                 f"N≤{payload.get('n_per_model_cap') or '?'} successful/model · "
                 f"{payload.get('n_used') or summary.n} docs"
             ),
-            extra="scored-only · technical failures and exact-zero excluded",
+            extra=(
+                "scored-only · exact Clinical Composite == 0 treated like N/A"
+            ),
         ),
         unsafe_allow_html=True,
     )
@@ -3741,7 +3743,8 @@ st.caption(
         else "; optional Gemma/Llama/Q8 hidden until toggled"
     )
     + ") · last ≤N **successful** non-zero scored runs per model · "
-    "technical N/A and exact-zero skipped · **No API calls** · scored-only mean."
+    "technical N/A and exact Clinical Composite == 0 treated like N/A · "
+    "**No API calls** · scored-only mean."
 )
 
 _hist_for_case = artifacts_for_case(WORKSPACE_DIR, case_id)
