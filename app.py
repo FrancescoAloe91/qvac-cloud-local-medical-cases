@@ -1437,8 +1437,9 @@ def _reliability_table_html(
             f"{reliability_badge('very_low')} CV &gt; 20% &nbsp;·&nbsp; "
             "cell color = CV band · lower CV = stabler mean · "
             "<b>CV band ≠ clinical validation</b> · "
-            "<b>Successful</b> = last ≤N error-free scored runs per model "
-            "(technical N/A skipped; older successful History used) · "
+            "<b>Successful</b> = last ≤N error-free non-zero scored runs per model "
+            "(technical N/A and exact-zero composites skipped; older successful "
+            "History used) · "
             "models with only failures are omitted · "
             "N=5 exploratory · ~10 better for CV eye-check · 20–50 diminishing · 100 max · "
             "<b>C/Q/D</b> = coverage / quality / discipline "
@@ -1459,7 +1460,7 @@ def _reliability_table_html(
             "(collect / judge / timeout / partial / empty) — not clinical 0% · "
             "<b>partial</b> = ranked by mean of scored runs despite incomplete coverage · "
             "unranked rows (#—) have zero scored observations · "
-            "≤N scored obs/model; N/A skipped, older scored used · "
+            "≤N non-zero scored obs/model; N/A and exact-zero skipped, older scored used · "
             "N=5 exploratory · ~10 better for CV eye-check · 20–50 diminishing · 100 max · "
             "<b>C/Q/D</b> = coverage / quality / discipline "
             "(quality is independent of coverage; a high board % can still have low C)"
@@ -1584,7 +1585,7 @@ def history_mean_rebuild_dialog():
                 f"N≤{payload.get('n_per_model_cap') or '?'} successful/model · "
                 f"{payload.get('n_used') or summary.n} docs"
             ),
-            extra="scored-only · technical failures excluded",
+            extra="scored-only · technical failures and exact-zero excluded",
         ),
         unsafe_allow_html=True,
     )
@@ -3738,8 +3739,8 @@ st.caption(
         if _rebuild_optional
         else "; optional Gemma/Llama/Q8 hidden until toggled"
     )
-    + ") · last ≤N **successful** scored runs per model · "
-    "technical N/A skipped · **No API calls** · scored-only mean."
+    + ") · last ≤N **successful** non-zero scored runs per model · "
+    "technical N/A and exact-zero skipped · **No API calls** · scored-only mean."
 )
 
 _hist_for_case = artifacts_for_case(WORKSPACE_DIR, case_id)
@@ -3925,8 +3926,8 @@ with _rb1:
         ),
         key="history_rebuild_n_pick",
         on_change=_on_rebuild_n_pick_change,
-        help="N = max successful scored observations per model (newest first); "
-        "technical N/A skipped, older successful History used — not a global "
+        help="N = max successful non-zero scored observations per model (newest first); "
+        "technical N/A and exact-zero skipped, older successful History used — not a global "
         "last-N run slice. Optional/legacy models appear only when toggled. "
         "Tiers: 5 exploratory · ~10 better for CV · 20–50 diminishing returns "
         "(100 max). Default stays 5. Selecting N alone does not open a popup — "

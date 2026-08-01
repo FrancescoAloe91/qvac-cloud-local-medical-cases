@@ -523,21 +523,23 @@ _STRINGS = {
         "bench.rebuild_btn_help_same": (
             "Offline mean for the selected Case slot's immutable cohort only "
             "(same clinical stem + confirmed gold contract). N = max **successful** "
-            "scored observations per model (newest first); technical N/A skipped, "
-            "older successful used. No partial badge. Optional/legacy models only "
-            "when toggled. Zero API cost."
+            "non-zero scored observations per model (newest first); technical N/A "
+            "and exact-zero composites skipped, older successful used. No partial "
+            "badge. Optional/legacy models only when toggled. Zero API cost."
         ),
         "bench.rebuild_btn_help_portfolio": (
             "Offline exploratory mean across all Case slots that have History "
             "for this API key: for each active roster model, average its own newest "
-            "≤N **successful** scored observations (same track + scoring_version; N/A "
-            "skipped, older successful used). No partial badge. "
+            "≤N **successful** non-zero scored observations (same track + "
+            "scoring_version; N/A and exact-zero skipped, older successful used). "
+            "No partial badge. "
             "Mixed-case / mixed-gold — not clinical validation. Zero API cost."
         ),
         "bench.rebuild_portfolio_intro": (
             "**All cases (portfolio)** — exploratory mean across every Case "
-            "slot with data for this key. **≤N successful scored obs/model**; "
-            "N/A skipped, older successful used. Same track + scoring_version. "
+            "slot with data for this key. **≤N successful non-zero scored "
+            "obs/model**; N/A and exact-zero skipped, older successful used. "
+            "Same track + scoring_version. "
             "Gold contracts are **not** merged; scores stay reference-relative "
             "per run. Default 9-roster (+ optional/legacy only when toggled). "
             "**No API calls.**"
@@ -545,12 +547,12 @@ _STRINGS = {
         "bench.rebuild_portfolio_stats": (
             "**≤{n} successful/model · {cases} distinct case stems** (eligible runs: "
             "{avail}) · track `{track}` · mixed-case exploratory · "
-            "N/A skipped, older successful used"
+            "N/A and exact-zero skipped, older successful used"
         ),
         "bench.rebuild_portfolio_quiet": (
             "Scores stay reference-relative per case; portfolio = exploratory "
-            "mixed-case mean (≤N successful scored obs/model; N/A skipped, older "
-            "successful used), not clinical validation. "
+            "mixed-case mean (≤N successful non-zero scored obs/model; N/A and "
+            "exact-zero skipped, older successful used), not clinical validation. "
             "Mixed rosters OK. Incompatible scoring versions are never auto-merged."
         ),
         "bench.rebuild_portfolio_success": (
@@ -562,8 +564,9 @@ _STRINGS = {
             "Each run's Clinical Composite is still relative to that case's "
             "confirmed gold. Averaging across Case slots is exploratory "
             "mixed-case analysis — not a clinical validation claim. "
-            "Mean over last ≤N **successful** scored runs per model; technical "
-            "N/A skipped. Models with only failures are omitted."
+            "Mean over last ≤N **successful** non-zero scored runs per model; "
+            "technical N/A and exact-zero composites skipped. Models with only "
+            "failures are omitted."
         ),
         "bench.rebuild_portfolio_mean_rank": "Mean rank (lower better): {ranks}",
         "bench.rebuild_need_portfolio": (
@@ -612,8 +615,8 @@ _STRINGS = {
             "<b>Exploratory / amateur</b> comparison — not a powered clinical study"
         ),
         "disclosure.bullet_rebuild": (
-            "Rebuild mean = <b>scored-only</b> · technical failures excluded · "
-            "N = successful scores"
+            "Rebuild mean = <b>scored-only</b> · technical failures and "
+            "exact-zero composites excluded · N = successful non-zero scores"
         ),
         "disclosure.bullet_scope": "Mean scope",
         "disclosure.bullet_confirm": (
@@ -1164,37 +1167,39 @@ _STRINGS = {
         "bench.rebuild_btn_help_same": (
             "Media offline solo per il cohort immutabile dello slot Case "
             "selezionato (stesso stem + gold confermato). N = max osservazioni "
-            "**successful** scored per modello (più recenti prima); N/A tecnici "
-            "saltati, si usano successful più vecchi. Nessun badge partial. "
+            "**successful** scored non-zero per modello (più recenti prima); "
+            "N/A tecnici e composite esatti a zero saltati, si usano "
+            "successful più vecchi. Nessun badge partial. "
             "Modelli optional/legacy solo se toggle ON. Costo API zero."
         ),
         "bench.rebuild_btn_help_portfolio": (
             "Media esplorativa offline su tutti gli slot Case con History per "
             "questa chiave: per ogni modello del roster attivo, media delle "
-            "proprie ≤N osservazioni **successful** scored (stesso track + "
-            "scoring_version; N/A saltati, successful più vecchi usati). "
+            "proprie ≤N osservazioni **successful** scored non-zero (stesso "
+            "track + scoring_version; N/A e zero esatti saltati, successful "
+            "più vecchi usati). "
             "Nessun badge partial. Casi/gold misti — non validazione clinica. "
             "Costo API zero."
         ),
         "bench.rebuild_portfolio_intro": (
             "**Tutti i casi (portfolio)** — media esplorativa su ogni slot Case "
-            "con dati per questa chiave. **≤N successful scored obs/modello**; "
-            "N/A saltati, successful più vecchi usati. Stesso track + "
-            "scoring_version. I contratti gold **non** vengono uniti. Roster "
-            "default 9 (+ optional/legacy solo se toggle ON). "
-            "**Nessuna chiamata API.**"
+            "con dati per questa chiave. **≤N successful scored non-zero "
+            "obs/modello**; N/A e zero esatti saltati, successful più vecchi "
+            "usati. Stesso track + scoring_version. I contratti gold **non** "
+            "vengono uniti. Roster default 9 (+ optional/legacy solo se toggle "
+            "ON). **Nessuna chiamata API.**"
         ),
         "bench.rebuild_portfolio_stats": (
             "**≤{n} successful/modello · {cases} stem di caso distinti** "
             "(run eleggibili: {avail}) · track `{track}` · esplorativo misti · "
-            "N/A saltati, successful più vecchi usati"
+            "N/A e zero esatti saltati, successful più vecchi usati"
         ),
         "bench.rebuild_portfolio_quiet": (
             "Gli score restano relativi al riferimento di ciascun caso; "
-            "portfolio = media esplorativa misti (≤N successful scored/modello; "
-            "N/A saltati, successful più vecchi usati), "
-            "non validazione clinica. Roster misti ok. Versioni di scoring "
-            "incompatibili non vengono mai unite."
+            "portfolio = media esplorativa misti (≤N successful scored "
+            "non-zero/modello; N/A e zero esatti saltati, successful più "
+            "vecchi usati), non validazione clinica. Roster misti ok. Versioni "
+            "di scoring incompatibili non vengono mai unite."
         ),
         "bench.rebuild_portfolio_success": (
             "**Tutti i casi (portfolio)** · **≤N successful/modello · {n} doc run · "
@@ -1204,8 +1209,9 @@ _STRINGS = {
             "Il Clinical Composite di ogni run resta relativo al gold confermato "
             "di quel caso. La media tra gli slot Case è analisi esplorativa "
             "misti — non una claim di validazione clinica. "
-            "Media sulle ultime ≤N run **successful** scored per modello; N/A "
-            "tecnici saltati. Modelli solo-failure omessi."
+            "Media sulle ultime ≤N run **successful** scored non-zero per "
+            "modello; N/A tecnici e composite esatti a zero saltati. Modelli "
+            "solo-failure omessi."
         ),
         "bench.rebuild_portfolio_mean_rank": "Rank medio (più basso = meglio): {ranks}",
         "bench.rebuild_need_portfolio": (
@@ -1254,8 +1260,8 @@ _STRINGS = {
             "con potenza statistica"
         ),
         "disclosure.bullet_rebuild": (
-            "Rebuild mean = <b>solo scored</b> · fallimenti tecnici esclusi · "
-            "N = score riusciti"
+            "Rebuild mean = <b>solo scored</b> · fallimenti tecnici e "
+            "composite esatti a zero esclusi · N = score riusciti non-zero"
         ),
         "disclosure.bullet_scope": "Ambito media",
         "disclosure.bullet_confirm": (

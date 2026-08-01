@@ -625,6 +625,117 @@ def test_trim_n_skips_technical_na_and_uses_older_scored(tmp_path: Path):
     assert p_by["chatgpt"]["partial"] is False
 
 
+def test_trim_n_skips_exact_zero_and_uses_older_nonzero(tmp_path: Path):
+    """Exact composite 0 does not fill N; older non-zero scores are used.
+
+    Low non-zero scores (e.g. 5–10) remain valid successful observations.
+    """
+    from benchmark.report import _is_scored_ranking_row, reliability_caption
+
+    assert _is_scored_ranking_row({"status": "ok", "accuracy": 5.0}) is True
+    assert _is_scored_ranking_row({"status": "ok", "accuracy": 0.0}) is False
+    assert _is_scored_ranking_row({"status": "ok", "accuracy": 0}) is False
+    assert _is_scored_ranking_row({"status": "ok", "accuracy": None}) is False
+    assert _is_scored_ranking_row({"status": "n/a", "accuracy": 80.0}) is False
+
+    cohort = "cohort-zero-interleave"
+    keys = ["chatgpt", "claude"]
+
+    def _write_row(*, run_id: str, finished_at: str, chatgpt_acc: float):
+        ranking = []
+        for i, key in enumerate(keys):
+            if key == "chatgpt":
+                ranking.append(
+                    {
+                        "key": key,
+                        "accuracy": chatgpt_acc,
+                        "status": "ok",
+                        "rank": 1,
+                        "coverage": 70.0 if chatgpt_acc else None,
+                        "quality": 80.0 if chatgpt_acc else None,
+                        "discipline": 90.0 if chatgpt_acc else None,
+                    }
+                )
+            else:
+                ranking.append(
+                    {
+                        "key": key,
+                        "accuracy": 70.0 + i,
+                        "status": "ok",
+                        "rank": 2,
+                        "coverage": 70.0,
+                        "quality": 80.0,
+                        "discipline": 90.0,
+                    }
+                )
+        write_artifact(
+            RunArtifact(
+                run_id=run_id,
+                case_id="caseC",
+                started_at=finished_at,
+                finished_at=finished_at,
+                n_index=1,
+                batch_id="batch-zero-interleave",
+                models_config={
+                    "candidates": [{"key": k, "model": f"test/{k}"} for k in keys],
+                    "judge": {"model": "deepseek/deepseek-r1"},
+                    "gold_reference": "{}",
+                    "case_stem": "stem-caseC",
+                },
+                ranking=ranking,
+                judgments=[],
+                cohort_id=cohort,
+                scoring_version="graded-clinical-v4",
+                prompt_version="gold-only-v1",
+                benchmark_track="controlled",
+                run_status="complete",
+            ),
+            tmp_path,
+        )
+
+    # Write oldest→newest so filesystem mtime matches finished_at order
+    # (list_run_artifacts sorts by mtime).
+    _write_row(
+        run_id="old-low",
+        finished_at="2026-05-01T09:00:00Z",
+        chatgpt_acc=8.0,
+    )
+    for i in range(5):
+        _write_row(
+            run_id=f"old-nz-{i}",
+            finished_at=f"2026-05-01T1{i}:00:00Z",
+            chatgpt_acc=60.0 + i,
+        )
+    # Newest: three exact-zero chatgpt rows — must not shrink the successful N.
+    for i in range(3):
+        _write_row(
+            run_id=f"new-zero-{i}",
+            finished_at=f"2026-06-01T1{i}:00:00Z",
+            chatgpt_acc=0.0,
+        )
+
+    same = rebuild_multi_from_history(
+        tmp_path, "caseC", n=5, cohort_id=cohort
+    )
+    assert same["ok"] is True
+    by_key = {r["key"]: r for r in same["summary"].ranking_mean}
+    assert by_key["chatgpt"]["n_runs"] == 5
+    assert by_key["chatgpt"]["n_failed"] == 0
+    # Newest successful five: 64,63,62,61,60 — zeros skipped, low-8 not needed.
+    assert float(by_key["chatgpt"]["accuracy_mean"]) == 62.0
+    assert by_key["chatgpt"]["partial"] is False
+    caption = reliability_caption(same["summary"], successful_only=True)
+    assert "exact-zero" in caption.lower() or "non-zero" in caption.lower()
+
+    port = rebuild_portfolio_from_history(
+        tmp_path, n=5, scoring_version="graded-clinical-v4", track="controlled"
+    )
+    assert port["ok"] is True
+    p_by = {r["key"]: r for r in port["summary"].ranking_mean}
+    assert int(p_by["chatgpt"]["n_runs"]) == 5
+    assert float(p_by["chatgpt"]["accuracy_mean"]) == 62.0
+
+
 def test_rebuild_accepts_per_model_n_40_50_and_100(tmp_path: Path):
     """UI selectbox offers 40/50/100; backend must not clamp those caps to 30."""
     for i in range(3):

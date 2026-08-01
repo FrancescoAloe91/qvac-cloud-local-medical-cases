@@ -26,7 +26,7 @@ This is a **research/demo tool**. Artifact “accuracy” is a **Clinical Compos
 - Cloud slots = **OpenRouter API routes** ≠ consumer ChatGPT / Claude / Gemini web.
 - **Uncalibrated single LLM-as-judge** (DeepSeek R1).
 - **Exploratory / amateur** comparison — default Multi N=5 is not a powered study.
-- Rebuild mean = **scored-only** · technical failures excluded · N = successful scores.
+- Rebuild mean = **scored-only** · technical failures and exact-zero composites excluded · N = successful non-zero scores.
 - Label **Same-case** vs **Portfolio**; **New Confirm = new cohort** (short hash on UI).
 - Roster version **default 9** · MedPsy family · MedGemma 1.5 peer where relevant.
 - Local recovery is **capped** (not identical cloud repair/fill weapons).
