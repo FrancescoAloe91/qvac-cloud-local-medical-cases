@@ -2,7 +2,11 @@ from __future__ import annotations
 
 import pytest
 
-from benchmark.report import summarize_runs
+from benchmark.report import (
+    planned_on_device_model_contract,
+    summarize_multi_batch,
+    summarize_runs,
+)
 from benchmark.schema import RunArtifact
 
 
@@ -162,6 +166,44 @@ def test_unequal_valid_n_keeps_all_eligible_models():
 def test_empty_cohort_id_is_rejected():
     with pytest.raises(ValueError, match="empty cohort_id"):
         summarize_runs([_artifact(0, cohort=""), _artifact(1, cohort="")])
+
+
+def test_summarize_multi_batch_falls_back_to_majority_cohort():
+    """Only-local Multi used to crash when sidecar GGUF labels split cohorts."""
+    artifacts = [_artifact(i) for i in range(5)]
+    artifacts[2] = _artifact(2, cohort="cohort-b")
+    artifacts[4] = _artifact(4, cohort="cohort-c")
+
+    with pytest.raises(ValueError, match="mixed cohorts"):
+        summarize_runs(artifacts)
+
+    summary, warning = summarize_multi_batch(artifacts)
+    assert summary is not None
+    assert summary.n >= 1
+    assert len(summary.ranking_mean) == 2
+    assert warning and "3/5" in warning
+    assert any("matching cohort_id" in note for note in summary.outliers)
+
+
+def test_summarize_multi_batch_none_when_no_usable_cohort():
+    summary, warning = summarize_multi_batch(
+        [_artifact(0, cohort=""), _artifact(1, cohort="")]
+    )
+    assert summary is None
+    assert warning and "Mean ranking unavailable" in warning
+
+
+def test_planned_on_device_model_contract_ignores_runtime_label_noise():
+    slots = [
+        {"key": "qvac_1_7b", "model": "medpsy-1.7b-q4", "provider": "qvac"},
+        {"key": "local_medgemma", "model": "medgemma-1.5-4b-it-q4", "provider": "qvac"},
+    ]
+    planned = planned_on_device_model_contract(slots)
+    assert [r["key"] for r in planned] == ["local_medgemma", "qvac_1_7b"]
+    # Same planned slots → identical contract even if a caller would have used
+    # oscillating sidecar names (Q4_K_M vs q4 / imat suffix).
+    again = planned_on_device_model_contract(slots)
+    assert planned == again
 
 
 def test_mixed_batch_ids_disable_paired_sensitivity():

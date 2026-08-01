@@ -6,8 +6,9 @@ import re
 import statistics
 import os
 import tempfile
+from collections import Counter
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from benchmark.cases_loader import load_case
 from benchmark.case_slots import count_distinct_stem_keys
@@ -428,6 +429,98 @@ def summarize_runs(
         total_cost_usd=round(total_cost, 6),
         outliers=outliers + extra_notes,
     )
+
+
+def planned_on_device_model_contract(
+    slots: Sequence[Mapping[str, Any]],
+) -> List[Dict[str, str]]:
+    """Stable cohort recipe from planned on-device slots (not per-run sidecar labels).
+
+    Sidecar ``meta.model`` can oscillate (``medpsy-1.7b-q4`` vs
+    ``medpsy-1.7b-q4_k_m-imat``); hashing collected labels splits one Multi
+    batch into mixed cohorts and aborts the mean. Planned roster ``model``
+    ids stay constant across iterations.
+    """
+    rows: List[Dict[str, str]] = []
+    for slot in slots:
+        key = str(slot.get("key") or "").strip()
+        if not key:
+            continue
+        rows.append(
+            {
+                "key": key,
+                "model": str(slot.get("model") or key).strip(),
+                "provider": str(slot.get("provider") or "qvac").strip() or "qvac",
+            }
+        )
+    rows.sort(key=lambda r: r["key"])
+    return rows
+
+
+def summarize_multi_batch(
+    artifacts: Sequence[RunArtifact],
+    *,
+    min_valid_for_ranking: int = 5,
+) -> Tuple[Optional[MultiRunSummary], Optional[str]]:
+    """UI-safe Multi wrap-up: never raise; majority-cohort fallback when mixed.
+
+    Strict ``summarize_runs`` still rejects mixed/empty cohorts for history
+    rebuild. A finished Multi batch must still show per-run tabs and, when
+    possible, a mean from the largest same-cohort subset.
+    """
+    arts = list(artifacts or [])
+    if len(arts) < 2:
+        return None, None
+    cohort_err: Optional[BaseException] = None
+    try:
+        return (
+            summarize_runs(arts, min_valid_for_ranking=min_valid_for_ranking),
+            None,
+        )
+    except ValueError as exc:
+        cohort_err = exc
+    except Exception as exc:  # noqa: BLE001 — UI must not crash Streamlit
+        return (
+            None,
+            f"Mean ranking unavailable: {type(exc).__name__}: {exc}. "
+            f"{len(arts)} run artifacts were saved — open per-run tabs below.",
+        )
+
+    usable = [a for a in arts if str(a.cohort_id or "").strip()]
+    if len(usable) < 2:
+        return (
+            None,
+            f"Mean ranking unavailable: {cohort_err}. "
+            f"{len(arts)} run artifacts were saved — open per-run tabs below.",
+        )
+
+    counts = Counter(str(a.cohort_id) for a in usable)
+    majority_cid, _ = counts.most_common(1)[0]
+    same = [a for a in usable if str(a.cohort_id) == majority_cid]
+    if len(same) < 2:
+        return (
+            None,
+            f"Mean ranking unavailable: {cohort_err}. "
+            f"{len(arts)} run artifacts were saved — open per-run tabs below.",
+        )
+    try:
+        summary = summarize_runs(
+            same, min_valid_for_ranking=min_valid_for_ranking
+        )
+    except Exception as exc2:  # noqa: BLE001
+        return (
+            None,
+            f"Mean ranking unavailable: {exc2}. "
+            f"{len(arts)} run artifacts were saved — open per-run tabs below.",
+        )
+
+    dropped = len(arts) - len(same)
+    note = (
+        f"Mean used {len(same)}/{len(arts)} runs with matching cohort_id "
+        f"(dropped {dropped} mixed/empty-label run(s)): {cohort_err}"
+    )
+    summary.outliers = list(summary.outliers or []) + [note]
+    return summary, note
 
 
 def print_summary_table(summary: MultiRunSummary) -> str:

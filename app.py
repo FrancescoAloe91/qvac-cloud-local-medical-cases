@@ -90,11 +90,12 @@ from benchmark.report import (
     is_mean_poolable_run,
     list_portfolio_runs,
     load_artifact,
+    planned_on_device_model_contract,
     rebuild_model_ids,
     rebuild_multi_from_history,
     rebuild_portfolio_from_history,
     reliability_caption,
-    summarize_runs,
+    summarize_multi_batch,
     write_artifact,
 )
 from benchmark.run_control import cancel_run, finish_run, is_cancelled, start_run
@@ -5429,14 +5430,11 @@ if st.session_state.get("confirmed_run"):
                             "systemic judge failure. Remaining runs skipped."
                         )
                         st.warning(notes)
-                    _local_model_contract = [
-                        {
-                            "key": c.candidate_key,
-                            "model": c.meta.requested_model or c.meta.model,
-                            "provider": c.meta.provider,
-                        }
-                        for c in collected
-                    ]
+                    # Planned roster model ids — not per-run sidecar labels
+                    # (meta.model can oscillate and split one Multi into mixed cohorts).
+                    _local_model_contract = planned_on_device_model_contract(
+                        local_slots
+                    )
                     _local_cohort = build_cohort_id(
                         case_stem=case_stem,
                         gold=load_confirmed_gold(effective_gold),
@@ -5762,14 +5760,9 @@ if st.session_state.get("confirmed_run"):
                 f"mean ranking ready · judge wall {judge_s}s</div>",
                 unsafe_allow_html=True,
             )
-            try:
-                summary = summarize_runs(all_artifacts)
-            except ValueError as exc:
-                st.warning(
-                    f"Mean ranking unavailable: {exc}. "
-                    f"{len(all_artifacts)} run artifacts were saved — open per-run tabs below."
-                )
-                summary = None
+            summary, _mean_warn = summarize_multi_batch(all_artifacts)
+            if _mean_warn:
+                st.warning(_mean_warn)
             st.session_state["last_multi_paths"] = list(artifact_paths)
             st.session_state["multi_progress"] = finished_multi_progress(
                 completed_snaps,
@@ -5963,9 +5956,10 @@ if st.session_state.get("confirmed_run"):
                         _arm_kpi_dialog("multi_run", path=path)
                         st.rerun()
 
-            st.session_state["last_ranking"] = _mean_rows_to_last_ranking(
-                summary.ranking_mean
-            )
+            if summary is not None:
+                st.session_state["last_ranking"] = _mean_rows_to_last_ranking(
+                    summary.ranking_mean
+                )
             if last_judgments:
                 st.session_state["last_judgments"] = [
                     j.model_dump() if hasattr(j, "model_dump") else j
@@ -6844,14 +6838,9 @@ if st.session_state.get("confirmed_run"):
 
         # -------- Multi ×N: official = mean KPIs; per-run via tabs/popups --------
         if len(all_artifacts) > 1:
-            try:
-                summary = summarize_runs(all_artifacts)
-            except ValueError as exc:
-                st.warning(
-                    f"Mean ranking unavailable: {exc}. "
-                    f"{len(all_artifacts)} run artifacts were saved — open per-run tabs below."
-                )
-                summary = None
+            summary, _mean_warn = summarize_multi_batch(all_artifacts)
+            if _mean_warn:
+                st.warning(_mean_warn)
             st.session_state["last_multi_paths"] = list(artifact_paths)
             st.session_state["multi_progress"] = finished_multi_progress(
                 completed_snaps,
