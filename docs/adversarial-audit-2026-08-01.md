@@ -30,7 +30,7 @@ Agents must poll Quality gate to **success** on HEAD after every push.
 | Legacy opt-in | Gemma 2 2B, Llama 3.2 3B, MedPsy 4B Q8 (History labels retained; OFF by default) |
 | Cases | Base Case 1–5 + growable Case 6+; default pack revision 3 seeds slots **2–7** (anaphylaxis, STEMI, DKA, stroke, suicidal OD, psychosis vs delirium). **Case 1 is not in the current pack** |
 | Medical peer cutover | MedGemma-1.5-4B-IT Q4 |
-| Rebuild mean | Per-model **scored-N** fill; **successful-only** pool; exact Clinical Composite == 0 treated like N/A (MedGemma ~2% zeros on caseC empirically; MedPsy/main peers 0) |
+| Rebuild mean | Per-model **scored-N** fill; **successful-only** pool; exact Clinical Composite == 0 treated like N/A (rare 0 would crush mean; usually refusal / no usable clinical content — e.g. MedGemma ~2% on this caseC History) |
 | Prepare | Structured Q1–A5 gold prepares **locally**; free-form still uses OpenRouter extract |
 | Cost forecast | Typical completions + History priors — not `max_tokens` as billable; billed truth = OpenRouter `usage.cost` |
 | Judge | Single primary DeepSeek R1 (blind); optional whole-run verifier only on systemic failure |
@@ -58,16 +58,17 @@ Agents must poll Quality gate to **success** on HEAD after every push.
 - **Mitigation:** Keep amateur framing on every post; show mean±std, N per model, cohort hash.
 
 ### C5 — Case selection and mid-campaign stem swaps
-- **Attack:** Pack revision replaced Case 2, force-seeded Case 6–7 psych/tox emergencies, left Case 1 out of pack — looks like moving goalposts or specialty stacking.
+- **Attack:** Pack revision replaced Case 2, force-seeded Case 6–7 emergency stems, left Case 1 out of pack — looks like moving goalposts or specialty stacking for a favored local model.
 - **Fair?** Fair as selection-bias critique. Cross-era stems are not one case. Disclose pack revision and titles; do not pool pre/post-swap series.
-- **Mitigation:** Caption pack revision + stem titles. Frame Case 6–7 as emergency psych/tox breadth in an amateur suite — never as domain hunting.
+- **Mitigation:** Caption pack revision + stem titles. Frame Case 6–7 as emergency breadth in an amateur suite — never as optimizing case mix for any model family.
 
 ## High
 
 ### H1 — Rebuild scored-only / successful-only hides failure theater
-- **Attack:** Clean leaderboard after Rebuild; Failed%/partial gone → “you buried N/A.”
-- **Fair?** Mostly fair. Intentional scored-only comparison; reliability optics need captions.
-- **Mitigation:** Disclose that exact Clinical Composite == 0 is treated like N/A in Rebuild mean (excluded from scored-N). Empirically MedGemma ~2/105 (~2%) zeros on caseC; MedPsy/main peers 0. Caption: “Scored-only · N = successful non-zero scores.” Offer a separate reliability view when posting ops honesty.
+- **Attack:** Clean leaderboard after Rebuild; Failed%/partial gone → “you buried N/A” or “you hid zeros to favor a local model.”
+- **Fair?** Mostly fair as optics critique. Intentional scored-only comparison; not a scoring change to invent wins.
+- **Root cause of exact 0 (this History):** Inspected MedGemma caseC zeros (`caseC-33523064bc`, `caseC-df17d3d67f`) — candidate **refusal** (safety / “cannot diagnose” on the anonymized stem), not empty transport and not a judge crash. Composite 0 = valid scored refusal. Occasional other-model zeros also exist (e.g. judge empty-body anomaly marked `ok` with 0).
+- **Mitigation:** Disclose exact Clinical Composite == 0 treated like N/A in Rebuild mean (excluded from N) because a rare 0 would crush the mean; equate to non-score for clean N. Caption refusal root cause; do **not** frame low zero rates as a MedPsy advantage. Offer a separate reliability view when posting ops honesty.
 
 ### H2 — Default 9 vs legacy ≤12 / History cross-roster pooling
 - **Attack:** Means mix eras with Gemma/Llama/Q8 on vs default-9 runs.
@@ -147,7 +148,7 @@ if screenshots crop captions or posts omit the template.
 | C3 Single uncalibrated DeepSeek R1 | Disclosure-mitigated | Honesty block · docs box · X template |
 | C4 Amateur / exploratory framing | Disclosure-mitigated | Honesty block · mean footer · X template |
 | C5 Case selection / pack revision | Disclosure-mitigated (process) | Pack revision captions; still disclose stem titles when posting |
-| H1 Rebuild scored-only | Disclosure-mitigated | Honesty block · Rebuild captions · screenshot footer |
+| H1 Rebuild scored-only / exact-0 as N/A | Disclosure-mitigated | Honesty block (+ refusal root cause) · README/PRESENTATION · X template · Rebuild captions |
 | H2 Roster 9 / cross-roster pooling | Disclosure-mitigated | Roster version on honesty + footer |
 | H3 Dual MedPsy + MedGemma 1.5 | Disclosure-mitigated | Honesty roster line · peer cutover tags in product state |
 | H4 New Confirm = new cohort | Disclosure-mitigated | Confirm caption · honesty block · short cohort hash |

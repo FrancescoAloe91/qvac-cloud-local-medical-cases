@@ -1988,7 +1988,7 @@ _slots_locked = bool(
     st.session_state.get("benchmark_running") or st.session_state.get("confirmed_run")
 )
 
-# After a default-pack revision force-seed (e.g. Case 6–7 psych seeds), reload the
+# After a default-pack revision force-seed (e.g. Case 6–7 emergency-breadth seeds), reload the
 # active editor when that slot was remapped — without interrupting a live run.
 _pack_rev_now = load_pack_revision(WORKSPACE_DIR)
 _pack_rev_meta, _force_seed_slots = load_default_pack_meta()
@@ -3743,7 +3743,8 @@ st.caption(
         else "; optional Gemma/Llama/Q8 hidden until toggled"
     )
     + ") · last ≤N **successful** non-zero scored runs per model · "
-    "technical N/A and exact Clinical Composite == 0 treated like N/A · "
+    "technical N/A and exact Clinical Composite == 0 treated like N/A "
+    "(a rare 0 would crush the mean; usually refusal) · "
     "**No API calls** · scored-only mean."
 )
 

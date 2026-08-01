@@ -567,8 +567,9 @@ _STRINGS = {
             "mixed-case analysis — not a clinical validation claim. "
             "Mean over last ≤N **successful** non-zero scored runs per model; "
             "technical N/A and exact Clinical Composite == 0 treated like N/A "
-            "(skipped). Empirically MedGemma ~2/105 (~2%) zeros on caseC; "
-            "MedPsy/main peers 0. Models with only failures are omitted."
+            "(skipped; a rare 0 would crush the mean). Exact 0 usually = "
+            "refusal / no usable clinical content vs gold. Models with only "
+            "failures are omitted."
         ),
         "bench.rebuild_portfolio_mean_rank": "Mean rank (lower better): {ranks}",
         "bench.rebuild_need_portfolio": (
@@ -618,9 +619,15 @@ _STRINGS = {
         ),
         "disclosure.bullet_rebuild": (
             "Rebuild mean = <b>scored-only</b> · technical failures and exact "
-            "Clinical Composite == 0 are treated like N/A (excluded) · "
-            "N = successful non-zero scores · Empirically MedGemma ~2/105 "
-            "(~2%) zeros on caseC; MedPsy/main peers 0"
+            "Clinical Composite == 0 are treated like N/A (excluded from N) · "
+            "rationale: a rare exact 0 would crush the mean, so it is equated "
+            "to a non-score for the clean comparison"
+        ),
+        "disclosure.bullet_zero": (
+            "Exact composite 0 usually = candidate <b>refusal</b> or no usable "
+            "clinical content vs gold (valid judge score, not a transport crash) · "
+            "this History: MedGemma ~2/109 (~2%) refusal zeros on caseC · "
+            "rate varies by model — not a family ranking claim"
         ),
         "disclosure.bullet_scope": "Mean scope",
         "disclosure.bullet_confirm": (
@@ -1215,8 +1222,9 @@ _STRINGS = {
             "misti — non una claim di validazione clinica. "
             "Media sulle ultime ≤N run **successful** scored non-zero per "
             "modello; N/A tecnici e Clinical Composite esatto == 0 trattati "
-            "come N/A (saltati). Empiricamente MedGemma ~2/105 (~2%) zeri su "
-            "caseC; MedPsy/peer principali 0. Modelli solo-failure omessi."
+            "come N/A (saltati; uno 0 raro schiaccerebbe la media). Lo 0 "
+            "esatto di solito = rifiuto / nessun contenuto clinico "
+            "utilizzabile vs gold. Modelli solo-failure omessi."
         ),
         "bench.rebuild_portfolio_mean_rank": "Rank medio (più basso = meglio): {ranks}",
         "bench.rebuild_need_portfolio": (
@@ -1266,9 +1274,16 @@ _STRINGS = {
         ),
         "disclosure.bullet_rebuild": (
             "Rebuild mean = <b>solo scored</b> · fallimenti tecnici e Clinical "
-            "Composite esatto == 0 trattati come N/A (esclusi) · N = score "
-            "riusciti non-zero · Empiricamente MedGemma ~2/105 (~2%) zeri su "
-            "caseC; MedPsy/peer principali 0"
+            "Composite esatto == 0 trattati come N/A (esclusi da N) · "
+            "motivo: uno 0 esatto raro schiaccerebbe la media, quindi viene "
+            "equiparato a non-score per il confronto pulito"
+        ),
+        "disclosure.bullet_zero": (
+            "Composite esatto 0 di solito = <b>rifiuto</b> del candidato o "
+            "nessun contenuto clinico utilizzabile vs gold (score giudice "
+            "valido, non crash di trasporto) · in questa History: MedGemma "
+            "~2/109 (~2%) zeri per rifiuto su caseC · il tasso varia per "
+            "modello — non è una claim di ranking di famiglia"
         ),
         "disclosure.bullet_scope": "Ambito media",
         "disclosure.bullet_confirm": (

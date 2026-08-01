@@ -44,6 +44,7 @@ def honesty_block_html(
         t("disclosure.bullet_judge", lang),
         t("disclosure.bullet_exploratory", lang),
         t("disclosure.bullet_rebuild", lang),
+        t("disclosure.bullet_zero", lang),
     ]
     if scope:
         lines.append(

@@ -19,6 +19,7 @@ DISCLOSURE_KEYS = [
     "disclosure.bullet_judge",
     "disclosure.bullet_exploratory",
     "disclosure.bullet_rebuild",
+    "disclosure.bullet_zero",
     "disclosure.bullet_scope",
     "disclosure.bullet_confirm",
     "disclosure.bullet_roster",
@@ -59,7 +60,9 @@ def test_honesty_block_includes_core_phrases():
     assert "DeepSeek R1" in html
     assert "scored-only" in html
     assert "treated like N/A" in html
-    assert "MedGemma" in html and "~2/105" in html
+    assert "crush the mean" in html
+    assert "refusal" in html.lower()
+    assert "MedGemma" in html and "~2/109" in html
     assert "Same-case" in html
     assert "abcdef01" in html
     assert str(DEFAULT_ROSTER_VERSION) in html

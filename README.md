@@ -16,16 +16,24 @@ Repository: https://github.com/FrancescoAloe91/qvac-vs-cloud-llms-health-test
 
 ## Known limitations / How to read results
 
-- **Reference-relative** Clinical Composite — not clinical truth, not an official
-  MedPsy blog evaluation.
+Transparent **amateur** comparison — not a medical device, not a powered study,
+and not an official MedPsy blog evaluation. Do not lead posts with “beat
+ChatGPT / Claude / Gemini.”
+
+- **Reference-relative** Clinical Composite — agreement with the author-supplied
+  frozen gold on this bench, not clinical truth.
 - Cloud slots = **OpenRouter API routes** ≠ consumer ChatGPT / Claude / Gemini web.
 - **Uncalibrated single LLM-as-judge** (DeepSeek R1).
-- **Exploratory / amateur** comparison — default Multi N=5 is not a powered study.
-- Rebuild mean = **scored-only** · technical failures and exact Clinical Composite
-  == 0 are treated like N/A (excluded) · N = successful non-zero scores.
-  Empirically MedGemma ~2/105 (~2%) zeros on caseC; MedPsy/main peers had 0.
-- Label **Same-case** vs **Portfolio**; **New Confirm = new cohort** (short hash on UI).
-- Roster version **default 9** · MedPsy family · MedGemma 1.5 peer where relevant.
+- **Exploratory** Multi default N=5 — show mean±std and N per model.
+- **Rebuild mean = scored-only.** Technical failures and exact Clinical Composite
+  == 0 are treated like N/A (excluded from N). Rationale: a rare exact 0 would
+  crush the mean, so it is equated to a non-score for the clean comparison.
+  Exact 0 usually means the candidate **refused** or produced no usable clinical
+  content vs gold (valid judge score, not a transport crash). On this History,
+  MedGemma had ~2/109 (~2%) refusal zeros on caseC; rates vary by model.
+- Label **Same-case** vs **Portfolio**; **New Confirm = new cohort** (short hash).
+- Roster version **default 9** · MedPsy family · medical peers (e.g. MedGemma 1.5)
+  where relevant — do not silently pool cross-roster eras.
 - Local recovery is **capped** (not identical cloud repair/fill weapons).
 
 Screenshot rule: keep mean±std · N · scope · roster · cohort visible. Copy-paste

@@ -591,7 +591,8 @@ def ensure_owner_slots(
 
     Returns ``(slots, bindings, slot_count, drafts)``. Defaults fill only empty
     slots, except ``force_seed_slots`` on a pack revision bump (e.g. Case 6–7
-    psych seeds). Slots not listed in force_seed keep sticky History bindings.
+    emergency-breadth seeds). Slots not listed in force_seed keep sticky
+    History bindings.
     """
     disk, disk_count = load_slot_state(workspace)
     disk_pack_rev = load_pack_revision(workspace)
