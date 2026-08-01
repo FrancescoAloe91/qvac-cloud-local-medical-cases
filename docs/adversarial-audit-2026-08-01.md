@@ -19,6 +19,7 @@ Counts: **5 Critical · 6 High · 6 Medium · 5 Low**.
 |---|---|---|
 | Failed | `19c21b67c869d0452144314f680c6ef7529e7751` | ruff F401 — unused `CURRENT_ROSTER_KEYS` import in `app.py` (Static checks) |
 | Green | `587c2bf92591d5239212070e92296ac0fd04783c` | unused import removed; Quality gate success |
+| Green | `27f843b2a76e8561c6228265ee7859f65f68b456` | ops reliability chart + C/H disclosure package; Quality gate success |
 
 Agents must poll Quality gate to **success** on HEAD after every push.
 
