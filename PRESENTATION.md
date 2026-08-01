@@ -33,7 +33,9 @@ not an official MedPsy blog evaluation. Do not lead with “beat ChatGPT.”
   are treated like N/A (excluded from N). Rationale: a rare exact 0 would crush the
   mean, so it is equated to a non-score. Exact 0 usually = candidate **refusal** or
   no usable clinical content vs gold (valid judge score, not transport crash). This
-  History: MedGemma ~2/109 (~2%) refusal zeros on caseC; rates vary by model.
+  History: MedGemma ~2/109 (~2%) refusal zeros on caseC; rates vary by model — not a
+  family ranking claim. Main ranking table = **n scored** (no Failed% column);
+  zeros + technical N/A live in a **separate ops reliability** chart (counts + %).
 - Label **Same-case** vs **Portfolio**; **New Confirm = new cohort** (short hash).
 - Roster version **default 9** · MedPsy family · medical peers where relevant.
 - Local recovery is **capped** (not identical cloud repair/fill weapons).

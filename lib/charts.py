@@ -640,3 +640,115 @@ def fig_judge_mean_accuracy_bars(
     layout["yaxis"] = dict(title="", tickfont=dict(size=11), automargin=True)
     fig.update_layout(**layout)
     return fig
+
+
+def fig_rebuild_ops_reliability_bars(
+    ops_rows: list,
+    *,
+    title: str = "Ops reliability · zeros + technical N/A (not clinical mean)",
+    height: int = 280,
+) -> go.Figure:
+    """Stacked % bars: scored vs exact-zero vs technical N/A in Rebuild scan window.
+
+    Separate from the Clinical Composite mean chart — ops/honesty view only.
+    Does not encode clinical quality.
+    """
+    ops_rows = filter_current_roster_rows(ops_rows or [])
+    # Prefer models that actually saw observations in the fill-N walk.
+    rows = [r for r in ops_rows if int(r.get("n_seen") or 0) > 0]
+    if not rows:
+        fig = go.Figure()
+        fig.add_annotation(
+            text="No scan-window observations for ops reliability",
+            x=0.5,
+            y=0.5,
+            xref="paper",
+            yref="paper",
+            showarrow=False,
+        )
+        fig.update_layout(**_base_layout(title, height=height))
+        return fig
+
+    labels = [
+        ranking_chart_label(
+            {"key": r.get("key"), "label": r.get("label"), "model": r.get("model")}
+        )
+        for r in rows
+    ]
+    pct_scored = [float(r.get("pct_scored") or 0) for r in rows]
+    pct_zero = [float(r.get("pct_zero") or 0) for r in rows]
+    pct_na = [float(r.get("pct_technical_na") or 0) for r in rows]
+    custom = [
+        [
+            int(r.get("n_scored") or 0),
+            int(r.get("n_zero") or 0),
+            int(r.get("n_technical_na") or 0),
+            int(r.get("n_seen") or 0),
+        ]
+        for r in rows
+    ]
+    n = max(1, len(rows))
+    bar_h = max(height, 64 + n * 44)
+    y = labels[::-1]
+    fig = go.Figure()
+    fig.add_trace(
+        go.Bar(
+            name="Scored (in mean)",
+            y=y,
+            x=pct_scored[::-1],
+            orientation="h",
+            marker=dict(color="#34d399", line=dict(color="#1e293b", width=1)),
+            customdata=custom[::-1],
+            hovertemplate=(
+                "%{y}<br>Scored %{x:.1f}% · n=%{customdata[0]}"
+                "<br>Window n=%{customdata[3]}<extra></extra>"
+            ),
+        )
+    )
+    fig.add_trace(
+        go.Bar(
+            name="Exact zero (excluded)",
+            y=y,
+            x=pct_zero[::-1],
+            orientation="h",
+            marker=dict(color="#fbbf24", line=dict(color="#1e293b", width=1)),
+            customdata=custom[::-1],
+            hovertemplate=(
+                "%{y}<br>Exact zero %{x:.1f}% · n=%{customdata[1]}"
+                "<br>Window n=%{customdata[3]}<extra></extra>"
+            ),
+        )
+    )
+    fig.add_trace(
+        go.Bar(
+            name="Technical N/A (excluded)",
+            y=y,
+            x=pct_na[::-1],
+            orientation="h",
+            marker=dict(color="#f87171", line=dict(color="#1e293b", width=1)),
+            customdata=custom[::-1],
+            hovertemplate=(
+                "%{y}<br>Technical N/A %{x:.1f}% · n=%{customdata[2]}"
+                "<br>Window n=%{customdata[3]}<extra></extra>"
+            ),
+        )
+    )
+    layout = _base_layout(title, height=bar_h)
+    layout["barmode"] = "stack"
+    layout["margin"] = dict(l=168, r=28, t=48, b=36)
+    layout["xaxis"] = dict(
+        range=[0, 100],
+        title="% of Rebuild fill-N scan window (counts in hover)",
+        gridcolor="rgba(51,65,85,0.5)",
+    )
+    layout["yaxis"] = dict(title="", tickfont=dict(size=11), automargin=True)
+    layout["legend"] = dict(
+        orientation="h",
+        yanchor="bottom",
+        y=1.02,
+        xanchor="center",
+        x=0.5,
+        bgcolor="rgba(0,0,0,0)",
+    )
+    fig.update_layout(**layout)
+    return fig

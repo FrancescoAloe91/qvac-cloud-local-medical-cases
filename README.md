@@ -30,7 +30,10 @@ ChatGPT / Claude / Gemini.”
   crush the mean, so it is equated to a non-score for the clean comparison.
   Exact 0 usually means the candidate **refused** or produced no usable clinical
   content vs gold (valid judge score, not a transport crash). On this History,
-  MedGemma had ~2/109 (~2%) refusal zeros on caseC; rates vary by model.
+  MedGemma had ~2/109 (~2%) refusal zeros on caseC; rates vary by model — not a
+  family ranking claim. The main Rebuild ranking table shows **n scored** (not
+  Failed%); zeros + technical N/A appear in a **separate ops reliability** chart
+  (counts + %) under the clinical mean chart.
 - Label **Same-case** vs **Portfolio**; **New Confirm = new cohort** (short hash).
 - Roster version **default 9** · MedPsy family · medical peers (e.g. MedGemma 1.5)
   where relevant — do not silently pool cross-roster eras.

@@ -885,3 +885,123 @@ def test_rebuild_omits_failure_only_models(tmp_path: Path):
     caption = reliability_caption(built["summary"], successful_only=True)
     assert "partial" not in caption.lower()
     assert "successful" in caption.lower()
+
+
+def test_rebuild_ops_reliability_counts_zeros_and_technical_na(tmp_path: Path):
+    """Ops honesty view tallies zeros + N/A without changing scored-only mean."""
+    cohort = "cohort-ops-rel"
+    keys = ["chatgpt", "claude"]
+
+    def _write_row(
+        *,
+        run_id: str,
+        finished_at: str,
+        chatgpt_status: str,
+        chatgpt_acc,
+        claude_acc: float = 80.0,
+    ):
+        ranking = [
+            {
+                "key": "chatgpt",
+                "accuracy": chatgpt_acc,
+                "status": chatgpt_status,
+                "status_note": "candidate_partial" if chatgpt_status != "ok" else None,
+                "rank": 1 if chatgpt_status == "ok" and chatgpt_acc else None,
+                "coverage": 70.0 if chatgpt_status == "ok" else None,
+                "quality": 80.0 if chatgpt_status == "ok" else None,
+                "discipline": 90.0 if chatgpt_status == "ok" else None,
+            },
+            {
+                "key": "claude",
+                "accuracy": claude_acc,
+                "status": "ok",
+                "rank": 1,
+                "coverage": 70.0,
+                "quality": 80.0,
+                "discipline": 90.0,
+            },
+        ]
+        write_artifact(
+            RunArtifact(
+                run_id=run_id,
+                case_id="caseC",
+                started_at=finished_at,
+                finished_at=finished_at,
+                n_index=1,
+                batch_id="batch-ops",
+                models_config={
+                    "candidates": [{"key": k, "model": f"test/{k}"} for k in keys],
+                    "judge": {"model": "deepseek/deepseek-r1"},
+                    "gold_reference": "{}",
+                    "case_stem": "stem-caseC",
+                },
+                ranking=ranking,
+                judgments=[],
+                cohort_id=cohort,
+                scoring_version="graded-clinical-v4",
+                prompt_version="gold-only-v1",
+                benchmark_track="controlled",
+                run_status="partial" if chatgpt_status != "ok" else "complete",
+            ),
+            tmp_path,
+        )
+
+    # Newest first walk: 2 technical N/A, 1 exact zero, then 3 scored for chatgpt.
+    _write_row(
+        run_id="ok2",
+        finished_at="2026-08-01T10:00:00Z",
+        chatgpt_status="ok",
+        chatgpt_acc=70.0,
+    )
+    _write_row(
+        run_id="ok1",
+        finished_at="2026-08-01T11:00:00Z",
+        chatgpt_status="ok",
+        chatgpt_acc=72.0,
+    )
+    _write_row(
+        run_id="ok0",
+        finished_at="2026-08-01T12:00:00Z",
+        chatgpt_status="ok",
+        chatgpt_acc=74.0,
+    )
+    _write_row(
+        run_id="zero",
+        finished_at="2026-08-01T13:00:00Z",
+        chatgpt_status="ok",
+        chatgpt_acc=0.0,
+    )
+    _write_row(
+        run_id="na1",
+        finished_at="2026-08-01T14:00:00Z",
+        chatgpt_status="n/a",
+        chatgpt_acc=None,
+    )
+    _write_row(
+        run_id="na0",
+        finished_at="2026-08-01T15:00:00Z",
+        chatgpt_status="n/a",
+        chatgpt_acc=None,
+    )
+
+    built = rebuild_multi_from_history(
+        tmp_path, "caseC", n=3, cohort_id=cohort, model_ids=keys
+    )
+    assert built["ok"] is True
+    mean_by = {r["key"]: r for r in built["summary"].ranking_mean}
+    assert mean_by["chatgpt"]["n_runs"] == 3
+    assert mean_by["chatgpt"]["n_failed"] == 0
+    assert float(mean_by["chatgpt"]["accuracy_mean"]) == 72.0
+
+    ops_by = {r["key"]: r for r in built["ops_reliability"]}
+    chatgpt_ops = ops_by["chatgpt"]
+    assert chatgpt_ops["n_scored"] == 3
+    assert chatgpt_ops["n_zero"] == 1
+    assert chatgpt_ops["n_technical_na"] == 2
+    assert chatgpt_ops["n_seen"] == 6
+    assert chatgpt_ops["pct_zero"] == round(100.0 * 1 / 6, 1)
+    assert chatgpt_ops["pct_technical_na"] == round(100.0 * 2 / 6, 1)
+    # Claude: newest 3 are all scored (no excluded in its fill-N window of 3).
+    assert ops_by["claude"]["n_scored"] == 3
+    assert ops_by["claude"]["n_zero"] == 0
+    assert ops_by["claude"]["n_technical_na"] == 0

@@ -236,3 +236,25 @@ def test_cv_reliability_cells_use_legend_colors():
         bg, fg, _ = RELIABILITY_BAND_COLORS[band]
         assert bg in cv_td and fg in cv_td and f"{cv:.1f}%" in cv_td
         assert bg in badge and fg in badge
+
+
+def test_ops_reliability_chart_stacks_percentages():
+    from lib.charts import fig_rebuild_ops_reliability_bars
+
+    fig = fig_rebuild_ops_reliability_bars(
+        [
+            {
+                "key": "chatgpt",
+                "n_scored": 3,
+                "n_zero": 1,
+                "n_technical_na": 2,
+                "n_seen": 6,
+                "pct_scored": 50.0,
+                "pct_zero": 16.7,
+                "pct_technical_na": 33.3,
+            }
+        ]
+    )
+    assert len(fig.data) == 3
+    assert fig.layout.barmode == "stack"
+    assert "not clinical mean" in (fig.layout.title.text or "").lower()

@@ -629,6 +629,10 @@ _STRINGS = {
             "this History: MedGemma ~2/109 (~2%) refusal zeros on caseC · "
             "rate varies by model — not a family ranking claim"
         ),
+        "disclosure.bullet_ops": (
+            "Zeros + technical N/A appear in a <b>separate ops reliability</b> "
+            "chart (counts + %) — not on the scored-only mean ranking table"
+        ),
         "disclosure.bullet_scope": "Mean scope",
         "disclosure.bullet_confirm": (
             "<b>New Confirm = new cohort</b> (re-Prepare / claim-split edits too)"
@@ -1284,6 +1288,11 @@ _STRINGS = {
             "valido, non crash di trasporto) · in questa History: MedGemma "
             "~2/109 (~2%) zeri per rifiuto su caseC · il tasso varia per "
             "modello — non è una claim di ranking di famiglia"
+        ),
+        "disclosure.bullet_ops": (
+            "Zeri + N/A tecnici compaiono in un grafico <b>ops reliability</b> "
+            "separato (conteggi + %) — non nella tabella ranking della media "
+            "solo-scored"
         ),
         "disclosure.bullet_scope": "Ambito media",
         "disclosure.bullet_confirm": (

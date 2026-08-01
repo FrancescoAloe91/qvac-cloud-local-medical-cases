@@ -20,6 +20,7 @@ DISCLOSURE_KEYS = [
     "disclosure.bullet_exploratory",
     "disclosure.bullet_rebuild",
     "disclosure.bullet_zero",
+    "disclosure.bullet_ops",
     "disclosure.bullet_scope",
     "disclosure.bullet_confirm",
     "disclosure.bullet_roster",
@@ -63,6 +64,7 @@ def test_honesty_block_includes_core_phrases():
     assert "crush the mean" in html
     assert "refusal" in html.lower()
     assert "MedGemma" in html and "~2/109" in html
+    assert "ops reliability" in html.lower()
     assert "Same-case" in html
     assert "abcdef01" in html
     assert str(DEFAULT_ROSTER_VERSION) in html

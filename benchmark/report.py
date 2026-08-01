@@ -1152,6 +1152,101 @@ def _is_scored_ranking_row(row: Dict[str, Any]) -> bool:
         return False
 
 
+def _classify_rebuild_observation(row: Dict[str, Any]) -> str:
+    """Bucket one ranking row for ops reliability: scored | zero | technical_na."""
+    if _is_scored_ranking_row(row):
+        return "scored"
+    status = str(row.get("status") or "ok")
+    accuracy = row.get("accuracy")
+    if status == "ok" and accuracy is not None:
+        try:
+            if float(accuracy) == 0.0:
+                return "zero"
+        except (TypeError, ValueError):
+            return "technical_na"
+    return "technical_na"
+
+
+def collect_rebuild_ops_reliability(
+    rescored_pairs: Sequence[Tuple[RunArtifact, Dict[str, Any]]],
+    *,
+    n: int,
+    model_ids: Optional[Sequence[str]] = None,
+) -> List[Dict[str, Any]]:
+    """Count zeros + technical N/A seen while filling scored-N (ops honesty).
+
+    Same newest-first walk as Rebuild mean fill — does **not** change the
+    scored-only mean pool. For each model, walk until N successful non-zero
+    scores are reached (or History ends) and tally every observation seen in
+    that window: scored, exact-zero composites, technical N/A.
+    """
+    n = max(1, min(int(n), 100))
+    want = (
+        [str(k) for k in model_ids]
+        if model_ids is not None
+        else list(CURRENT_ROSTER_KEYS)
+    )
+    want_set = frozenset(k for k in want if is_current_roster_key(k))
+    tallies: Dict[str, Dict[str, int]] = {
+        key: {"n_scored": 0, "n_zero": 0, "n_technical_na": 0, "n_seen": 0}
+        for key in want_set
+    }
+    for clone, _row in rescored_pairs:
+        for r in list(clone.ranking or []):
+            key = str(r.get("key") or "")
+            if key not in want_set:
+                continue
+            bucket = tallies[key]
+            if bucket["n_scored"] >= n:
+                continue
+            kind = _classify_rebuild_observation(r)
+            bucket["n_seen"] += 1
+            if kind == "scored":
+                bucket["n_scored"] += 1
+            elif kind == "zero":
+                bucket["n_zero"] += 1
+            else:
+                bucket["n_technical_na"] += 1
+
+    rows: List[Dict[str, Any]] = []
+    for key in want:
+        if key not in tallies:
+            continue
+        t = tallies[key]
+        seen = int(t["n_seen"])
+        n_zero = int(t["n_zero"])
+        n_na = int(t["n_technical_na"])
+        n_scored = int(t["n_scored"])
+        n_excluded = n_zero + n_na
+        denom = max(seen, 1)
+
+        def _pct(count: int) -> float:
+            return round(100.0 * count / denom, 1) if seen else 0.0
+
+        rows.append(
+            {
+                "key": key,
+                "n_scored": n_scored,
+                "n_zero": n_zero,
+                "n_technical_na": n_na,
+                "n_excluded": n_excluded,
+                "n_seen": seen,
+                "pct_scored": _pct(n_scored),
+                "pct_zero": _pct(n_zero),
+                "pct_technical_na": _pct(n_na),
+                "pct_excluded": _pct(n_excluded),
+            }
+        )
+    rows.sort(
+        key=lambda r: (
+            -int(r.get("n_excluded") or 0),
+            -int(r.get("n_seen") or 0),
+            str(r.get("key") or ""),
+        )
+    )
+    return rows
+
+
 def _trim_rescored_to_per_model_n(
     rescored_pairs: Sequence[Tuple[RunArtifact, Dict[str, Any]]],
     *,
@@ -1421,6 +1516,9 @@ def rebuild_multi_from_history(
         clone, row = _offline_rescore_pair(path, art)
         rescored_pairs.append((clone, row))
 
+    ops_reliability = collect_rebuild_ops_reliability(
+        rescored_pairs, n=n, model_ids=want_keys
+    )
     rescored_arts, per_run, _counts = _trim_rescored_to_per_model_n(
         rescored_pairs, n=n, model_ids=want_keys, keep_failures=False
     )
@@ -1436,6 +1534,7 @@ def rebuild_multi_from_history(
             "available": len(pairs),
             "cohort_id": target_cohort,
             "scope": "same_case",
+            "ops_reliability": ops_reliability,
         }
 
     summary = _finalize_clean_rebuild_summary(
@@ -1461,6 +1560,7 @@ def rebuild_multi_from_history(
         "mean_rank": _mean_ranks_from_per_run(per_run),
         "successful_only": True,
         "model_ids": list(want_keys),
+        "ops_reliability": ops_reliability,
     }
 
 
@@ -1522,6 +1622,9 @@ def rebuild_portfolio_from_history(
         clone, row = _offline_rescore_pair(path, art)
         rescored_pairs.append((clone, row))
 
+    ops_reliability = collect_rebuild_ops_reliability(
+        rescored_pairs, n=n, model_ids=want_keys
+    )
     rescored_arts, per_run, _counts = _trim_rescored_to_per_model_n(
         rescored_pairs, n=n, model_ids=want_keys, keep_failures=False
     )
@@ -1539,6 +1642,7 @@ def rebuild_portfolio_from_history(
             "scope": "portfolio",
             "scoring_version": scoring_version,
             "track": track,
+            "ops_reliability": ops_reliability,
         }
 
     summary = _finalize_clean_rebuild_summary(
@@ -1577,6 +1681,7 @@ def rebuild_portfolio_from_history(
         "model_ids": list(want_keys),
         "mean_rank": mean_rank,
         "case_ids": sorted({a.case_id for a in rescored_arts}),
+        "ops_reliability": ops_reliability,
         "mixed_case_exploratory": True,
     }
 

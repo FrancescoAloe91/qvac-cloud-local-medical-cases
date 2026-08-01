@@ -68,7 +68,7 @@ Agents must poll Quality gate to **success** on HEAD after every push.
 - **Attack:** Clean leaderboard after Rebuild; Failed%/partial gone → “you buried N/A” or “you hid zeros to favor a local model.”
 - **Fair?** Mostly fair as optics critique. Intentional scored-only comparison; not a scoring change to invent wins.
 - **Root cause of exact 0 (this History):** Inspected MedGemma caseC zeros (`caseC-33523064bc`, `caseC-df17d3d67f`) — candidate **refusal** (safety / “cannot diagnose” on the anonymized stem), not empty transport and not a judge crash. Composite 0 = valid scored refusal. Occasional other-model zeros also exist (e.g. judge empty-body anomaly marked `ok` with 0).
-- **Mitigation:** Disclose exact Clinical Composite == 0 treated like N/A in Rebuild mean (excluded from N) because a rare 0 would crush the mean; equate to non-score for clean N. Caption refusal root cause; do **not** frame low zero rates as a MedPsy advantage. Offer a separate reliability view when posting ops honesty.
+- **Mitigation:** Disclose exact Clinical Composite == 0 treated like N/A in Rebuild mean (excluded from N) because a rare 0 would crush the mean; equate to non-score for clean N. Caption refusal root cause; do **not** frame low zero rates as a MedPsy advantage. Main Rebuild ranking table shows **n scored** only (no Failed% column). Separate **ops reliability** chart + count table shows zeros + technical N/A (% and counts) for the fill-N scan window — not the clinical mean.
 
 ### H2 — Default 9 vs legacy ≤12 / History cross-roster pooling
 - **Attack:** Means mix eras with Gemma/Llama/Q8 on vs default-9 runs.
@@ -148,7 +148,7 @@ if screenshots crop captions or posts omit the template.
 | C3 Single uncalibrated DeepSeek R1 | Disclosure-mitigated | Honesty block · docs box · X template |
 | C4 Amateur / exploratory framing | Disclosure-mitigated | Honesty block · mean footer · X template |
 | C5 Case selection / pack revision | Disclosure-mitigated (process) | Pack revision captions; still disclose stem titles when posting |
-| H1 Rebuild scored-only / exact-0 as N/A | Disclosure-mitigated | Honesty block (+ refusal root cause) · README/PRESENTATION · X template · Rebuild captions |
+| H1 Rebuild scored-only / exact-0 as N/A | Disclosure-mitigated | Honesty block (+ refusal + ops chart bullet) · README/PRESENTATION · X template · Rebuild captions · separate ops reliability chart (zeros+N/A counts/%) · main table n scored only |
 | H2 Roster 9 / cross-roster pooling | Disclosure-mitigated | Roster version on honesty + footer |
 | H3 Dual MedPsy + MedGemma 1.5 | Disclosure-mitigated | Honesty roster line · peer cutover tags in product state |
 | H4 New Confirm = new cohort | Disclosure-mitigated | Confirm caption · honesty block · short cohort hash |

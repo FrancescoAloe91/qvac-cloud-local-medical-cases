@@ -133,7 +133,11 @@ from lib.benchmark_multi_ui import (
     short_model,
     snapshot_from_artifact,
 )
-from lib.charts import fig_judge_accuracy_bars, fig_judge_mean_accuracy_bars
+from lib.charts import (
+    fig_judge_accuracy_bars,
+    fig_judge_mean_accuracy_bars,
+    fig_rebuild_ops_reliability_bars,
+)
 from lib.deployment import is_local_install, is_streamlit_cloud
 from lib.disclosure import (
     DEFAULT_ROSTER_VERSION,
@@ -1425,7 +1429,7 @@ def _reliability_table_html(
         else "<th style='padding:0.55rem;text-align:right'>Failed</th>"
     )
     runs_th = (
-        "<th style='padding:0.55rem;text-align:right'>Successful</th>"
+        "<th style='padding:0.55rem;text-align:right'>n scored</th>"
         if successful_only
         else "<th style='padding:0.55rem;text-align:right'>Runs</th>"
     )
@@ -1438,10 +1442,10 @@ def _reliability_table_html(
             f"{reliability_badge('very_low')} CV &gt; 20% &nbsp;·&nbsp; "
             "cell color = CV band · lower CV = stabler mean · "
             "<b>CV band ≠ clinical validation</b> · "
-            "<b>Successful</b> = last ≤N error-free non-zero scored runs per model "
+            "<b>n scored</b> = last ≤N error-free non-zero scored runs per model "
             "(technical N/A and exact-zero composites skipped; older successful "
-            "History used) · "
-            "models with only failures are omitted · "
+            "History used) · Failed%/zeros live in the separate ops reliability "
+            "chart below · models with only failures are omitted · "
             "N=5 exploratory · ~10 better for CV eye-check · 20–50 diminishing · 100 max · "
             "<b>C/Q/D</b> = coverage / quality / discipline "
             "(quality is independent of coverage; a high board % can still have low C)"
@@ -1624,6 +1628,67 @@ def history_mean_rebuild_dialog():
         ),
         unsafe_allow_html=True,
     )
+
+    _ops_rows = list(payload.get("ops_reliability") or [])
+    _ops_seen = sum(int(r.get("n_seen") or 0) for r in _ops_rows)
+    if _ops_seen > 0:
+        st.markdown("##### Ops reliability · zeros + technical N/A (not clinical mean)")
+        st.caption(
+            "Separate honesty view of the Rebuild fill-N scan window: "
+            "exact Clinical Composite == 0 and technical N/A (counts + %). "
+            "These observations are excluded from the scored-only mean above — "
+            "not a clinical ranking and not a family-advantage claim."
+        )
+        st.plotly_chart(
+            fig_rebuild_ops_reliability_bars(
+                _ops_rows,
+                title=(
+                    "Ops reliability · zeros + technical N/A vs scored "
+                    f"· ≤{payload.get('n_per_model_cap') or '?'} scored/model scan"
+                ),
+                height=260,
+            ),
+            use_container_width=True,
+            key="hm_dlg_ops_chart",
+        )
+        _ops_df_rows = []
+        for r in _ops_rows:
+            if int(r.get("n_seen") or 0) <= 0:
+                continue
+            nm, ver = _nv(r.get("key"))
+            _ops_df_rows.append(
+                {
+                    "Model": nm,
+                    "Version": ver,
+                    "n scored": int(r.get("n_scored") or 0),
+                    "n zero": int(r.get("n_zero") or 0),
+                    "n technical N/A": int(r.get("n_technical_na") or 0),
+                    "n seen": int(r.get("n_seen") or 0),
+                    "% scored": r.get("pct_scored"),
+                    "% zero": r.get("pct_zero"),
+                    "% technical N/A": r.get("pct_technical_na"),
+                }
+            )
+        if _ops_df_rows:
+            st.dataframe(
+                pd.DataFrame(_ops_df_rows),
+                use_container_width=True,
+                hide_index=True,
+            )
+        st.markdown(
+            screenshot_footer_html(
+                lang=_ui_lang(),
+                scope=_scope,
+                roster_n=_dlg_roster_n,
+                cohort_id=_dlg_cohort,
+                n_label=(
+                    f"N≤{payload.get('n_per_model_cap') or '?'} scored/model scan"
+                ),
+                extra="ops reliability · zeros+N/A · not clinical mean",
+            ),
+            unsafe_allow_html=True,
+        )
+
     st.markdown("##### Paired complete-case sensitivity analysis")
     if summary.paired_ranking:
         st.dataframe(
