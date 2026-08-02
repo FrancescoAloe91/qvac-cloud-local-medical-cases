@@ -8,9 +8,92 @@
   }
   var win = doc.defaultView || window.parent || window;
 
-  /* Bump when close/open logic changes — must rebind after remount */
-  if (win.__qvacUiPortalV7) return;
-  win.__qvacUiPortalV7 = true;
+  /* Bump when close/open / sidebar-force logic changes — must rebind after remount */
+  if (win.__qvacUiPortalV8) return;
+  win.__qvacUiPortalV8 = true;
+
+  /*
+   * Force-expand the left sidebar on every full page load.
+   * Streamlit 1.50+ persists collapse in localStorage as stSidebarCollapsed-<hash>
+   * and that preference wins over initial_sidebar_state="expanded" on reload —
+   * which left users with a closed column and a hard-to-reach >> control.
+   * Clear the preference, then click stExpandSidebarButton until open (or timeout).
+   * Does not keep fighting if the user collapses later in the same session.
+   */
+  function clearPersistedSidebarCollapse() {
+    try {
+      var stores = [win.localStorage, win.sessionStorage];
+      for (var s = 0; s < stores.length; s++) {
+        var store = stores[s];
+        if (!store) continue;
+        var keys = [];
+        for (var i = 0; i < store.length; i++) {
+          var k = store.key(i);
+          /* Streamlit 1.50+: stSidebarCollapsed-<pageScriptHash> = "true"|"false" */
+          if (k && k.indexOf("stSidebarCollapsed-") === 0) keys.push(k);
+        }
+        for (var j = 0; j < keys.length; j++) {
+          store.setItem(keys[j], "false");
+        }
+      }
+    } catch (err) {}
+  }
+
+  function sidebarIsCollapsed() {
+    var sb =
+      doc.querySelector('section[data-testid="stSidebar"]') ||
+      doc.querySelector('[data-testid="stSidebar"]');
+    if (!sb) return null;
+    var aria = sb.getAttribute("aria-expanded");
+    if (aria === "false") return true;
+    if (aria === "true") return false;
+    /* Fallback: collapsed sidebars are translated off-screen / near-zero width */
+    try {
+      var r = sb.getBoundingClientRect();
+      if (r.width > 0 && r.width < 40) return true;
+      if (r.right <= 8) return true;
+    } catch (e2) {}
+    return false;
+  }
+
+  function clickExpandSidebar() {
+    var host = doc.querySelector('[data-testid="stExpandSidebarButton"]');
+    if (!host) return false;
+    var target =
+      host.tagName === "BUTTON"
+        ? host
+        : host.querySelector("button") || host;
+    try {
+      /* Single click only — double dispatch would toggle open then closed. */
+      if (typeof target.click === "function") target.click();
+      else
+        target.dispatchEvent(
+          new MouseEvent("click", { bubbles: true, cancelable: true, view: win })
+        );
+      return true;
+    } catch (err) {
+      return false;
+    }
+  }
+
+  function forceSidebarOpenOnce() {
+    clearPersistedSidebarCollapse();
+    var collapsed = sidebarIsCollapsed();
+    if (collapsed === false) return true;
+    if (collapsed === null) return false;
+    clickExpandSidebar();
+    return sidebarIsCollapsed() === false;
+  }
+
+  clearPersistedSidebarCollapse();
+  forceSidebarOpenOnce();
+  var _forceAttempts = 0;
+  var _forceTimer = win.setInterval(function () {
+    _forceAttempts += 1;
+    if (forceSidebarOpenOnce() || _forceAttempts >= 48) {
+      win.clearInterval(_forceTimer);
+    }
+  }, 125);
 
   function overlayFor(ck) {
     if (!ck) return null;

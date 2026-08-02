@@ -9,7 +9,9 @@ html, body, .stApp, .stMarkdown, p, label, .stCaption {
 }
 /* Transparent top chrome — never display:none the whole header.
    Streamlit mounts stExpandSidebarButton (>>) inside stHeader; hiding the
-   header made a collapsed left column impossible to reopen. */
+   header made a collapsed left column impossible to reopen.
+   Prefer height:auto (not 0) so the reopen control stays in layout as backup
+   while JS force-expands on every page load. */
 header[data-testid="stHeader"],
 .stApp > header {
   background: transparent !important;
@@ -17,7 +19,7 @@ header[data-testid="stHeader"],
   background-image: none !important;
   box-shadow: none !important;
   border: none !important;
-  height: 0 !important;
+  height: auto !important;
   min-height: 0 !important;
   overflow: visible !important;
   pointer-events: none !important;
@@ -27,7 +29,7 @@ header[data-testid="stHeader"],
 [data-testid="stStatusWidget"] {
   display: none !important;
 }
-/* Clear reopen control after sidebar collapse (Comprehension + Structured) */
+/* Backup reopen control if collapse ever sticks (Comprehension + Structured) */
 [data-testid="stExpandSidebarButton"],
 header[data-testid="stHeader"] [data-testid="stExpandSidebarButton"] {
   pointer-events: auto !important;
@@ -45,12 +47,28 @@ header[data-testid="stHeader"] [data-testid="stExpandSidebarButton"] {
   background: #1e293b !important;
   color: #e2e8f0 !important;
   box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35) !important;
+  width: auto !important;
+  height: auto !important;
+  max-width: none !important;
+  max-height: none !important;
+  transform: none !important;
+  clip: auto !important;
+  clip-path: none !important;
 }
 [data-testid="stExpandSidebarButton"] button,
 [data-testid="stExpandSidebarButton"] span,
 [data-testid="stExpandSidebarButton"] [data-testid="stIconMaterial"] {
   color: #e2e8f0 !important;
   pointer-events: auto !important;
+  visibility: visible !important;
+  opacity: 1 !important;
+}
+/* Do not leave a zero-width / display-none sidebar after a sticky collapse */
+section[data-testid="stSidebar"][aria-expanded="true"],
+[data-testid="stSidebar"][aria-expanded="true"] {
+  display: flex !important;
+  visibility: visible !important;
+  min-width: 220px !important;
 }
 /* Content can sit near the top once chrome is hidden */
 .block-container {

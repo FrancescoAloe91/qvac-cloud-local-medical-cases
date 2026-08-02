@@ -237,6 +237,7 @@ def test_comprehension_guide_portal_and_sidebar_reopen_control():
     home = (root / "app.py").read_text(encoding="utf-8")
     structured = (root / "pages" / "structured_graded.py").read_text(encoding="utf-8")
     css = (root / "assets" / "dashboard.css").read_text(encoding="utf-8")
+    portal = (root / "assets" / "dashboard_portal.js").read_text(encoding="utf-8")
     guides = (root / "lib" / "guide_overlays.py").read_text(encoding="utf-8")
     assert "dashboard_portal.js" in home
     assert "dashboard_portal.js" in structured
@@ -250,6 +251,13 @@ def test_comprehension_guide_portal_and_sidebar_reopen_control():
     )[0]
     assert "display: none" not in header_block
     assert "transparent" in header_block
+    assert "height: auto" in header_block
+    # Force-open on every full page load (localStorage collapse beats page_config).
+    assert "stSidebarCollapsed-" in portal
+    assert "forceSidebarOpenOnce" in portal
+    assert "stExpandSidebarButton" in portal
+    assert "initial_sidebar_state=\"expanded\"" in home
+    assert "initial_sidebar_state=\"expanded\"" in structured
 
 
 def test_new_beta_case_slot_does_not_mutate_pack():

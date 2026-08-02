@@ -58,14 +58,15 @@ h1, h2, h3, h4 { font-family: 'Sora', 'Inter', sans-serif !important; letter-spa
     opacity: 0.6;
 }
 
-/* Transparent header — keep stExpandSidebarButton (>>) clickable when collapsed */
+/* Transparent header — keep stExpandSidebarButton (>>) clickable when collapsed.
+   height:auto (not 0) so the reopen control remains reachable as backup. */
 header[data-testid="stHeader"],
 .stApp > header {
     background: transparent !important;
     background-color: transparent !important;
     box-shadow: none !important;
     border: none !important;
-    height: 0 !important;
+    height: auto !important;
     min-height: 0 !important;
     overflow: visible !important;
     pointer-events: none !important;
@@ -79,6 +80,7 @@ header[data-testid="stHeader"],
     pointer-events: auto !important;
     display: flex !important;
     visibility: visible !important;
+    opacity: 1 !important;
     position: fixed !important;
     top: 0.55rem !important;
     left: 0.55rem !important;
