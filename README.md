@@ -10,7 +10,7 @@ evaluation.** Scores measure agreement with a frozen reference on this bench,
 not real-world diagnostic accuracy.
 
 Live app: https://francescoaloe91-qvac-vs-cloud-llms-health-test-app-wihxyd.streamlit.app  
-Repository: https://github.com/FrancescoAloe91/qvac-vs-cloud-llms-health-test
+Repository: https://github.com/FrancescoAloe91/qvac-vs-cloud-llms-medical-cases
 
 ## Two tracks (KPIs never pool)
 
@@ -377,8 +377,8 @@ Requirements: Python 3.9+ (hashed locks and CI use 3.9; `./install.sh` prefers
 sidecar.
 
 ```bash
-git clone https://github.com/FrancescoAloe91/qvac-vs-cloud-llms-health-test.git
-cd qvac-vs-cloud-llms-health-test
+git clone https://github.com/FrancescoAloe91/qvac-vs-cloud-llms-medical-cases.git
+cd qvac-vs-cloud-llms-medical-cases
 
 chmod +x install.sh
 ./install.sh                 # MedPsy 4B Q4

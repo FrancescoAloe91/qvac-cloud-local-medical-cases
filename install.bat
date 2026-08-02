@@ -5,7 +5,7 @@ cd /d "%~dp0"
 
 echo.
 echo ============================================================
-echo   QVAC vs Cloud - Health Test - local install (one time)
+echo   QVAC vs Cloud - Medical Cases - local install (one time)
 echo ============================================================
 echo.
 

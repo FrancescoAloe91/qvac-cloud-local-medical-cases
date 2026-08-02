@@ -8,7 +8,7 @@ from pathlib import Path
 LIVE_DEMO_URL = (
     "https://francescoaloe91-qvac-vs-cloud-llms-health-test-app-wihxyd.streamlit.app"
 )
-GITHUB_REPO_URL = "https://github.com/FrancescoAloe91/qvac-vs-cloud-llms-health-test"
+GITHUB_REPO_URL = "https://github.com/FrancescoAloe91/qvac-vs-cloud-llms-medical-cases"
 
 
 def is_streamlit_cloud() -> bool:

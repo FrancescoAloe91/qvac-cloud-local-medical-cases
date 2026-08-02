@@ -7,12 +7,12 @@ SUPPORTED_LANGS = ("en", "it")
 
 _STRINGS = {
     "en": {
-        "page_title": "QVAC vs Cloud LLMs - Health Test",
+        "page_title": "QVAC vs Cloud LLMs - Medical Cases",
         "lang_label": "Language",
-        "title": "QVAC vs Cloud LLMs - Health Test",
+        "title": "QVAC vs Cloud LLMs - Medical Cases",
         "subtitle": "Identical prompt for every model · QVAC-only depth setting · Manual cloud paste · Diagnosis comparison",
         "cloud.demo_banner": "☁️ **Public demo (free hosting)** — Cloud LLM paste + rankings work here. **Live QVAC Run benchmark** needs a local Mac/PC with the QVAC sidecar (`./install.sh` + `sidecar`). You can paste a QVAC answer generated locally into the QVAC box.",
-        "cloud.demo_link": "Full local setup (free): [GitHub README](https://github.com/FrancescoAloe91/qvac-vs-cloud-llms-health-test) · [Live demo](https://francescoaloe91-qvac-vs-cloud-llms-health-test-app-wihxyd.streamlit.app)",
+        "cloud.demo_link": "Full local setup (free): [GitHub README](https://github.com/FrancescoAloe91/qvac-vs-cloud-llms-medical-cases) · [Live demo](https://francescoaloe91-qvac-vs-cloud-llms-health-test-app-wihxyd.streamlit.app)",
         "guide.setup_btn": "Setup guide",
         "guide.rank_btn": "How ranking works",
         "guide.setup_title": "QVAC + MedPsy setup",
@@ -839,12 +839,12 @@ _STRINGS = {
         ),
     },
     "it": {
-        "page_title": "QVAC vs Cloud LLMs - Health Test",
+        "page_title": "QVAC vs Cloud LLMs - Medical Cases",
         "lang_label": "Lingua",
-        "title": "QVAC vs Cloud LLMs - Health Test",
+        "title": "QVAC vs Cloud LLMs - Medical Cases",
         "subtitle": "Prompt identico per tutti · Profondità scelta solo per QVAC · Cloud manuali · Confronto diagnosi",
         "cloud.demo_banner": "☁️ **Demo pubblica (hosting gratuito)** — Incolla cloud + ranking funzionano qui. **Run benchmark QVAC live** richiede Mac/PC locale con sidecar QVAC (`./install.sh` + `sidecar`). Puoi incollare nel riquadro QVAC una risposta generata in locale.",
-        "cloud.demo_link": "Setup locale completo (gratis): [README GitHub](https://github.com/FrancescoAloe91/qvac-vs-cloud-llms-health-test) · [Demo live](https://francescoaloe91-qvac-vs-cloud-llms-health-test-app-wihxyd.streamlit.app)",
+        "cloud.demo_link": "Setup locale completo (gratis): [README GitHub](https://github.com/FrancescoAloe91/qvac-vs-cloud-llms-medical-cases) · [Demo live](https://francescoaloe91-qvac-vs-cloud-llms-health-test-app-wihxyd.streamlit.app)",
         "guide.setup_btn": "Guida setup",
         "guide.rank_btn": "Come funziona la classifica",
         "guide.setup_title": "Setup QVAC + MedPsy",

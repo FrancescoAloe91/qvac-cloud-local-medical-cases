@@ -1,4 +1,4 @@
-# QVAC vs Cloud LLMs — Health Test
+# QVAC vs Cloud LLMs — Medical Cases
 ### Pitch one-pager (demo / investors / workshop)
 
 ---
@@ -117,4 +117,4 @@ Streamlit · Python · OpenRouter (BYOK) · DeepSeek R1 judge · Qwen whole-run 
 
 > *“Same frozen gold — free-form Comprehension on Home for real narrative capability; optional Structured if you care about slot contracts. Amateur exercise, loud disclaimers, no medical validity.”*
 
-**Repo:** https://github.com/FrancescoAloe91/qvac-vs-cloud-llms-health-test
+**Repo:** https://github.com/FrancescoAloe91/qvac-vs-cloud-llms-medical-cases

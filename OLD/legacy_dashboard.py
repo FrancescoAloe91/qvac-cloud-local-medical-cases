@@ -59,7 +59,7 @@ except Exception as _cloud_tiers_exc:  # pragma: no cover - cloud diagnostics
         return (labels or load_tier_labels()).get(model_key, "")
 
 st.set_page_config(
-    page_title="QVAC vs Cloud LLMs - Health Test",
+    page_title="QVAC vs Cloud LLMs - Medical Cases",
     page_icon="🩺",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -603,7 +603,7 @@ def qvac_decision_dialog():
 # --- Sidebar ---
 with st.sidebar:
     st.markdown(
-        '<div class="sidebar-brand">🩺 <b>QVAC Health Test</b></div>',
+        '<div class="sidebar-brand">🩺 <b>QVAC Medical Cases</b></div>',
         unsafe_allow_html=True,
     )
     st.info(

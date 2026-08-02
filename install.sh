@@ -19,7 +19,7 @@ done
 
 echo ""
 echo "╔══════════════════════════════════════════════════════════════╗"
-echo "║  QVAC vs Cloud · Health Test — local install (one time)      ║"
+echo "║  QVAC vs Cloud · Medical Cases — local install (one time)      ║"
 if [[ "$FULL_MODELS" == "1" ]]; then
 echo "║  Mode: FULL GGUF pack (~14 GB · 3 MedPsy + 3 peers)          ║"
 else

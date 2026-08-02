@@ -22,7 +22,7 @@ export STREAMLIT_BROWSER_GATHER_USAGE_STATS=false
 export STREAMLIT_SERVER_SHOW_EMAIL_PROMPT=false
 
 echo ""
-echo "Avvio QVAC vs Cloud LLMs - Health Test..."
+echo "Avvio QVAC vs Cloud LLMs - Medical Cases..."
 echo "Se il browser non si apre da solo, vai su: http://localhost:8501"
 echo ""
 
