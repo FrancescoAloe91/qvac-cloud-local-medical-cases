@@ -698,9 +698,52 @@ _STRINGS = {
             "stay in separate Histories"
         ),
         "disclosure.banner_auto_freeze": (
-            "**Pack Multi×all:** each case’s reference is **auto-locked** for "
-            "scoring (no Prepare/Confirm review). Same frozen pack checklist "
-            "as manual Lock — not a human re-check of claims."
+            "**Pack Multi×all ≠ manual Lock:** each pack case is "
+            "**auto-locked** from the curated pack checklist (no Prepare/"
+            "Confirm UI). Scores still use that frozen reference — this is "
+            "not a human re-review of claims. Prefer Lock on a single case "
+            "when you want to check the checklist yourself."
+        ),
+        "disclosure.screenshot_checklist": (
+            "Before sharing a screenshot: keep the amber honesty notes + "
+            "orange mean footer (track · protocol · pack · N · scope). "
+            "Do not crop to bars only."
+        ),
+        "comp.lock_checkbox": (
+            "I confirm: lock this case story and its reference answers for "
+            "scoring (the long text is the readable story; scoring uses the "
+            "reference checklist)."
+        ),
+        "comp.lock_btn": "Lock reference for scoring",
+        "comp.lock_ok": (
+            "Reference locked for Case {n} · {claims} checklist points · "
+            "ready for Single / Multi."
+        ),
+        "comp.lock_success": (
+            "Locked · Case {n} · {claims} checklist points ready for scoring."
+        ),
+        "comp.track_caption": (
+            "**Comprehension** is the main free-form track. Results here never "
+            "mix with the optional Structured track."
+        ),
+        "comp.need_lock": "Lock a reference for this case before Single / Multi.",
+        "guide.setup_need_h": "What you need for on-device MedPsy",
+        "guide.setup_need_1": "QVAC software running locally (the sidecar folder)",
+        "guide.setup_need_2": "MedPsy model file in the models/ folder",
+        "guide.setup_need_3": "Node.js 22+ from nodejs.org",
+        "guide.setup_steps_h": "Setup after cloning",
+        "guide.setup_step_1": "Install Node.js 22+ from nodejs.org",
+        "guide.setup_step_2": "Put the MedPsy model file in models/",
+        "guide.setup_step_3": (
+            "From the project folder, in a second terminal run the commands below"
+        ),
+        "guide.setup_leave": "Leave that terminal open, then refresh this page.",
+        "guide.setup_ready": (
+            "When the sidecar is running, MedPsy is included (on your machine, $0 API)."
+        ),
+        "guide.setup_status": "Status on this machine:",
+        "guide.setup_browser": (
+            "This window is browser-only — opening it does not pause a run."
         ),
         "disclosure.rebuild_scan_line": (
             "Rebuild mean · scored {scored}/{seen} · zeros {zero} · N/A {na} "
@@ -1456,10 +1499,54 @@ _STRINGS = {
             "restano in History separate"
         ),
         "disclosure.banner_auto_freeze": (
-            "**Pack Multi×all:** il riferimento di ogni caso è "
-            "**bloccato automaticamente** per lo score (niente Prepare/Confirm). "
-            "Stessa checklist del pack del Lock manuale — non è un ricontrollo "
-            "umano delle claim."
+            "**Pack Multi×all ≠ Lock manuale:** ogni caso del pack viene "
+            "**bloccato automaticamente** dalla checklist curata del pack "
+            "(niente UI Prepare/Confirm). Lo score usa comunque quel "
+            "riferimento — non è un ricontrollo umano delle claim. Usa Lock "
+            "su un singolo caso se vuoi controllare tu la checklist."
+        ),
+        "disclosure.screenshot_checklist": (
+            "Prima di condividere uno screenshot: tieni le note ambra di "
+            "onestà + il footer arancione della media (track · protocol · "
+            "pack · N · ambito). Non ritagliare solo le barre."
+        ),
+        "comp.lock_checkbox": (
+            "Confermo: blocco la storia del caso e le risposte di riferimento "
+            "per lo score (il testo lungo è la storia leggibile; lo score usa "
+            "la checklist di riferimento)."
+        ),
+        "comp.lock_btn": "Blocca riferimento per lo score",
+        "comp.lock_ok": (
+            "Riferimento bloccato per Case {n} · {claims} punti checklist · "
+            "pronto per Single / Multi."
+        ),
+        "comp.lock_success": (
+            "Bloccato · Case {n} · {claims} punti checklist pronti per lo score."
+        ),
+        "comp.track_caption": (
+            "**Comprehension** è il track principale a testo libero. I "
+            "risultati qui non si mescolano mai con lo Structured opzionale."
+        ),
+        "comp.need_lock": (
+            "Blocca un riferimento per questo caso prima di Single / Multi."
+        ),
+        "guide.setup_need_h": "Cosa serve per MedPsy on-device",
+        "guide.setup_need_1": "Software QVAC in locale (cartella sidecar)",
+        "guide.setup_need_2": "File modello MedPsy nella cartella models/",
+        "guide.setup_need_3": "Node.js 22+ da nodejs.org",
+        "guide.setup_steps_h": "Setup dopo il clone",
+        "guide.setup_step_1": "Installa Node.js 22+ da nodejs.org",
+        "guide.setup_step_2": "Metti il file MedPsy in models/",
+        "guide.setup_step_3": (
+            "Dalla cartella del progetto, in un secondo terminale esegui i comandi sotto"
+        ),
+        "guide.setup_leave": "Lascia quel terminale aperto, poi ricarica questa pagina.",
+        "guide.setup_ready": (
+            "Con il sidecar avviato, MedPsy è incluso (sul tuo PC, $0 API)."
+        ),
+        "guide.setup_status": "Stato su questa macchina:",
+        "guide.setup_browser": (
+            "Finestra solo browser — aprirla non mette in pausa una run."
         ),
         "disclosure.rebuild_scan_line": (
             "Media Rebuild · scored {scored}/{seen} · zeri {zero} · N/A {na} "

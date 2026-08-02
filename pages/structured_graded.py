@@ -150,6 +150,7 @@ from lib.disclosure import (
     rebuild_scan_honesty_html,
     scope_label,
     screenshot_footer_html,
+    screenshot_share_checklist_html,
     short_cohort,
 )
 from lib.boot_welcome import init_boot_state, run_boot_dialogs
@@ -1136,6 +1137,10 @@ def history_mean_rebuild_dialog():
             scope=_scope,
             cohort_id=_dlg_cohort,
         ),
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        screenshot_share_checklist_html(lang=_ui_lang()),
         unsafe_allow_html=True,
     )
 

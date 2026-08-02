@@ -2,16 +2,21 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from lib.disclosure import (
     DEFAULT_ROSTER_VERSION,
     honesty_block_html,
     rebuild_scan_honesty_html,
     scope_label,
     screenshot_footer_html,
+    screenshot_share_checklist_html,
     short_cohort,
 )
 from lib.guide_overlays import guides_always_available_html, sidebar_guides_block_html
 from lib.i18n import _STRINGS
+
+ROOT = Path(__file__).resolve().parents[1]
 
 
 DISCLOSURE_KEYS = [
@@ -32,6 +37,7 @@ DISCLOSURE_KEYS = [
     "disclosure.bullet_comp_provenance",
     "disclosure.bullet_structured",
     "disclosure.banner_auto_freeze",
+    "disclosure.screenshot_checklist",
     "disclosure.rebuild_scan_line",
     "disclosure.bullet_roster",
     "disclosure.bullet_recovery",
@@ -49,12 +55,30 @@ DISCLOSURE_KEYS = [
     "disclosure.footer_gloss",
     "disclosure.confirm_new_cohort",
     "disclosure.rebuild_scope_loud",
+    "comp.lock_checkbox",
+    "comp.lock_btn",
+    "comp.lock_ok",
+    "comp.lock_success",
+    "comp.track_caption",
+    "comp.need_lock",
     "guide.setup_btn",
     "guide.rank_btn",
     "guide.setup_title",
     "guide.rank_title",
     "guide.hint",
     "guide.close",
+    "guide.setup_need_h",
+    "guide.setup_need_1",
+    "guide.setup_need_2",
+    "guide.setup_need_3",
+    "guide.setup_steps_h",
+    "guide.setup_step_1",
+    "guide.setup_step_2",
+    "guide.setup_step_3",
+    "guide.setup_leave",
+    "guide.setup_ready",
+    "guide.setup_status",
+    "guide.setup_browser",
 ]
 
 
@@ -117,16 +141,50 @@ def test_guide_overlays_split_live_vs_rebuild_and_i18n():
     assert "successful scores only" in en
     # Live may mention partial; Rebuild section must say no partial on mean.
     assert "no partial badge on the\nmean ranking" in en or "no partial badge" in en.lower()
+    assert "What you need for on-device MedPsy" in en
     it = guides_always_available_html(lang="it")
     assert "Media Rebuild" in it or "Come funziona" in it
+    assert "Cosa serve per MedPsy on-device" in it
     side_it = sidebar_guides_block_html(lang="it")
     assert "Guida setup" in side_it
     assert "Come funziona la classifica" in side_it
     assert 'aria-label="Chiudi"' in it
     assert 'aria-label="Close"' in en
-    assert "New Confirm = new cohort" not in (
-        __import__("pathlib").Path("PRESENTATION.md").read_text(encoding="utf-8")
+
+
+def test_screenshot_share_checklist_and_auto_freeze_copy():
+    en = screenshot_share_checklist_html(lang="en")
+    assert "screenshot-share-checklist" in en
+    assert "honesty" in en.lower() or "footer" in en.lower()
+    assert "Do not crop" in en or "crop" in en.lower()
+    banner = _STRINGS["en"]["disclosure.banner_auto_freeze"]
+    assert "Multi×all ≠ manual Lock" in banner or "≠" in banner
+    assert "auto-locked" in banner.lower() or "auto-locked" in banner
+
+
+def test_copy_matches_cohort_behavior_no_stale_confirm_equals_new_set():
+    """UI/docs must not claim Confirm alone always mints a new cohort."""
+    forbidden = (
+        "New Confirm = new cohort",
+        "Confirming again starts a new comparison set",
+        "new Freeze/Confirm = new cohort",
+        "Freeze/Confirm = new cohort",
     )
+    paths = [
+        ROOT / "PRESENTATION.md",
+        ROOT / "README.md",
+        ROOT / "docs" / "x-post-template.md",
+        ROOT / "pages" / "structured_graded.py",
+        ROOT / "lib" / "i18n.py",
+        ROOT / "app.py",
+    ]
+    for path in paths:
+        text = path.read_text(encoding="utf-8")
+        for phrase in forbidden:
+            assert phrase not in text, f"{path.name} still contains: {phrase}"
+    # Honest phrasing present.
+    i18n_en = _STRINGS["en"]["disclosure.confirm_new_cohort"]
+    assert "only if case text or locked claims change" in i18n_en.lower()
 
 
 def test_screenshot_footer_is_plain_and_compact():

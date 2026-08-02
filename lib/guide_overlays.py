@@ -39,46 +39,37 @@ def client_guide_overlay(
 
 def _setup_body(*, lang: Optional[str], qvac_status_line: str) -> str:
     setup_status = html.escape(qvac_status_line or "")
-    if (lang or "en").startswith("it"):
-        return f"""
-<h3>Cosa serve per MedPsy on-device</h3>
-<ul>
-  <li><b>Software QVAC</b> in locale (cartella sidecar)</li>
-  <li><b>File modello MedPsy</b> nella cartella <code>models/</code></li>
-  <li><b>Node.js 22+</b> da nodejs.org</li>
-</ul>
-<h3>Setup dopo il clone</h3>
-<ol>
-  <li>Installa Node.js 22+ da nodejs.org</li>
-  <li>Metti il file MedPsy in <code>models/</code></li>
-  <li>Dalla cartella del progetto, in un secondo terminale:</li>
-</ol>
-<pre>./scripts/setup_qvac_sidecar.sh
-cd sidecar &amp;&amp; npm start</pre>
-<p>Lascia quel terminale aperto, poi ricarica questa pagina.</p>
-<p>Con il sidecar avviato, MedPsy è incluso (sul tuo PC, $0 API).</p>
-<p><b>Stato su questa macchina:</b> {setup_status}</p>
-<p style="opacity:.8;font-size:0.8rem">Finestra solo browser — aprirla <b>non</b> mette in pausa una run.</p>
-"""
+    need_h = html.escape(t("guide.setup_need_h", lang))
+    steps_h = html.escape(t("guide.setup_steps_h", lang))
+    n1 = html.escape(t("guide.setup_need_1", lang))
+    n2 = html.escape(t("guide.setup_need_2", lang))
+    n3 = html.escape(t("guide.setup_need_3", lang))
+    s1 = html.escape(t("guide.setup_step_1", lang))
+    s2 = html.escape(t("guide.setup_step_2", lang))
+    s3 = html.escape(t("guide.setup_step_3", lang))
+    leave = html.escape(t("guide.setup_leave", lang))
+    ready = html.escape(t("guide.setup_ready", lang))
+    status_lab = html.escape(t("guide.setup_status", lang))
+    browser = html.escape(t("guide.setup_browser", lang))
     return f"""
-<h3>What you need for on-device MedPsy</h3>
+<h3>{need_h}</h3>
 <ul>
-  <li><b>QVAC software</b> running locally (the sidecar folder)</li>
-  <li><b>MedPsy model file</b> in the <code>models/</code> folder</li>
-  <li><b>Node.js 22+</b> from nodejs.org</li>
+  <li><b>{n1}</b></li>
+  <li><b>{n2}</b></li>
+  <li><b>{n3}</b></li>
 </ul>
-<h3>Setup after cloning</h3>
+<h3>{steps_h}</h3>
 <ol>
-  <li>Install Node.js 22+ from nodejs.org</li>
-  <li>Put the MedPsy model file in <code>models/</code></li>
-  <li>From the project folder, in a second terminal:</li>
+  <li>{s1}</li>
+  <li>{s2}</li>
+  <li>{s3}</li>
 </ol>
 <pre>./scripts/setup_qvac_sidecar.sh
 cd sidecar &amp;&amp; npm start</pre>
-<p>Leave that terminal open, then refresh this page.</p>
-<p>When the sidecar is running, MedPsy is included (on your machine, $0 API).</p>
-<p><b>Status on this machine:</b> {setup_status}</p>
-<p style="opacity:.8;font-size:0.8rem">This window is browser-only — opening it does <b>not</b> pause a run.</p>
+<p>{leave}</p>
+<p>{ready}</p>
+<p><b>{status_lab}</b> {setup_status}</p>
+<p style="opacity:.8;font-size:0.8rem">{browser}</p>
 """
 
 

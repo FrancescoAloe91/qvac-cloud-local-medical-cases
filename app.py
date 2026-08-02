@@ -85,6 +85,7 @@ from lib.disclosure import (
     honesty_block_html,
     rebuild_scan_honesty_html,
     screenshot_footer_html,
+    screenshot_share_checklist_html,
 )
 from lib.guide_overlays import guides_always_available_html
 from lib.i18n import t
@@ -475,6 +476,11 @@ def beta_mean_rebuild_dialog() -> None:
         f"**Comprehension mean ready** · scope `{scope}` · "
         f"N≤{payload.get('n_per_model_cap') or '?'} scored/model · **$0 API**"
     )
+    _dlg_lang = str(st.session_state.get("lang") or "en")
+    st.markdown(
+        screenshot_share_checklist_html(lang=_dlg_lang),
+        unsafe_allow_html=True,
+    )
     _paint_beta_rebuild_mean_body(
         payload,
         key_prefix="beta_hm_dlg",
@@ -519,8 +525,8 @@ st.markdown(
     unsafe_allow_html=True,
 )
 st.caption(
-    "**Comprehension** is the main free-form track. Results here never mix with the "
-    f"optional Structured track. · *Advanced: protocol `{PROTOCOL_ID}`*"
+    t("comp.track_caption", _guide_lang)
+    + f" · *Advanced: protocol `{PROTOCOL_ID}`*"
 )
 _qvac_guide_status = (
     "ready — MedPsy will be included"
@@ -801,13 +807,12 @@ else:
     )
 
 confirm = st.checkbox(
-    "I confirm: lock this case story and its reference answers for scoring "
-    "(the long text is the readable story; scoring uses the reference checklist).",
+    t("comp.lock_checkbox", _guide_lang),
     key=f"beta_confirm_box_{case_row['slot']}",
     disabled=_slots_locked,
 )
 if st.button(
-    "Lock reference for scoring",
+    t("comp.lock_btn", _guide_lang),
     type="primary",
     disabled=not confirm or _slots_locked,
 ):
@@ -854,8 +859,12 @@ if st.button(
         )
         st.session_state["beta_confirmed_gold"] = payload
         st.success(
-            f"Locked · Case {case_row['slot']} · "
-            f"{n_claims} checklist points ready for scoring."
+            t(
+                "comp.lock_success",
+                _guide_lang,
+                n=case_row["slot"],
+                claims=n_claims,
+            )
         )
         st.warning(t("disclosure.confirm_new_cohort", _guide_lang, hash=""))
 
@@ -869,9 +878,12 @@ frozen_ok = (
 )
 if frozen_ok:
     st.success(
-        f"Reference locked for Case {case_row['slot']} · "
-        f"{int(frozen.get('gold_claim_count') or 0)} checklist points · "
-        "ready for Single / Multi."
+        t(
+            "comp.lock_ok",
+            _guide_lang,
+            n=case_row["slot"],
+            claims=int(frozen.get("gold_claim_count") or 0),
+        )
     )
     st.caption(
         f"*Advanced · pack v{frozen.get('pack_revision') or _pack_revision} · "
@@ -880,7 +892,7 @@ if frozen_ok:
     )
     st.caption(t("disclosure.confirm_new_cohort", _guide_lang, hash=""))
 else:
-    st.info("Lock a reference for this case before Single / Multi.")
+    st.info(t("comp.need_lock", _guide_lang))
 
 # --- roster (beta-prefixed keys) ---
 st.markdown("### Models")

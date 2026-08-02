@@ -32,6 +32,19 @@ def scope_label(scope: str, lang: Optional[str] = None) -> str:
     return t("disclosure.scope_same", lang)
 
 
+def screenshot_share_checklist_html(*, lang: Optional[str] = None) -> str:
+    """Non-blocking reminder under Rebuild KPIs — keep honesty visible when sharing."""
+    line = t("disclosure.screenshot_checklist", lang)
+    return (
+        '<div class="screenshot-share-checklist" role="note" '
+        'style="margin:0.35rem 0 0.75rem;padding:0.5rem 0.7rem;'
+        "border:1px solid #38bdf8;border-radius:6px;background:#0c4a6e;"
+        'color:#e0f2fe;font-size:0.8rem;font-weight:600;line-height:1.35">'
+        f"{html.escape(line)}"
+        "</div>"
+    )
+
+
 def rebuild_scan_honesty_html(
     ops_rows: Optional[Iterable[Any]] = None,
     *,
