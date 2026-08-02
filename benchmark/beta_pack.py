@@ -8,7 +8,6 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Union
 
 from benchmark.beta_protocol import (
-    CASE_ID,
     CASE_ID_ALIASES,
     LEGACY_PACK_FILENAME,
     PACK_FILENAME,
