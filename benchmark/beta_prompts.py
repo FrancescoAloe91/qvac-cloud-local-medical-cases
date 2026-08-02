@@ -1,4 +1,4 @@
-"""Candidate prompts for Beta comprehension (no mandatory A1–A5 markers)."""
+"""Candidate prompts for Comprehension track (no mandatory A1–A5 markers)."""
 
 from __future__ import annotations
 

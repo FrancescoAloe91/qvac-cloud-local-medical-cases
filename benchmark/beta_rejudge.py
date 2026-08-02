@@ -95,7 +95,7 @@ def case_from_beta_artifact(art: RunArtifact):
         update={
             "id": art.case_id or CASE_ID,
             "stem": stem,
-            "title": base.title or "Beta comprehension",
+            "title": base.title or "Comprehension",
         }
     )
 

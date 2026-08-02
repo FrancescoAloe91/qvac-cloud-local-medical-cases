@@ -2,56 +2,88 @@
 
 Experimental, open-source comparison of pinned **OpenRouter API** models and
 on-device GGUFs through the QVAC SDK. Blind DeepSeek R1 judge, evidence-linked
-scoring, frozen author-supplied reference. Research/demo tool — **not** a
-medical device and **not** an official MedPsy blog evaluation.
+scoring, frozen author-supplied reference.
+
+**This is a research / demo exercise — not a medical device, not clinical
+advice, not a powered clinical study, and not an official MedPsy blog
+evaluation.** Scores measure agreement with a frozen reference on this bench,
+not real-world diagnostic accuracy.
 
 Live app: https://francescoaloe91-qvac-vs-cloud-llms-health-test-app-wihxyd.streamlit.app  
 Repository: https://github.com/FrancescoAloe91/qvac-vs-cloud-llms-health-test
 
 ## Two tracks (KPIs never pool)
 
-| Track | Entry | What it measures | Protocol / History |
-|-------|--------|------------------|--------------------|
-| **Comprehension** (discursive) | **Home** (`app.py`) | Free-form clinical notes vs undivided reference prose | `beta-comprehension-v1` · `case_id=beta_comprehension` |
-| **Structured A1–A5** | Sidebar → **Structured · A1–A5** (`pages/structured_graded.py`) | Rigid slot Q&A (`A1:`…`A5:`) vs sectioned gold | Graded / caseC History · A1–A5 Rebuild |
+| Track | Role | Entry | What it stresses | Protocol / History |
+|-------|------|--------|------------------|--------------------|
+| **Comprehension** | **Default home** | `app.py` | Free-form clinical narrative vs curated Q1–A5 `gold_raw` (prose is the narrative twin) · acute ED pack Case 1–10 | `comprehension-v1` · `case_id=comprehension` (legacy `beta-*` History still pools via dual-read) |
+| **Structured A1–A5** | **Optional secondary** | Sidebar → Structured | Rigid `A1:`…`A5:` slots vs Prepare→Confirm claim gold | Graded / caseC History · A1–A5 Rebuild |
 
 Same Clinical Composite math (Coverage / Quality / Discipline → section → weighted mean).
 **Never** mix Comprehension and Structured means, Rebuild windows, or screenshot claims.
 
+### Comprehension (home) — narrative meaning
+
+Comprehension is the **main** surface: models write like clinicians (or peers)
+in free prose. That better matches how real assistants are used — storytelling,
+prioritization, safety language — instead of forcing a quiz format.
+The judge still scores five clinical dimensions (diagnosis / tests / urgency /
+safety / plan) against a **curated `gold_raw` Q1–A5 contract**; the undivided
+`reference_prose` is the human-readable twin, not the claim list itself.
+Unmarked free-form answers may be **photocopied** into all five sections —
+dimensions are not fully independent Structured answers. Prefer **Balanced
+cases** Rebuild after Multi×all across the 10-case pack.
+
+### Structured A1–A5 (optional) — format / contract stress
+
+Structured remains available when you care about **slot compliance** and
+claim-linked Prepare→Confirm gold (the original graded workflow). It is easy
+to over-read as “clinical IQ”; it mostly stresses schema discipline and
+editable claim contracts. Use it as a secondary check, not as the headline
+track for free-form model capability.
+
 Boot (every fresh session): OpenRouter BYOK key dialog → QVAC SDK status OK
-(QVAC ack remembered in local `.ui_prefs.json`; keys are never stored there).
+(QVAC ack may be remembered in local `.ui_prefs.json`; keys are never stored there).
+
+## Case pack provenance (Comprehension Case 1–10)
+
+The default Comprehension pack (`benchmark/default_cases/comprehension.json`,
+revision 3) is an **acute ED-biased** suite (AKI/hyperK, anaphylaxis, STEMI,
+DKA, stroke, overdose, psychosis/delirium, septic shock, PE, UGIB).
+
+**Provenance honesty:** these vignettes were **assembled with Cursor and/or
+adapted from public internet clinical teaching material** for this amateur
+bench. They are **not** de-identified real patient charts from a hospital EHR,
+**not** prospectively validated cases, and **not** a claim of clinical
+correctness. Treat stems + gold as **author-supplied exercise fixtures**.
 
 ## Known limitations / How to read results
 
-Transparent **amateur** comparison — not a medical device, not a powered study,
-and not an official MedPsy blog evaluation. Do not lead posts with “beat
-ChatGPT / Claude / Gemini.”
+Transparent **amateur** comparison. Do not lead posts with “beat ChatGPT /
+Claude / Gemini.”
 
-- **Reference-relative** Clinical Composite — agreement with the author-supplied
-  frozen gold on this bench, not clinical truth.
+- **Reference-relative** Clinical Composite — agreement with the frozen gold on
+  this bench, not clinical truth and not medical validity.
 - Cloud slots = **OpenRouter API routes** ≠ consumer ChatGPT / Claude / Gemini web.
 - **Uncalibrated single LLM-as-judge** (DeepSeek R1).
-- **Exploratory** Multi default N=5 — show mean±std and N per model.
-- **Comprehension is the main product surface** for free-form / “official-bench-like”
-  comparisons (e.g. MedPsy vs MedGemma). Structured A1–A5 remains the contract /
-  format-stress track — useful, but easy to misread as “clinical IQ” when it
-  mostly stresses schema compliance.
+- **Exploratory** Multi — show mean±std and N per model. Larger N (e.g. tens of
+  scored runs per model across the suite) improves descriptive stability; it
+  still does **not** create a powered superiority study.
+- **Comprehension** = main free-form / meaning track. **Structured** = optional
+  format-stress track. Never pool.
 - **Rebuild mean = scored-only.** Technical failures and exact Clinical Composite
-  == 0 are treated like N/A (excluded from N). Rationale: a rare exact 0 would
-  crush the mean, so it is equated to a non-score for the clean comparison.
-  Exact 0 usually means the candidate **refused** or produced no usable clinical
-  content vs gold (valid judge score, not a transport crash). On this History,
-  MedGemma had ~2/109 (~2%) refusal zeros on caseC; rates vary by model — not a
-  family ranking claim. The main Rebuild ranking table shows **n scored** (not
-  Failed%); zeros + technical N/A appear in a **separate ops reliability** chart
-  (counts + %) under the clinical mean chart.
-- Label **Same-case** vs **Portfolio**; **New Confirm = new cohort** (short hash).
-- Roster version **default 9** · MedPsy family · medical peers (e.g. MedGemma 1.5)
-  where relevant — do not silently pool cross-roster eras.
+  == 0 are treated like N/A (excluded from N). Exact 0 usually means refusal or
+  no usable clinical content vs gold. Main ranking shows **n scored**; zeros +
+  technical N/A appear in a **Failures/N/A table** (ops honesty), not as a
+  fourth competing clinical chart.
+- Label **Same-case** vs **Portfolio** vs **Balanced cases**; new Freeze/Confirm
+  = new cohort (short hash).
+- Roster version **default 9** · MedPsy family · medical peers where relevant.
 - Local recovery is **capped** (not identical cloud repair/fill weapons).
 
-Screenshot rule: keep mean±std · N · scope · roster · cohort visible. Copy-paste
-post template: [docs/x-post-template.md](docs/x-post-template.md).
+Screenshot rule: track name · protocol · pack_rev · mean±std · N · scope ·
+roster · cohort. Template: [docs/x-post-template.md](docs/x-post-template.md).
+Adversarial notes: [docs/adversarial-audit-2026-08-02-parity.md](docs/adversarial-audit-2026-08-02-parity.md).
 
 ## How the system works (end-to-end)
 

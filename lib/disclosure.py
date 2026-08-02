@@ -57,6 +57,32 @@ def honesty_block_html(
             f"<b>{html.escape(t('disclosure.bullet_scope', lang))}</b> — "
             f"{html.escape(scope_label(scope, lang))}"
         )
+        scope_l = str(scope).strip().lower()
+        if scope_l in {"comprehension", "discursive", "beta", "beta_comprehension"}:
+            lines.append(
+                "<b>Exercise only</b> — not a medical device · not clinical "
+                "advice · not medical validity · not an official MedPsy blog eval."
+            )
+            lines.append(
+                "<b>Comprehension gold</b> — scored against curated Q1–A5 "
+                "<code>gold_raw</code> (reference prose is the narrative twin, "
+                "not the claim contract)."
+            )
+            lines.append(
+                "<b>Photocopy caveat</b> — unmarked free-form notes may be "
+                "copied into all five sections; dimensions are not fully "
+                "independent answers."
+            )
+            lines.append(
+                "<b>Pack provenance</b> — Case 1–10 acute ED fixtures assembled "
+                "with Cursor and/or adapted from public internet teaching "
+                "material · not validated EHR charts · not general clinical IQ."
+            )
+        elif scope_l in {"structured", "graded", "a1a5", "structured_a1a5"}:
+            lines.append(
+                "<b>Structured track</b> — optional secondary · rigid A1–A5 "
+                "slots · never pool with Comprehension History / Rebuild."
+            )
     lines.extend(
         [
             confirm,
@@ -82,6 +108,8 @@ def screenshot_footer_html(
     cohort_id: Optional[str] = None,
     n_label: Optional[str] = None,
     extra: Optional[str] = None,
+    pack_revision: Optional[int] = None,
+    protocol_id: Optional[str] = None,
 ) -> str:
     """Compact footer under mean tables/charts (screenshot-friendly)."""
     cohort = short_cohort(cohort_id) or "—"
@@ -94,6 +122,10 @@ def screenshot_footer_html(
         f"{t('disclosure.footer_cohort', lang)}={cohort}",
         t("disclosure.footer_exploratory", lang),
     ]
+    if protocol_id:
+        bits.append(f"protocol={html.escape(str(protocol_id))}")
+    if pack_revision is not None:
+        bits.append(f"pack_rev={int(pack_revision)}")
     if extra:
         bits.append(str(extra))
     line = " · ".join(bits)

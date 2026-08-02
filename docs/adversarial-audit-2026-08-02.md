@@ -11,8 +11,8 @@ moving rigid A1–A5 to **Structured**. Scoring formulas unchanged.
 |---|---|
 | Home | `app.py` = **Comprehension** (discursive free-form) |
 | Secondary | `pages/structured_graded.py` = **Structured · A1–A5** |
-| Legacy URL | `pages/beta_comprehension.py` kept so mid-flight Multi sessions survive |
-| Protocol isolation | Comprehension `beta-comprehension-v1` **never pools** with graded History |
+| Legacy URL | `pages/comprehension_redirect.py` redirects to Home when idle |
+| Protocol isolation | Comprehension `comprehension-v1` **never pools** with graded History |
 | Boot | BYOK key every session · QVAC SDK ack in `.ui_prefs.json` (no keys) |
 
 ## Critical (still true)
@@ -52,8 +52,8 @@ were previously the public face.
 
 ## Medium
 
-### M1 — Legacy `beta_comprehension` page URL
-Kept for in-flight runs; adversaries may claim “two apps”. Caption: prefer Home.
+### M1 — Legacy Comprehension redirect URL
+Kept for old bookmarks / mid-flight sessions; adversaries may claim “two apps”. Caption: prefer Home.
 
 ### M2 — Boot dialogs vs mid-run
 Boot must not arm during `beta_running` / Structured `benchmark_running`.
@@ -69,4 +69,8 @@ Boot must not arm during `beta_running` / Structured `benchmark_running`.
 
 ## CI
 
-Poll Quality gate to **success** on HEAD after push.
+| | SHA | What |
+|---|---|---|
+| Green | `a1e90ff` | Comprehension home + Structured page; Quality gate success |
+
+Poll Quality gate to **success** on HEAD after every push.

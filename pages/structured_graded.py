@@ -1,7 +1,7 @@
 """Structured · A1–A5 graded track (secondary page).
 
 Rigid slot Q&A collect. History / Rebuild KPIs stay isolated from Comprehension
-(``beta-comprehension-v1``). Main entry is ``app.py`` (Comprehension home).
+(``comprehension-v1``). Main entry is ``app.py`` (Comprehension home).
 """
 
 from __future__ import annotations
@@ -150,7 +150,15 @@ from lib.disclosure import (
     screenshot_footer_html,
     short_cohort,
 )
+from lib.boot_welcome import init_boot_state, run_boot_dialogs
+from lib.guide_overlays import guides_always_available_html
 from lib.i18n import t
+from lib.spend_confirm import (
+    fmt_cost_multi as _fmt_cost_multi,
+    fmt_cost_single as _fmt_cost_single,
+    render_spend_confirm_card,
+)
+from lib.track_sidebar import render_guides_and_protocol, render_tracks_block
 from lib.model_labels import (
     OPTIONAL_LEGACY_SLOT_KEYS,
     filter_current_roster_rows,
@@ -175,13 +183,7 @@ from lib.secure_account_store import (
 from lib.secure_account_store import (
     save_openrouter_key as account_save_key,
 )
-from lib.secure_account_store import (
-    sign_in as account_sign_in,
-)
-from lib.secure_account_store import (
-    sign_up as account_sign_up,
-)
-from lib.ui_prefs import load_qvac_sdk_ack, save_qvac_sdk_ack
+from lib.ui_prefs import load_qvac_sdk_ack
 
 
 def _nv(key, *, label=None, model=None):
@@ -433,17 +435,9 @@ def _persist_summary(summary):
 # API key: every browser refresh starts a new session → key prompt again (BYOK).
 # QVAC SDK status: ask once, then remember locally (.ui_prefs.json) so reload
 # does not force a second OK after the key dialog.
+init_boot_state()
 if "qvac_sdk_ack" not in st.session_state:
     st.session_state.qvac_sdk_ack = load_qvac_sdk_ack()
-if "boot_welcome_done" not in st.session_state:
-    st.session_state.boot_welcome_done = False
-if "boot_step" not in st.session_state:
-    st.session_state.boot_step = "api"  # api → (qvac?) → done
-# Legacy flags kept in sync for any older checks
-if "qvac_dialog_shown" not in st.session_state:
-    st.session_state.qvac_dialog_shown = False
-if "key_dialog_shown" not in st.session_state:
-    st.session_state.key_dialog_shown = False
 
 # Clear sticky run flag when idle (never clear while a confirmed/pending run exists).
 if (
@@ -562,31 +556,6 @@ def _mask_api_key(key: str) -> str:
     return f"{k[:10]}…{'•' * 8}…{k[-4:]}"
 
 
-def _advance_boot(to: str) -> None:
-    st.session_state.boot_step = to
-    if to == "done":
-        st.session_state.boot_welcome_done = True
-        st.session_state.key_dialog_shown = True
-        st.session_state.qvac_dialog_shown = True
-    st.rerun()
-
-
-def _advance_boot_after_key() -> None:
-    """After the API-key step: skip QVAC status if already acknowledged."""
-    if st.session_state.get("qvac_sdk_ack") or load_qvac_sdk_ack():
-        st.session_state.qvac_sdk_ack = True
-        _advance_boot("done")
-    else:
-        _advance_boot("qvac")
-
-
-def _acknowledge_qvac_boot() -> None:
-    """OK on QVAC status — persist so reload only re-asks for the API key."""
-    st.session_state.qvac_sdk_ack = True
-    save_qvac_sdk_ack(True)
-    _advance_boot("done")
-
-
 def _client_guide_overlay(uid: str, title: str, body_html: str) -> str:
     """Fullscreen guide overlay toggled by <label for=uid> — no Streamlit rerun."""
     u = html.escape(uid)
@@ -606,63 +575,8 @@ def _client_guide_overlay(uid: str, title: str, body_html: str) -> str:
 
 
 def _guides_always_available_html(*, qvac_status_line: str = "") -> str:
-    """Inject Setup + Ranking guides once in main DOM (sidebar labels toggle these)."""
-    setup_status = html.escape(qvac_status_line or "")
-    setup_body = f"""
-<h3>What this benchmark uses for MedPsy</h3>
-<ul>
-  <li><b>QVAC SDK</b> (<code>@qvac/sdk</code>) via local <code>sidecar/</code></li>
-  <li><b>MedPsy-4B GGUF</b> under <code>models/</code> (GPU/Metal preferred)</li>
-  <li><b>Node.js ≥ 22</b> to run the sidecar</li>
-</ul>
-<h3>Setup after cloning</h3>
-<ol>
-  <li>Install Node.js ≥ 22 from nodejs.org</li>
-  <li>Place MedPsy GGUF in <code>models/</code> (or set <code>QVAC_MODEL_PATH</code>)</li>
-  <li>From repo root, in a second terminal:</li>
-</ol>
-<pre>./scripts/setup_qvac_sidecar.sh
-cd sidecar &amp;&amp; npm start</pre>
-<p>Leave that terminal open, then refresh this page.
-Check <code>curl -s http://127.0.0.1:8787/health</code>.</p>
-<p>When the sidecar is running, MedPsy is included (on-device, $0 API).</p>
-<p><b>Status on this machine:</b> {setup_status}</p>
-<p style="opacity:.8;font-size:0.8rem">This window is browser-only — opening it does <b>not</b> pause collect/judge.</p>
-"""
-    rank_body = """
-<h3>How ranking works</h3>
-<p>Blind DeepSeek R1 · strict evidence validation · whole-run independent verifier on anomalies ·
-technical failures are N/A and exact ties remain ties.</p>
-<pre>Section score = 50% graded coverage + 35% clinical quality + 15% discipline
-coverage = continuous 0..1 for every frozen reference claim
-helpful / neutral additions = no penalty
-verified unsupported / contradictory / dangerous = proportional discipline
-unverifiable harmful additions = dropped (audit marker; not fail-closed)
-Clinical Composite Score = 30% diagnosis + 25% safety + 20% plan + 15% tests + 10% urgency</pre>
-<table>
-  <tr><th>Signal</th><th>Role</th><th>Meaning</th></tr>
-  <tr><td>Graded coverage</td><td>50%</td><td>Partial and complete semantic coverage on a 0..1 continuum</td></tr>
-  <tr><td>Clinical quality</td><td>35%</td><td>Coherence, prioritization, usefulness and caution</td></tr>
-  <tr><td>Discipline</td><td>15%</td><td>Verified unsupported / contradictory / dangerous additions only; unverifiable harm is dropped, not auto-penalized</td></tr>
-  <tr><td>Failure status</td><td>N/A</td><td>Transport, timeout, malformed evidence or cancellation</td></tr>
-</table>
-<p>Synonyms and faithful paraphrases count. Every match/contradiction must cite candidate evidence.
-Judge is an uncalibrated LLM-as-judge unless human calibration fixtures have been checked.
-Quality is independent of coverage by design (v4). Verifier = systemic re-judge, not human calibration.
-UI shows <b>Clinical Composite</b>; artifact JSON may still use the field name <code>accuracy</code> for compatibility.</p>
-<p>Each model with ≥1 scored run enters the mean ranking (sorted by mean of scored runs),
-independently of other models' N/A results. Incomplete coverage (Failed% &gt; 0 or scored &lt; requested)
-keeps the rank and shows a <b>partial</b> badge — technical N/A are never clinical zeros.
-Every mean keeps its own N; missing scores are never imputed.
-N=5 remains exploratory (not bit-identical reruns) and measures repeatability on this reference, not general clinical validity.
-Local format-repair (same parser as cloud) only re-asks A# markers — it does not invent clinical content.
-Screenshots should keep at least one honesty caption (API≠web · reference-relative · N=5).</p>
-<p style="opacity:.8;font-size:0.8rem">This window is browser-only — opening it does <b>not</b> pause collect/judge.</p>
-"""
-    return (
-        _client_guide_overlay("guide_setup", "QVAC SDK + MedPsy setup guide", setup_body)
-        + _client_guide_overlay("guide_rank", "How ranking is calculated", rank_body)
-    )
+    """Compat wrapper — shared implementation in ``lib/guide_overlays``."""
+    return guides_always_available_html(qvac_status_line=qvac_status_line)
 
 
 QVAC_SETUP_GUIDE = """
@@ -873,78 +787,26 @@ def _dlg_full_text(text: str) -> None:
     )
 
 
-def _render_spend_confirm_card() -> None:
-    """Inline confirm card — never st.dialog (stuck overlay ✕ was aborting runs)."""
-    pr = st.session_state.get("pending_run") or {}
-    n = int(pr.get("n") or 1)
-    est = float(pr.get("est") or 0)
-    est_hi = float(pr.get("est_hi") or 0) or est
-    mode = pr.get("mode") or "full"
-    show_fc = bool(st.session_state.get("show_cost_forecast", True))
-    if not show_fc:
-        spend_body = (
-            f"Start <b>{n}</b> run(s) "
-            f"({'judge-only / on-device collect' if mode == 'local_only' else 'cloud + judge'}). "
-            f"Cost forecast is hidden — billed truth = OpenRouter usage."
-        )
-    elif mode == "local_only":
-        spend_body = (
-            f"Rough OpenRouter estimate <b>${est:.4f} – ${est_hi:.4f}</b> "
-            f"(often over) for <b>{n}</b> Only-local run(s) · <b>judge only</b> "
-            f"(DeepSeek R1 × on-device answers × {n}). "
-            f"Collect = on-device GGUFs · <b>$0</b> inference each run. "
-            f"Billed truth = OpenRouter usage."
-        )
-    else:
-        spend_body = (
-            f"Rough OpenRouter estimate <b>${est:.4f} – ${est_hi:.4f}</b> "
-            f"(often over) for <b>{n}</b> run(s) "
-            f"(cloud models + DeepSeek R1 judge). "
-            f"On-device = $0 if included. Billed truth = OpenRouter usage."
-        )
-    st.markdown(
-        f"""
-<div class="spend-confirm-card">
-  <p class="spend-title">Confirm before starting</p>
-  <p class="spend-body">
-    {spend_body}
-  </p>
-  <p class="spend-note">Cancel goes back. Yes starts the run immediately — no overlay ✕.</p>
-</div>
-""",
-        unsafe_allow_html=True,
+def _on_spend_confirm(pending: dict) -> None:
+    """Persist stem/gold then arm confirmed_run (shared spend card callback)."""
+    st.session_state["_persist_case_stem"] = (
+        st.session_state.get("demo_case_stem") or ""
     )
-    if not has_key:
-        st.error("No usable OpenRouter key — paste a full sk-or-v1-… key in the sidebar.")
-        if st.button("Close", use_container_width=True, key="spend_close_nokey"):
-            st.session_state.pop("pending_run", None)
-            st.session_state.pop("confirmed_run", None)
-            st.rerun()
-        return
-    a, b = st.columns(2)
-    with a:
-        if st.button("Cancel", use_container_width=True, key="spend_cancel"):
-            st.session_state.pop("pending_run", None)
-            st.session_state.pop("confirmed_run", None)
-            st.rerun()
-    with b:
-        if st.button(
-            "Yes · start run",
-            type="primary",
-            use_container_width=True,
-            key="spend_yes",
-        ):
-            st.session_state["_persist_case_stem"] = (
-                st.session_state.get("demo_case_stem") or ""
-            )
-            st.session_state["_persist_gold_ref"] = (
-                st.session_state.get("demo_gold_ref") or ""
-            )
-            pending = st.session_state.pop("pending_run", None)
-            if pending:
-                st.session_state["confirmed_run"] = pending
-            st.session_state.pop("pending_run", None)
-            st.rerun()
+    st.session_state["_persist_gold_ref"] = (
+        st.session_state.get("demo_gold_ref") or ""
+    )
+    st.session_state["confirmed_run"] = pending
+
+
+def _render_spend_confirm_card() -> None:
+    """Thin wrapper — shared inline Yes/Cancel gate (never st.dialog)."""
+    render_spend_confirm_card(
+        pending_key="pending_run",
+        confirmed_key="confirmed_run",
+        has_key=has_key,
+        track_label="Structured A1–A5",
+        on_confirm=_on_spend_confirm,
+    )
 
 
 @st.dialog("QVAC SDK + MedPsy setup guide")
@@ -959,31 +821,6 @@ def qvac_setup_guide_dialog():
         st.rerun()
 
 
-@st.dialog("QVAC SDK / MedPsy status", width="small")
-def qvac_status_dialog(online: bool, loaded: bool):
-    if loaded:
-        st.success(
-            "MedPsy is **active** through the QVAC SDK on this machine. "
-            "It will be included in the benchmark (on-device, $0 API)."
-        )
-        st.caption("Stack: QVAC SDK sidecar · MedPsy-4B GGUF · stock inference settings.")
-    elif online:
-        st.warning(
-            "QVAC sidecar is **online**, but MedPsy is **not loaded** yet. "
-            "On-device paused until the model finishes loading "
-            "(or until you fix OpenSSL / restart the sidecar)."
-        )
-        st.markdown(QVAC_SETUP_GUIDE)
-    else:
-        st.warning(
-            "QVAC sidecar is **offline** on this computer. "
-            "This run will use **cloud models only** (ChatGPT / Claude / Gemini via OpenRouter)."
-        )
-        st.markdown(QVAC_SETUP_GUIDE)
-    if st.button("OK · continue", type="primary", use_container_width=True, key="qvac_boot_ok"):
-        _acknowledge_qvac_boot()
-
-
 def _remember_openrouter_key(key: str) -> None:
     """Activate a key in this Streamlit session; never mutate process-global env."""
     key = (key or "").strip()
@@ -996,107 +833,6 @@ def _remember_openrouter_key(key: str) -> None:
         st.session_state["_account_key_remembered"] = True
     else:
         st.session_state["_account_key_remembered"] = False
-
-
-@st.dialog("OpenRouter API key", width="small")
-def key_welcome_dialog():
-    """Shown on every fresh page load; key is isolated to this session/account."""
-    existing = (st.session_state.get("or_key_session") or "").strip()
-    if existing and not is_usable_openrouter_key(existing):
-        existing = ""
-
-    st.markdown(
-        "This app uses **bring-your-own-key**. Confirm or paste your **full** OpenRouter key "
-        "for cloud models + DeepSeek R1 judge. "
-        "Or continue without a key to rehearse **Run QVAC only · $0** (no ranking)."
-    )
-    account = st.session_state.get("account_session")
-    if account_store_configured() and not isinstance(account, AccountSession):
-        st.markdown("**Private account storage**")
-        email = st.text_input("Email", key="account_email")
-        password = st.text_input("Password", type="password", key="account_password")
-        auth_in, auth_up = st.columns(2)
-        with auth_in:
-            if st.button("Sign in", use_container_width=True, key="account_sign_in"):
-                try:
-                    account = account_sign_in(email, password)
-                    st.session_state["account_session"] = account
-                    st.session_state.pop("_account_key_loaded", None)
-                    st.session_state.pop("_account_artifacts_synced", None)
-                    st.rerun()
-                except Exception as exc:
-                    st.error(f"Sign-in failed: {exc}")
-        with auth_up:
-            if st.button("Create account", use_container_width=True, key="account_sign_up"):
-                try:
-                    account = account_sign_up(email, password)
-                    if account is None:
-                        st.success("Check your email, confirm the account, then sign in.")
-                    else:
-                        st.session_state["account_session"] = account
-                        st.session_state.pop("_account_key_loaded", None)
-                        st.session_state.pop("_account_artifacts_synced", None)
-                        st.rerun()
-                except Exception as exc:
-                    st.error(f"Account creation failed: {exc}")
-        st.caption(
-            "API key and benchmark artifacts are encrypted before storage; "
-            "Supabase RLS restricts every row to the authenticated user."
-        )
-    elif isinstance(account, AccountSession):
-        st.success(f"Signed in · {account.email}")
-    elif is_streamlit_cloud():
-        st.caption(
-            "Hosted without Supabase · key and history stay session-only (not durable)."
-        )
-    st.caption("Keys are never copied into process-global environment variables.")
-    if existing:
-        st.info(f"Key available for this session (hidden): `{_mask_api_key(existing)}`")
-    else:
-        st.caption(
-            "No key is active. Other sessions cannot use your OpenRouter credits."
-        )
-    st.caption(
-        "Field below hides characters (••••). Keys with `...` placeholders get HTTP 401. "
-        "https://openrouter.ai/keys"
-    )
-
-    # Prefill password widget once so reload shows dots, not an empty box
-    if "dialog_or_key" not in st.session_state:
-        st.session_state["dialog_or_key"] = existing
-    k = st.text_input(
-        "OPENROUTER_API_KEY",
-        type="password",
-        key="dialog_or_key",
-        help="Characters stay hidden. Replace to change the key.",
-    )
-    c1, c2, c3 = st.columns(3)
-    with c1:
-        if st.button("Continue without key", use_container_width=True, key="boot_key_skip"):
-            _advance_boot_after_key()
-    with c2:
-        if st.button(
-            "Confirm current key",
-            use_container_width=True,
-            disabled=not bool(existing),
-            key="boot_key_keep",
-        ):
-            _remember_openrouter_key(existing)
-            _advance_boot_after_key()
-    with c3:
-        if st.button("Use / update key", type="primary", use_container_width=True, key="boot_key_save"):
-            typed = (k or "").strip()
-            if is_usable_openrouter_key(typed):
-                _remember_openrouter_key(typed)
-                _advance_boot_after_key()
-            elif existing and (not typed or typed == existing):
-                _remember_openrouter_key(existing)
-                _advance_boot_after_key()
-            else:
-                st.error(
-                    "Enter a complete OpenRouter key starting with sk-or-v1-… "
-                    "(no dots/ellipsis in the middle)."
-                )
 
 
 def _fmt_ram_mb(ram_mb) -> str:
@@ -1686,10 +1422,18 @@ elif not _pending_spend:
     elif st.session_state.get("show_qvac_guide"):
         qvac_setup_guide_dialog()
     elif not st.session_state.get("boot_welcome_done"):
-        if st.session_state.get("boot_step", "api") == "api":
-            key_welcome_dialog()
-        elif st.session_state.get("boot_step") == "qvac":
-            qvac_status_dialog(qvac_up, qvac_ok)
+        run_boot_dialogs(
+            qvac_online=qvac_up,
+            qvac_loaded=qvac_ok,
+            pending_spend=_pending_spend,
+            running=_busy_boot,
+            other_dialog_open=bool(
+                st.session_state.get("show_scoring_guide")
+                or st.session_state.get("show_qvac_guide")
+                or st.session_state.get("show_history_mean_popup")
+            ),
+            show_account=True,
+        )
     else:
         if st.session_state.get("show_history_mean_popup") and not _armed:
             _clear_all_kpi_popups()
@@ -1700,7 +1444,8 @@ if st.session_state.get("or_key_session") and is_usable_openrouter_key(
     has_key = True
 
 st.markdown(
-    '<p class="demo-hero">QVAC vs Cloud · Structured A1–A5</p>',
+    '<p class="demo-hero">QVAC vs Cloud · Structured A1–A5 '
+    '<span style="font-size:0.65em;opacity:.75">(optional secondary)</span></p>',
     unsafe_allow_html=True,
 )
 st.markdown(
@@ -1722,12 +1467,14 @@ st.markdown(
     honesty_block_html(
         lang=_ui_lang(),
         roster_n=DEFAULT_ROSTER_VERSION,
+        scope="structured",
         cohort_id=st.session_state.get("_restored_cohort_id")
         or st.session_state.get("_active_cohort_id"),
     ),
     unsafe_allow_html=True,
 )
 st.caption(
+    "**Optional secondary track** · KPIs **never pool** with Comprehension home. "
     "**Workflow:** anonymized case → Prepare reference → review/edit → Confirm · "
     "candidates run only after confirm · cloud cards = OpenRouter API routes "
     "(not ChatGPT/Claude/Gemini consumer web). Scores are author-supplied-gold "
@@ -1755,10 +1502,11 @@ _qvac_guide_status = (
         else "sidecar offline — start it to include on-device"
     )
 )
-st.html(_guides_always_available_html(qvac_status_line=_qvac_guide_status))
+st.html(guides_always_available_html(qvac_status_line=_qvac_guide_status))
 
-# --- Sidebar: API key + QVAC (compact) ---
+# --- Sidebar: Tracks → key → QVAC → guides → (History later) → clock ---
 with st.sidebar:
+    render_tracks_block(active="structured")
     _run_busy = bool(
         st.session_state.get("benchmark_running")
         or st.session_state.get("confirmed_run")
@@ -1854,21 +1602,10 @@ with st.sidebar:
             )
             st.rerun()
     st.caption(f"Judge · {(judge_cfg.get('display_label') or judge_cfg.get('model') or 'R1')[:42]}")
-    # Client-side overlays (no Streamlit rerun) — safe during collect/judge
-    st.markdown(
-        '<div class="sidebar-guides-block">'
-        '<label class="guide-open-btn" for="guide_setup">Setup guide</label>'
-        '<label class="guide-open-btn" for="guide_rank">How ranking works</label>'
-        '<span class="guides-hint">Opens without pausing the run · ✕ to close</span>'
-        "</div>",
-        unsafe_allow_html=True,
+    render_guides_and_protocol(
+        protocol_id=str(SCORING_VERSION),
+        extra_caption="History picker + Run clock appear lower in this column.",
     )
-    st.page_link(
-        "app.py",
-        label="← Comprehension · home",
-        help="Discursive free-form main track · separate protocol · never pool KPIs",
-    )
-    st.caption("This page = Structured A1–A5 only · rigid slots · graded History.")
 
 # --- Gold-only real-case workflow ---
 case_id = "caseC"
@@ -2924,52 +2661,6 @@ bd_local_only_multi = estimate_cost_breakdown(
 )
 
 
-def _fmt_cost_single(breakdown: dict) -> str:
-    bits = []
-    for m in breakdown.get("per_model") or []:
-        if float(m.get("estimated_usd", 0) or 0) <= 0:
-            continue
-        bits.append(f"{m.get('key')} ${m.get('estimated_usd', 0):.3f}")
-    ex = breakdown.get("extractor") or {}
-    ex_usd = float(ex.get("estimated_usd", 0) or 0)
-    if ex_usd > 0:
-        bits.append(f"extract ${ex_usd:.3f}")
-    j = breakdown.get("judge") or {}
-    bits.append(f"judge ${j.get('estimated_usd', 0):.3f}")
-    total = float(breakdown.get("total_usd", 0) or 0)
-    hi = float(breakdown.get("total_usd_upper", 0) or 0) or total
-    cal_n = int(breakdown.get("calibration_n") or 0)
-    src = "History-calibrated" if breakdown.get("calibrated") else "formula"
-    j_out = j.get("completion_tokens_per_call", "?")
-    return (
-        '<div class="cost-compact run-cost-cell">'
-        + " · ".join(bits)
-        + f' · <b>${total:.3f}–${hi:.3f}</b>'
-        + f'<br/><span style="opacity:.75">rough estimate · often over · {src}'
-        + (f" n={cal_n}" if cal_n else "")
-        + f" · judge ~{j_out} tok (not 16k cap)</span>"
-        + "</div>"
-    )
-
-
-def _fmt_cost_multi(breakdown: dict, n: int) -> str:
-    tot = float(breakdown.get("total_usd_for_n", 0) or 0)
-    hi = float(breakdown.get("total_usd_upper_for_n", 0) or 0) or tot
-    extract = float((breakdown.get("extractor") or {}).get("estimated_usd", 0) or 0)
-    cal_n = int(breakdown.get("calibration_n") or 0)
-    src = "History-calibrated" if breakdown.get("calibrated") else "formula"
-    extract_bit = (
-        f" · +extract ${extract:.3f} once" if extract > 0 else " · extract already paid"
-    )
-    return (
-        f'<div class="cost-compact cost-multi run-cost-cell">'
-        f"<b>${tot:.3f}–${hi:.3f}</b> · ×{n}{extract_bit}"
-        f'<br/><span style="opacity:.75">rough estimate · often over · {src}'
-        + (f" n={cal_n}" if cal_n else "")
-        + "</span></div>"
-    )
-
-
 st.markdown('<div class="sec-label">Step 3 · Run</div>', unsafe_allow_html=True)
 selected_bd = bd
 selected_bd_multi = bd_multi
@@ -3075,7 +2766,16 @@ if multi_clicked:
 if qvac_only_clicked:
     # Clear stale failed snapshot (e.g. old 404) so the live panels reset.
     st.session_state.pop("live_outputs", None)
-    st.session_state["confirmed_run"] = {"n": 1, "est": 0.0, "mode": "qvac_only"}
+    # Same spend Yes/Cancel gate as Single/Multi (judge path · collect ≈ $0).
+    st.session_state["pending_run"] = {
+        "n": 1,
+        "rounds": 1,
+        "est": float(bd_local_only.get("total_usd") or 0),
+        "est_hi": float(
+            bd_local_only.get("total_usd_upper") or bd_local_only.get("total_usd") or 0
+        ),
+        "mode": "qvac_only",
+    }
     st.rerun()
 
 # Spend confirm AFTER case/gold widgets (keeps widget keys alive).
@@ -3324,1005 +3024,2187 @@ with st.sidebar:
             per_run_n=len(_pr),
         )
 
-# --- Offline: Rebuild mean across homogeneous cohorts ($0 API) ---
-st.markdown(
-    f'<div class="sec-label">{t("bench.rebuild_sec_label", _ui_lang())}</div>',
-    unsafe_allow_html=True,
-)
-# Rebuild viz follows the default 9-roster + optional/legacy session toggles
-# (History still resolves all CURRENT_ROSTER_KEYS labels when toggled back on).
-_rebuild_optional = [
-    k
-    for k in OPTIONAL_LEGACY_SLOT_KEYS
-    if st.session_state.get(
-        {
-            "local_gemma": "opt_legacy_local_gemma",
-            "local_llama": "opt_legacy_local_llama",
-            "qvac_4b_q8": "opt_legacy_qvac_4b_q8",
-        }[k]
-    )
-]
-_rebuild_model_ids = rebuild_model_ids(_rebuild_optional)
-_rebuild_roster_n = len(_rebuild_model_ids)
-st.caption(
-    "Rebuild is always available here (before Live responses / run stop). "
-    f"Mean chart/table = **{len(_rebuild_model_ids)}-model roster** "
-    "(default 9"
-    + (
-        f" + {len(_rebuild_optional)} optional/legacy"
-        if _rebuild_optional
-        else "; optional Gemma/Llama/Q8 hidden until toggled"
-    )
-    + ") · last ≤N **successful** non-zero scored runs per model · "
-    "technical N/A and exact Clinical Composite == 0 treated like N/A "
-    "(a rare 0 would crush the mean; usually refusal) · "
-    "**No API calls** · scored-only mean."
-)
+# Visual order: Live responses → run/results → Rebuild mean → History
+# Containers declare page order so Rebuild cannot sit above streams.
+_live_zone = st.container()
+_results_zone = st.container()
+_rebuild_zone = st.container()
 
-_hist_for_case = artifacts_for_case(WORKSPACE_DIR, case_id)
-# Scope "selected case only" to the active Case slot's stem cohort history.
-_slot_scoped_arts = filter_artifacts_for_slot(
-    [a for _, a in _hist_for_case],
-    _active_slot,
-)
-if _active_slot.filled and _slot_scoped_arts:
-    _hist_for_case = [
-        (p, a)
-        for p, a in _hist_for_case
-        if a.run_id in {x.run_id for x in _slot_scoped_arts}
-    ]
-elif _active_slot.filled and not _slot_scoped_arts:
-    # Slot has a stem binding but no runs yet in History for that stem.
-    _hist_for_case = []
-_rebuild_cohort_id = st.session_state.get("_restored_cohort_id") or None
-if not _rebuild_cohort_id and _active_slot.cohort_id:
-    _rebuild_cohort_id = _active_slot.cohort_id
-if _rebuild_cohort_id and not any(
-    a.cohort_id == _rebuild_cohort_id for _, a in _hist_for_case
-):
-    _rebuild_cohort_id = None
-# Resolve active cohort from confirmed gold on artifacts (models/track live there).
-if not _rebuild_cohort_id and effective_gold:
-    try:
-        _want_gold = load_confirmed_gold(effective_gold).model_dump(
-            mode="json", exclude={"confirmed_at"}
-        )
-    except Exception:
-        _want_gold = None
-    _gold_cohort_counts: dict = {}
-    if _want_gold is not None:
-        for _, _art in _hist_for_case:
-            if not _art.cohort_id:
-                continue
-            _gref = str((_art.models_config or {}).get("gold_reference") or "")
-            if not _gref:
-                continue
-            try:
-                if load_confirmed_gold(_gref).model_dump(
-                    mode="json", exclude={"confirmed_at"}
-                ) != _want_gold:
-                    continue
-            except Exception:
-                continue
-            _gold_cohort_counts[_art.cohort_id] = (
-                int(_gold_cohort_counts.get(_art.cohort_id) or 0) + 1
-            )
-        if _gold_cohort_counts:
-            _rebuild_cohort_id = max(
-                _gold_cohort_counts.items(), key=lambda kv: kv[1]
-            )[0]
-if not _rebuild_cohort_id and _hist_for_case and _hist_for_case[0][1].cohort_id:
-    _rebuild_cohort_id = _hist_for_case[0][1].cohort_id
-if _rebuild_cohort_id:
-    _avail_same = sum(
-        1
-        for _, a in _hist_for_case
-        if a.cohort_id == _rebuild_cohort_id
-        and is_mean_poolable_run(a)
-    )
-else:
-    _avail_same = sum(
-        1
-        for _, a in _hist_for_case
-        if is_mean_poolable_run(a)
-    )
+with _live_zone:
+    # --- Live response panels (roster already built above for chips/cost) ---
+    saved_outputs = st.session_state.get("live_outputs") or {}
+    _run_pending = st.session_state.get("confirmed_run") or {}
+    running_now = bool(_run_pending)
+    qvac_only_now = _run_pending.get("mode") == "qvac_only"
+    local_only_now = _run_pending.get("mode") == "local_only"
 
-# Portfolio eligibility: same track + v4; roster shapes may differ (per-model N).
-# Filter to active rebuild roster (9 default + opted-in optional/legacy).
-_portfolio_model_ids = list(_rebuild_model_ids)
-# All eligible docs — Rebuild N is per-model obs, not a global last-N slice.
-_portfolio_probe = list_portfolio_runs(
-    WORKSPACE_DIR,
-    n=None,
-    scoring_version=SCORING_VERSION,
-    track=str(benchmark_track or "controlled"),
-    model_ids=_portfolio_model_ids,
-)
-_avail_portfolio = len(_portfolio_probe)
-
-# Scope control — highly visible, immediately next to N / Rebuild.
-if "history_rebuild_scope" not in st.session_state:
-    st.session_state["history_rebuild_scope"] = "portfolio"
-if st.session_state.get("history_rebuild_scope") not in {
-    "same_case",
-    "portfolio",
-    "balanced_cases",
-}:
-    st.session_state["history_rebuild_scope"] = "portfolio"
-_rebuild_scope = st.radio(
-    t("bench.rebuild_scope_label", _ui_lang()),
-    options=["same_case", "portfolio", "balanced_cases"],
-    format_func=lambda v: (
-        f"● {scope_label(v, _ui_lang())} — "
+    st.markdown('<div class="sec-label">Live responses</div>', unsafe_allow_html=True)
+    st.caption(
+        "Same prompt for all models · shorter answers = early stop, not a smaller prompt. "
+        "Click **⛶ Full screen** · ✕ / Esc closes · collect/judge keep running."
         + (
-            t("bench.rebuild_scope_same", _ui_lang())
-            if v == "same_case"
+            " · Grid 3×4 · on-device GGUFs load one after another."
+            if n_models >= 12
             else (
-                t("bench.rebuild_scope_portfolio", _ui_lang())
-                if v == "portfolio"
-                else t("bench.rebuild_scope_balanced", _ui_lang())
+                " · Grid 3×3 · on-device GGUFs load one after another."
+                if n_models >= 9
+                else (
+                    " · Grid rows follow the active roster."
+                    if n_models >= 5
+                    else ""
+                )
             )
         )
-    ),
-    horizontal=True,
-    key="history_rebuild_scope",
-    on_change=_on_rebuild_n_pick_change,
-)
-st.markdown(
-    honesty_block_html(
-        lang=_ui_lang(),
-        roster_n=_rebuild_roster_n or DEFAULT_ROSTER_VERSION,
-        scope=_rebuild_scope,
-        cohort_id=_rebuild_cohort_id,
-    ),
-    unsafe_allow_html=True,
-)
-st.caption(
-    t(
-        "disclosure.rebuild_scope_loud",
-        _ui_lang(),
-        scope=scope_label(_rebuild_scope, _ui_lang()),
     )
-)
-
-if _rebuild_scope == "portfolio":
-    st.caption(t("bench.rebuild_portfolio_intro", _ui_lang()))
-    _avail_n = _avail_portfolio
-elif _rebuild_scope == "balanced_cases":
-    st.caption(t("bench.rebuild_balanced_intro", _ui_lang()))
-    _avail_n = _avail_portfolio
-else:
-    st.caption(
-        f"**Case {_active_slot_idx}** · **Same-case** mean · one immutable cohort only"
-        + (
-            f" · cohort `{short_cohort(_rebuild_cohort_id)}`"
-            if _rebuild_cohort_id
-            else ""
-        )
-        + ". Cohort hash = normalized case + confirmed gold (excl. timestamp) + "
-        "models + track. Other Case slots are excluded. "
-        "**New Confirm = new cohort.** **No API calls.**"
-    )
-    _avail_n = _avail_same
-
-# Other confirm versions in the same case family (never auto-merged).
-_other_family_runs = 0
-if _rebuild_scope == "same_case":
-    if _family_cohorts and _rebuild_cohort_id:
-        _other_family_runs = sum(
-            int(c.get("run_count") or 0)
-            for c in _family_cohorts
-            if c.get("cohort_id") != _rebuild_cohort_id
-        )
-    elif _family_cohorts and not effective_gold:
-        _other_family_runs = sum(
-            int(c.get("run_count") or 0) for c in _family_cohorts
-        )
-
-if _other_family_runs > 0 and _avail_n < 5 and _rebuild_scope == "same_case":
-    st.caption(
-        t(
-            "bench.family_other_cohorts",
-            _ui_lang(),
-            n=_other_family_runs,
-        )
-    )
-
-# Per-model valid N; N=5 remains exploratory.
-_n_options = [5, 10, 20, 30, 50, 100]
-_rb1, _rb2, _rb3 = st.columns([1, 1.6, 0.9])
-with _rb1:
-    # Default once — value MUST stay inside options or Streamlit raises TypeError
-    # ("bad argument type for built-in operation") after a mid-run reload.
-    if "history_rebuild_n_pick" not in st.session_state:
-        st.session_state["history_rebuild_n_pick"] = 5
-    try:
-        _pick = int(st.session_state.get("history_rebuild_n_pick") or 5)
-    except (TypeError, ValueError):
-        _pick = 5
-    if _pick not in _n_options:
-        st.session_state["history_rebuild_n_pick"] = 5
-    _rebuild_n = st.selectbox(
-        t("bench.rebuild_n_label", _ui_lang()),
-        options=_n_options,
-        format_func=lambda n: (
-            f"≤{n} successful / model"
-            + (" · exploratory" if n == 5 else "")
-            + (" · better CV (suggested)" if n == 10 else "")
-            + (" · diminishing returns" if n in (20, 30, 50) else "")
-            + (" · max" if n == 100 else "")
-            + (f"  (only {_avail_n} eligible runs)" if _avail_n < n else "")
-        ),
-        key="history_rebuild_n_pick",
-        on_change=_on_rebuild_n_pick_change,
-        help="N = max successful non-zero scored observations per model (newest first); "
-        "technical N/A and exact-zero skipped, older successful History used — not a global "
-        "last-N run slice. Optional/legacy models appear only when toggled. "
-        "Tiers: 5 exploratory · ~10 better for CV · 20–50 diminishing returns "
-        "(100 max). Default stays 5. Selecting N alone does not open a popup — "
-        "use Rebuild mean.",
-    )
-with _rb3:
-    _score_help_lang = _ui_lang()
-    with st.popover(
-        "Come funziona lo score?" if _score_help_lang == "it" else "How does scoring work?",
-        use_container_width=True,
-    ):
-        if _score_help_lang == "it":
-            st.markdown(
-                """
-**In parole semplici** — protocollo esplorativo amateur, **non** validazione medica.
-
-**Composite (voto totale)**  
-Cinque “capitoli”: diagnosi, esami, urgenza, safety, piano. Ogni capitolo pesa in genere circa **1/5** del totale (a volte safety un filo di più). Dentro ogni capitolo: *copertura* (hai detto le cose chiave?) ~50%, *qualità* ~35%, *disciplina* (pochissime aggiunte pericolose) ~15%. Il voto non è “a occhio”: è la media pesata di questi pezzi.
-
-**Media (mean) — base della classifica**  
-Con N rebuild validi: somma i punteggi e dividi per N. È il risultato “tipico”.  
-Non entrano: fallimenti tecnici (N/A) e score **esattamente 0**.  
-La classifica (#) e le bande CV usano la media (±std). Su N piccoli (5–10) è più stabile da interpretare della mediana.
-
-**Mediana (◆ sul grafico) — controllo di robustezza**  
-Ordina i N punteggi e prendi quello di mezzo. Su N alti (50–100) è utile se la distribuzione è storta: meno tirata dai picchi. Non sostituisce la classifica mean di default (altrimenti CV e ±std non allineano al ranking).
-
-**Min–max (solo tabella)**  
-Il peggiore e il migliore tra quei N run: quanto può oscillare il modello.
-
-**Deviazione standard (±1 std sul grafico)**  
-Quanto i punteggi si sparpagliano intorno alla media. Alta = run molto diversi tra loro.  
-Sul grafico i baffi chiari (con alone scuro) mostrano **media ± 1 std**.
-
-**Varianza**  
-Stessa idea della dispersione; la std è quella misura riportata in punti di score (più leggibile).
-
-**CV% (coefficiente di variazione)**  
-Dispersione **in % rispetto alla media** — utile per confrontare modelli con medie diverse.  
-Bande: Super High ≤5 · High ≤10 · Medium ≤15 · Low ≤20 · Very Low >20.  
-**Banda CV ≠ qualità clinica** e ≠ validazione ufficiale.
-
-**Perché i pesi**  
-Le cinque sezioni esistono perché la vignetta chiede cose diverse; i pesi riflettono priorità del protocollo (safety importante). Non è un score da cartella clinica ufficiale.
-"""
-            )
-        else:
-            st.markdown(
-                """
-**In plain words** — exploratory amateur protocol, **not** medical validation.
-
-**Composite (total score)**  
-Five chapters: diagnosis, tests, urgency, safety, plan. Each usually about **1/5** of the total (safety sometimes a bit more). Inside each chapter: *coverage* ~50%, *quality* ~35%, *discipline* ~15%. Weighted average — not a vibe score.
-
-**Mean — ranking basis**  
-Average of up to N successful non-zero scored runs. Technical N/A and exact-zero skipped. Rank (#) and CV bands follow the mean (±std). At small N (5–10) mean is usually clearer than median.
-
-**Median (◆) — robustness check**  
-Middle of the N scores. Helpful at large N (50–100) if the distribution is skewed. Default ranking stays on mean so CV / ±std stay aligned.
-
-**Min–max (table only)**  
-Worst and best among those N runs.
-
-**Standard deviation (±1 std whiskers)**  
-How spread out scores are around the mean. Black whiskers with white outline on the chart = mean ± 1 std (readable on bars and past bar tips).
-
-**Variance**  
-Same “spread” idea; std is the readable score-unit version.
-
-**CV%**  
-Spread as a **% of the mean** — fairer when means differ. Bands: Super High ≤5 … Very Low >20. **CV band ≠ clinical quality.**
-
-**Why weights**  
-Five sections match five clinical asks in the vignette; weights are protocol priorities, not official chart review.
-"""
-            )
-_ordered_case_stems = [
-    str(s.stem_key)
-    for s in sorted(_case_slots, key=lambda x: int(x.index))
-    if getattr(s, "stem_key", None)
-]
-with _rb2:
-    if _rebuild_scope in {"portfolio", "balanced_cases"}:
-        _n_show = int(_rebuild_n) if _avail_portfolio else 0
-        _k_show = (
-            len(_ordered_case_stems)
-            if _rebuild_scope == "balanced_cases" and _ordered_case_stems
-            else (
-                count_distinct_stem_keys(a for _, a in _portfolio_probe)
-                if _avail_portfolio
-                else 0
-            )
-        )
+    if any(c.get("provider") == "qvac" for c in roster):
         st.caption(
-            t(
-                (
-                    "bench.rebuild_balanced_stats"
-                    if _rebuild_scope == "balanced_cases"
-                    else "bench.rebuild_portfolio_stats"
-                ),
-                _ui_lang(),
-                n=_n_show,
-                cases=_k_show,
-                avail=_avail_portfolio,
-                track=str(benchmark_track or "controlled"),
-            )
+            "On-device KPI: **RAM(RSS)** = process-tree resident set (≠ VRAM/mmap) · "
+            "**GGUF** = on-disk file size · Band B + MedPsy share one sidecar (serial load)."
         )
-    else:
-        st.caption(
-            f"Saved runs for Case {_active_slot_idx}"
-            + (
-                f" · this cohort: **{_avail_n}**"
-                if _rebuild_cohort_id
-                else f": **{_avail_n}**"
-            )
-            + " · 5 exploratory · ~10 steadier CV · 20+ nicer but costly"
-        )
-    _can_rebuild = _avail_n >= 1
-    _do_rebuild = st.button(
-        t(
-            "bench.rebuild_btn",
-            _ui_lang(),
-            n=_rebuild_n,
-        ),
-        type="primary",
-        use_container_width=True,
-        disabled=not _can_rebuild,
-        key="history_rebuild_btn",
-        help=(
-            t("bench.rebuild_btn_help_portfolio", _ui_lang())
-            if _rebuild_scope == "portfolio"
-            else (
-                t("bench.rebuild_btn_help_balanced", _ui_lang())
-                if _rebuild_scope == "balanced_cases"
-                else t("bench.rebuild_btn_help_same", _ui_lang())
-            )
-        ),
-    )
 
-if _avail_n < 1:
-    if _rebuild_scope in {"portfolio", "balanced_cases"}:
-        st.info(t("bench.rebuild_need_portfolio", _ui_lang(), n=_avail_n))
-    else:
-        st.info(
-            f"Need at least **1** saved complete run for Case {_active_slot_idx} "
-            f"(found {_avail_n}). Run Single once, then rebuild the mean."
-        )
-elif _do_rebuild:
-    # Pass requested per-model cap; rebuild loads all eligible history and trims.
-    _n_use = int(_rebuild_n)
-    if _avail_n < int(_rebuild_n):
-        st.toast(
-            f"Only {_avail_n} eligible runs saved — each model gets ≤{_avail_n} "
-            f"obs (requested ≤{_rebuild_n}/model).",
-            icon="ℹ️",
-        )
-    if _rebuild_scope == "portfolio":
-        _built = rebuild_portfolio_from_history(
-            WORKSPACE_DIR,
-            n=_n_use,
-            scoring_version=SCORING_VERSION,
-            track=str(benchmark_track or "controlled"),
-            model_ids=_portfolio_model_ids,
-            preloaded=_preloaded_artifacts() if _HOSTED_NO_PLAINTEXT else None,
-        )
-    elif _rebuild_scope == "balanced_cases":
-        _built = rebuild_balanced_cases_from_history(
-            WORKSPACE_DIR,
-            n=_n_use,
-            scoring_version=SCORING_VERSION,
-            track=str(benchmark_track or "controlled"),
-            model_ids=_portfolio_model_ids,
-            ordered_stem_keys=_ordered_case_stems,
-            preloaded=_preloaded_artifacts() if _HOSTED_NO_PLAINTEXT else None,
-        )
-    else:
-        # Selected-case only: preload slot-scoped artifacts so other Case stems
-        # cannot enter the mean even when case_id is shared (caseC).
-        _same_preloaded = [a for _, a in _hist_for_case]
-        _built = rebuild_multi_from_history(
-            WORKSPACE_DIR,
-            case_id,
-            n=_n_use,
-            cohort_id=_rebuild_cohort_id,
-            model_ids=_rebuild_model_ids,
-            preloaded=_same_preloaded,
-            scoring_version=SCORING_VERSION,
-        )
-    if not _built.get("ok"):
-        st.warning(_built.get("reason") or "Rebuild failed.")
-    else:
-        _sum_obj = _built["summary"]
-        _built["summary"] = (
-            _sum_obj.model_dump()
-            if hasattr(_sum_obj, "model_dump")
-            else _sum_obj
-        )
-        st.session_state["history_rebuild_result"] = _built
-        from benchmark.schema import MultiRunSummary as _MRS
+    shell_boxes, text_boxes, kpi_boxes, status_boxes = {}, {}, {}, {}
+    _panel_rows = panel_rows_for_roster(roster)
 
-        _sum_persist = _MRS.model_validate(_built["summary"])
-        st.session_state["last_multi_summary"] = _sum_persist.model_dump()
-        st.session_state["last_multi_paths"] = [
-            pr["path"] for pr in (_built.get("per_run") or []) if pr.get("path")
-        ]
-        st.session_state["last_ranking"] = _mean_rows_to_last_ranking(
-            _sum_persist.ranking_mean
-        )
-        st.session_state["last_multi_n"] = _sum_persist.n
-        st.session_state["show_last_run_costs"] = False  # offline rebuild — no live $
-        _arm_kpi_dialog("rebuild")
-        st.rerun()
+    for row in _panel_rows:
+        card_cols = st.columns(len(row) or 1)
+        for i, c in enumerate(row):
+            key = c["key"]
+            prev = saved_outputs.get(key) or {}
+            color = c.get("color") or "#64748b"
+            label = c.get("display_label") or c.get("label") or key
+            with card_cols[i]:
+                # One fixed card: header + status + KPI + stream (shell once, body remounts)
+                st.markdown(
+                    f'<div class="panel-card" style="border-top-color: {color}">'
+                    f'<p class="live-head">{html.escape(str(label))}</p>'
+                    f'<p class="live-meta">{html.escape(str(c.get("model") or ""))}</p></div>',
+                    unsafe_allow_html=True,
+                )
+                status_boxes[key] = st.empty()
+                kpi_boxes[key] = st.empty()
+                shell_boxes[key] = st.empty()
+                text_boxes[key] = st.empty()
 
-_prev = st.session_state.get("history_rebuild_result") or {}
-_prev_scope = str(_prev.get("scope") or "same_case")
-_prev_ok_for_ui = (
-    _prev.get("ok")
-    and isinstance(_prev.get("summary"), dict)
-    and (
-        _prev_scope in {"portfolio", "balanced_cases"}
-        or _prev["summary"].get("case_id") == case_id
-    )
-)
-if _prev_ok_for_ui:
-    _prev_n_docs = _prev.get("n_used")
-    if _prev_n_docs is None:
-        _prev_n_docs = (
-            _prev["summary"].get("n")
-            if isinstance(_prev.get("summary"), dict)
-            else getattr(_prev.get("summary"), "n", "?")
-        )
-    if _prev_scope == "portfolio":
-        _reopen_label = t(
-            "bench.rebuild_reopen_portfolio",
-            _ui_lang(),
-            n=_prev_n_docs,
-            cases=_prev.get("n_cases") or "?",
-        )
-    elif _prev_scope == "balanced_cases":
-        _reopen_label = t(
-            "bench.rebuild_reopen_balanced",
-            _ui_lang(),
-            n=_prev_n_docs,
-            cases=_prev.get("n_cases") or "?",
-        )
-    else:
-        _reopen_label = f"Re-open mean popup · N={_prev_n_docs} · $0"
-    if st.button(
-        _reopen_label,
-        use_container_width=False,
-        key="history_rebuild_reopen",
-    ):
-        _arm_kpi_dialog("rebuild")
-        st.rerun()
-if _rebuild_scope == "portfolio":
-    st.caption(t("bench.rebuild_portfolio_quiet", _ui_lang()))
-elif _rebuild_scope == "balanced_cases":
-    st.caption(t("bench.rebuild_balanced_quiet", _ui_lang()))
+                # st.html keeps hidden fullscreen overlay out of the visible page flow
+                shell_boxes[key].html(
+                    _stream_shell_html(title=str(label), panel_id=key)
+                )
 
-# --- Live response panels (roster already built above for chips/cost) ---
-saved_outputs = st.session_state.get("live_outputs") or {}
-_run_pending = st.session_state.get("confirmed_run") or {}
-running_now = bool(_run_pending)
-qvac_only_now = _run_pending.get("mode") == "qvac_only"
-local_only_now = _run_pending.get("mode") == "local_only"
-
-st.markdown('<div class="sec-label">Live responses</div>', unsafe_allow_html=True)
-st.caption(
-    "Same prompt for all models · shorter answers = early stop, not a smaller prompt. "
-    "Click **⛶ Full screen** · ✕ / Esc closes · collect/judge keep running."
-    + (
-        " · Grid 3×4 · on-device GGUFs load one after another."
-        if n_models >= 12
-        else (
-            " · Grid 3×3 · on-device GGUFs load one after another."
-            if n_models >= 9
-            else (
-                " · Grid rows follow the active roster."
-                if n_models >= 5
-                else ""
-            )
-        )
-    )
-)
-if any(c.get("provider") == "qvac" for c in roster):
-    st.caption(
-        "On-device KPI: **RAM(RSS)** = process-tree resident set (≠ VRAM/mmap) · "
-        "**GGUF** = on-disk file size · Band B + MedPsy share one sidecar (serial load)."
-    )
-
-shell_boxes, text_boxes, kpi_boxes, status_boxes = {}, {}, {}, {}
-_panel_rows = panel_rows_for_roster(roster)
-
-for row in _panel_rows:
-    card_cols = st.columns(len(row) or 1)
-    for i, c in enumerate(row):
-        key = c["key"]
-        prev = saved_outputs.get(key) or {}
-        color = c.get("color") or "#64748b"
-        label = c.get("display_label") or c.get("label") or key
-        with card_cols[i]:
-            # One fixed card: header + status + KPI + stream (shell once, body remounts)
-            st.markdown(
-                f'<div class="panel-card" style="border-top-color: {color}">'
-                f'<p class="live-head">{html.escape(str(label))}</p>'
-                f'<p class="live-meta">{html.escape(str(c.get("model") or ""))}</p></div>',
-                unsafe_allow_html=True,
-            )
-            status_boxes[key] = st.empty()
-            kpi_boxes[key] = st.empty()
-            shell_boxes[key] = st.empty()
-            text_boxes[key] = st.empty()
-
-            # st.html keeps hidden fullscreen overlay out of the visible page flow
-            shell_boxes[key].html(
-                _stream_shell_html(title=str(label), panel_id=key)
-            )
-
-            if running_now:
-                _skip_cloud_local = local_only_now and not is_on_device_key(key)
-                _skip_non_medpsy = qvac_only_now and not is_qvac_key(key)
-                if _skip_cloud_local or _skip_non_medpsy:
+                if running_now:
+                    _skip_cloud_local = local_only_now and not is_on_device_key(key)
+                    _skip_non_medpsy = qvac_only_now and not is_qvac_key(key)
+                    if _skip_cloud_local or _skip_non_medpsy:
+                        status_boxes[key].markdown(
+                            _status_pill(
+                                "skip",
+                                "Skipped · only-local"
+                                if _skip_cloud_local
+                                else "Skipped · $0 rehearsal",
+                            ),
+                            unsafe_allow_html=True,
+                        )
+                        text_boxes[key].markdown(
+                            _stream_body_html(
+                                (
+                                    f"Skipped — on-device bake-off ({n_models} models)"
+                                    if _skip_cloud_local
+                                    else "Skipped — MedPsy-only rehearsal"
+                                ),
+                                live=False,
+                                panel_id=key,
+                            ),
+                            unsafe_allow_html=True,
+                        )
+                    else:
+                        status_boxes[key].markdown(
+                            _status_pill(
+                                "wait",
+                                "Generating…"
+                                if (
+                                    (is_qvac_key(key) and qvac_only_now)
+                                    or (is_on_device_key(key) and local_only_now)
+                                )
+                                else "Waiting…",
+                            ),
+                            unsafe_allow_html=True,
+                        )
+                        kpi_boxes[key].markdown(
+                            '<div class="kpi-slot"></div>', unsafe_allow_html=True
+                        )
+                        text_boxes[key].markdown(
+                            _stream_body_html("", live=True, panel_id=key),
+                            unsafe_allow_html=True,
+                        )
+                elif prev.get("text") is not None:
+                    status_msg = prev.get("status") or "Done"
+                    kind = "err" if prev.get("error") else "done"
                     status_boxes[key].markdown(
-                        _status_pill(
-                            "skip",
-                            "Skipped · only-local"
-                            if _skip_cloud_local
-                            else "Skipped · $0 rehearsal",
-                        ),
-                        unsafe_allow_html=True,
+                        _status_pill(kind, status_msg), unsafe_allow_html=True
                     )
+                    if prev.get("kpi"):
+                        kpi_boxes[key].markdown(
+                            f'<div class="kpi-slot"><p class="kpi-row">{prev["kpi"]}</p></div>',
+                            unsafe_allow_html=True,
+                        )
+                    else:
+                        kpi_boxes[key].markdown(
+                            '<div class="kpi-slot"></div>', unsafe_allow_html=True
+                        )
                     text_boxes[key].markdown(
                         _stream_body_html(
-                            (
-                                f"Skipped — on-device bake-off ({n_models} models)"
-                                if _skip_cloud_local
-                                else "Skipped — MedPsy-only rehearsal"
-                            ),
-                            live=False,
-                            panel_id=key,
+                            prev.get("text") or "", live=False, panel_id=key
                         ),
                         unsafe_allow_html=True,
                     )
                 else:
-                    status_boxes[key].markdown(
-                        _status_pill(
-                            "wait",
-                            "Generating…"
-                            if (
-                                (is_qvac_key(key) and qvac_only_now)
-                                or (is_on_device_key(key) and local_only_now)
-                            )
-                            else "Waiting…",
-                        ),
-                        unsafe_allow_html=True,
-                    )
+                    on_device_out = is_on_device_key(key) and not sidecar_up
+                    if on_device_out:
+                        status_boxes[key].markdown(
+                            _status_pill("skip", "Sidecar offline"),
+                            unsafe_allow_html=True,
+                        )
+                    else:
+                        status_boxes[key].markdown(
+                            _status_pill("ready", "Ready"),
+                            unsafe_allow_html=True,
+                        )
                     kpi_boxes[key].markdown(
                         '<div class="kpi-slot"></div>', unsafe_allow_html=True
                     )
                     text_boxes[key].markdown(
-                        _stream_body_html("", live=True, panel_id=key),
+                        _stream_body_html("", live=False, panel_id=key),
                         unsafe_allow_html=True,
                     )
-            elif prev.get("text") is not None:
-                status_msg = prev.get("status") or "Done"
-                kind = "err" if prev.get("error") else "done"
-                status_boxes[key].markdown(
-                    _status_pill(kind, status_msg), unsafe_allow_html=True
-                )
-                if prev.get("kpi"):
-                    kpi_boxes[key].markdown(
-                        f'<div class="kpi-slot"><p class="kpi-row">{prev["kpi"]}</p></div>',
-                        unsafe_allow_html=True,
-                    )
-                else:
-                    kpi_boxes[key].markdown(
-                        '<div class="kpi-slot"></div>', unsafe_allow_html=True
-                    )
-                text_boxes[key].markdown(
-                    _stream_body_html(
-                        prev.get("text") or "", live=False, panel_id=key
-                    ),
-                    unsafe_allow_html=True,
-                )
-            else:
-                on_device_out = is_on_device_key(key) and not sidecar_up
-                if on_device_out:
-                    status_boxes[key].markdown(
-                        _status_pill("skip", "Sidecar offline"),
-                        unsafe_allow_html=True,
-                    )
-                else:
-                    status_boxes[key].markdown(
-                        _status_pill("ready", "Ready"),
-                        unsafe_allow_html=True,
-                    )
-                kpi_boxes[key].markdown(
-                    '<div class="kpi-slot"></div>', unsafe_allow_html=True
-                )
-                text_boxes[key].markdown(
-                    _stream_body_html("", live=False, panel_id=key),
-                    unsafe_allow_html=True,
-                )
 
-def _paint_multi_progress(
-    slot,
-    completed: list,
-    *,
-    n_total: int,
-    batch_done: bool = False,
-    toast_html: str = "",
-    height: int = 220,
-) -> None:
-    """Render multi progress in an iframe so onclick modals/toasts survive sanitizer."""
-    body = progressive_multi_panel_html(
-        completed, n_total=n_total, batch_done=batch_done
-    ) + (toast_html or "")
-    # Extra height when toast is present
-    h = height + (180 if toast_html else 0)
-    slot.empty()
-    with slot.container():
-        components.html(
-            f"""<!doctype html><html><head><meta charset="utf-8"/>
-<style>
-  body {{ margin:0; background:transparent; font-family: ui-sans-serif, system-ui, sans-serif; }}
-</style></head><body>{body}</body></html>""",
-            height=h,
-            scrolling=True,
+    def _paint_multi_progress(
+        slot,
+        completed: list,
+        *,
+        n_total: int,
+        batch_done: bool = False,
+        toast_html: str = "",
+        height: int = 220,
+    ) -> None:
+        """Render multi progress in an iframe so onclick modals/toasts survive sanitizer."""
+        body = progressive_multi_panel_html(
+            completed, n_total=n_total, batch_done=batch_done
+        ) + (toast_html or "")
+        # Extra height when toast is present
+        h = height + (180 if toast_html else 0)
+        slot.empty()
+        with slot.container():
+            components.html(
+                f"""<!doctype html><html><head><meta charset="utf-8"/>
+    <style>
+      body {{ margin:0; background:transparent; font-family: ui-sans-serif, system-ui, sans-serif; }}
+    </style></head><body>{body}</body></html>""",
+                height=h,
+                scrolling=True,
+            )
+
+
+    # Progressive multi-run KPI strip (filled during / after Multi ×N)
+    multi_progress_slot = st.empty()
+    _multi_live = st.session_state.get("multi_progress") or {}
+    if _multi_live.get("completed") is not None:
+        _paint_multi_progress(
+            multi_progress_slot,
+            list(_multi_live.get("completed") or []),
+            n_total=int(_multi_live.get("n_total") or 1),
+            batch_done=bool(_multi_live.get("batch_done")),
+            height=240 if _multi_live.get("completed") else 120,
         )
 
-
-# Progressive multi-run KPI strip (filled during / after Multi ×N)
-multi_progress_slot = st.empty()
-_multi_live = st.session_state.get("multi_progress") or {}
-if _multi_live.get("completed") is not None:
-    _paint_multi_progress(
-        multi_progress_slot,
-        list(_multi_live.get("completed") or []),
-        n_total=int(_multi_live.get("n_total") or 1),
-        batch_done=bool(_multi_live.get("batch_done")),
-        height=240 if _multi_live.get("completed") else 120,
-    )
-
-# --- Execute confirmed run ---
-if st.session_state.get("confirmed_run"):
-    run_cfg = st.session_state.pop("confirmed_run")
-    run_mode = run_cfg.get("mode") or "full"
-    _batch_id = uuid.uuid4().hex
-    # Every run owns a fresh progress lifecycle; never repaint an older 1/N batch.
-    for _stale_key in (
-        "multi_progress",
-        "last_multi_summary",
-        "last_multi_paths",
-        "show_history_mean_popup",
-    ):
-        st.session_state.pop(_stale_key, None)
-    multi_progress_slot.empty()
-    if len(gold_reference) < 40:
-        st.error(
-            "Add a sufficiently detailed reference answer before running "
-            "(diagnosis, tests, urgency, safety and plan)."
-        )
-        st.stop()
-    if not effective_gold:
-        st.error(
-            "Prepare and Confirm the reference before starting candidates. "
-            "CLI still requires a pre-confirmed gold JSON."
-        )
-        st.stop()
-    try:
-        _confirmed = load_confirmed_gold(effective_gold)
-        st.session_state["_extract_cost_usd"] = float(
-            getattr(_confirmed, "extraction_cost_usd", 0.0) or 0.0
-        )
-    except Exception as exc:
-        st.error(f"Confirmed gold JSON is invalid: {exc}")
-        st.stop()
-    _active_run_token = start_run(st.session_state["_run_scope"])
-    st.session_state["_active_run_id"] = _active_run_token.run_id
-    st.session_state["benchmark_running"] = True
-    # No leftover dialogs from a previous run (avoids double-dialog crash at the end)
-    for _dlg_k in (
-        "show_run_done",
-        "multi_run_popup_path",
-        "history_popup_path",
-        "show_history_mean_popup",
-        "show_scoring_guide",
-        "show_qvac_guide",
-    ):
-        st.session_state.pop(_dlg_k, None)
-    st.session_state.pop("pending_run", None)  # never re-open confirm mid-run
-    n_runs = int(run_cfg["n"])
-    t_run0 = time.time()
-    _paint_run_timer(
-        timer_slot,
-        _run_timer_live(
-            "Starting…",
-            n_runs=n_runs,
-            elapsed_total=0,
-            elapsed_this=0,
-            collect_base=0,
-            judge_base=0,
-            bucket="collect",
-        ),
-        height=210 if n_runs > 1 else 168,
-        multi=n_runs > 1,
-    )
-
-    def _abort_run(msg: str, *, phase: str = "Stopped · fix the issue and retry") -> None:
+with _results_zone:
+    # --- Execute confirmed run ---
+    if st.session_state.get("confirmed_run"):
+        run_cfg = st.session_state.pop("confirmed_run")
+        run_mode = run_cfg.get("mode") or "full"
+        _batch_id = uuid.uuid4().hex
+        # Every run owns a fresh progress lifecycle; never repaint an older 1/N batch.
+        for _stale_key in (
+            "multi_progress",
+            "last_multi_summary",
+            "last_multi_paths",
+            "show_history_mean_popup",
+        ):
+            st.session_state.pop(_stale_key, None)
+        multi_progress_slot.empty()
+        if len(gold_reference) < 40:
+            st.error(
+                "Add a sufficiently detailed reference answer before running "
+                "(diagnosis, tests, urgency, safety and plan)."
+            )
+            st.stop()
+        if not effective_gold:
+            st.error(
+                "Prepare and Confirm the reference before starting candidates. "
+                "CLI still requires a pre-confirmed gold JSON."
+            )
+            st.stop()
         try:
-            cancel_run(st.session_state["_run_scope"])
-            abandon_all_pipelines(st.session_state["_run_scope"])
-        except Exception:
-            pass
-        _finish_scope_run()
-        st.session_state["benchmark_running"] = False
-        elapsed = int(round(time.time() - t_run0))
+            _confirmed = load_confirmed_gold(effective_gold)
+            st.session_state["_extract_cost_usd"] = float(
+                getattr(_confirmed, "extraction_cost_usd", 0.0) or 0.0
+            )
+        except Exception as exc:
+            st.error(f"Confirmed gold JSON is invalid: {exc}")
+            st.stop()
+        _active_run_token = start_run(st.session_state["_run_scope"])
+        st.session_state["_active_run_id"] = _active_run_token.run_id
+        st.session_state["benchmark_running"] = True
+        # No leftover dialogs from a previous run (avoids double-dialog crash at the end)
+        for _dlg_k in (
+            "show_run_done",
+            "multi_run_popup_path",
+            "history_popup_path",
+            "show_history_mean_popup",
+            "show_scoring_guide",
+            "show_qvac_guide",
+        ):
+            st.session_state.pop(_dlg_k, None)
+        st.session_state.pop("pending_run", None)  # never re-open confirm mid-run
+        n_runs = int(run_cfg["n"])
+        t_run0 = time.time()
         _paint_run_timer(
             timer_slot,
-            _run_timer_stop(
-                elapsed,
+            _run_timer_live(
+                "Starting…",
                 n_runs=n_runs,
-                collect_s=0,
-                judge_s=0,
-                title="Run clock · stopped",
-                phase=phase,
+                elapsed_total=0,
+                elapsed_this=0,
+                collect_base=0,
+                judge_base=0,
+                bucket="collect",
             ),
-            height=220,
+            height=210 if n_runs > 1 else 168,
+            multi=n_runs > 1,
         )
-        st.error(msg)
-        st.stop()
 
-    # ---- On-device collect: QVAC-only (MedPsy) or Only-local (6 GGUFs) ----
-    if run_mode in ("qvac_only", "local_only"):
-        _local_bakeoff = run_mode == "local_only"
+        def _abort_run(msg: str, *, phase: str = "Stopped · fix the issue and retry") -> None:
+            try:
+                cancel_run(st.session_state["_run_scope"])
+                abandon_all_pipelines(st.session_state["_run_scope"])
+            except Exception:
+                pass
+            _finish_scope_run()
+            st.session_state["benchmark_running"] = False
+            elapsed = int(round(time.time() - t_run0))
+            _paint_run_timer(
+                timer_slot,
+                _run_timer_stop(
+                    elapsed,
+                    n_runs=n_runs,
+                    collect_s=0,
+                    judge_s=0,
+                    title="Run clock · stopped",
+                    phase=phase,
+                ),
+                height=220,
+            )
+            st.error(msg)
+            st.stop()
+
+        # ---- On-device collect: QVAC-only (MedPsy) or Only-local (6 GGUFs) ----
+        if run_mode in ("qvac_only", "local_only"):
+            _local_bakeoff = run_mode == "local_only"
+            if not case_stem.strip():
+                _abort_run("Clinical case is empty.")
+            if not effective_gold.strip():
+                _abort_run(
+                    "Automatic reference setup is unavailable; retry the run."
+                )
+            if not qvac_run_ok:
+                _abort_run(
+                    "QVAC SDK sidecar offline — start it: `cd sidecar && npm start` "
+                    "(requires OpenSSL 3: `brew install openssl@3`)."
+                )
+            if _local_bakeoff and not has_key:
+                _abort_run(
+                    "Only local needs an OpenRouter key for DeepSeek R1 judge "
+                    "(collect stays $0 · you pay judge tokens only)."
+                )
+
+            if _local_bakeoff:
+                # Respect active toggles (generic / medical / MedPsy) — not a fixed 6.
+                local_slots = [c for c in roster if is_on_device_key(str(c.get("key") or ""))]
+                for slot in local_slots:
+                    k = slot["key"]
+                    if k not in status_boxes:
+                        _abort_run(
+                            "UI panels missing for Only local — reload the page "
+                            "after changing roster toggles."
+                        )
+            else:
+                local_slots = [c for c in roster if is_qvac_key(c["key"])]
+            if not local_slots:
+                _abort_run("No on-device slots available.")
+
+            n_local = max(1, int(n_runs)) if _local_bakeoff else 1
+            _mode_title = (
+                f"Only local ×{n_local} · {len(local_slots)} GGUFs · $0 collect"
+                if _local_bakeoff
+                else f"QVAC only · {len(local_slots)} MedPsy GGUF(s) sequential · $0"
+            )
+            phase_slot.markdown(
+                f'<div class="phase-banner">{_mode_title}</div>',
+                unsafe_allow_html=True,
+            )
+            _paint_run_timer(
+                timer_slot,
+                _run_timer_live(
+                    "Only local · streaming" if _local_bakeoff else "QVAC only · streaming",
+                    n_runs=n_local,
+                    elapsed_total=time.time() - t_run0,
+                    elapsed_this=time.time() - t_run0,
+                    collect_base=0,
+                    judge_base=0,
+                    bucket="collect",
+                ),
+                height=210 if n_local > 1 else 168,
+                multi=n_local > 1,
+            )
+            _active_local = {c["key"] for c in local_slots}
+            for c in roster:
+                if c["key"] not in _active_local:
+                    status_boxes[c["key"]].markdown(
+                        _status_pill("skip", "Skipped"), unsafe_allow_html=True
+                    )
+
+            _sys_p = candidate_system()
+            _user_p = candidate_user(live_case)
+            prompt = _sys_p + "\n\n" + _user_p
+            _base_chat_msgs = [
+                {"role": "system", "content": _sys_p},
+                {"role": "user", "content": _user_p},
+            ]
+            import time as _time_live
+
+            # Multi N for Only local; QVAC-only stays single-pass
+            all_artifacts: list[RunArtifact] = []
+            artifact_paths: list[str] = []
+            completed_snaps: list = []
+            collect_s_acc = 0.0
+            judge_s_acc = 0.0
+            per_run_timings: list[dict] = []
+            last_ranking = None
+            last_judgments: list = []
+            last_collected: list = []
+            last_ok_local: list[str] = []
+            last_live_snap: dict = {}
+            ranking = None
+            judgments: list = []
+            collected: list = []
+            ok_local: list[str] = []
+            judge_s = 0
+            live_snap: dict = {}
+            abort_multi = False
+
+            if n_local > 1:
+                st.session_state["multi_progress"] = {
+                    "completed": [],
+                    "n_total": n_local,
+                    "batch_done": False,
+                    "paths": [],
+                }
+                _paint_multi_progress(
+                    multi_progress_slot, [], n_total=n_local, batch_done=False, height=120
+                )
+
+            try:
+                for run_i in range(1, n_local + 1):
+                    if is_cancelled(st.session_state["_run_scope"]):
+                        st.warning("Run cancelled before the next iteration.")
+                        break
+                    _iteration_started = utc_now_iso()
+                    t_run_i0 = _time_live.time()
+                    if n_local > 1:
+                        phase_slot.markdown(
+                            f'<div class="phase-banner">Only local · Run {run_i}/{n_local} · '
+                            f"collecting {len(local_slots)} GGUFs…</div>",
+                            unsafe_allow_html=True,
+                        )
+                        for qkey in _active_local:
+                            status_boxes[qkey].markdown(
+                                _status_pill("wait", f"Run {run_i}/{n_local}…"),
+                                unsafe_allow_html=True,
+                            )
+                            text_boxes[qkey].markdown(
+                                _stream_body_html("", live=False, panel_id=qkey),
+                                unsafe_allow_html=True,
+                            )
+                            kpi_boxes[qkey].markdown(
+                                '<div class="kpi-slot"><p class="kpi-row">—</p></div>',
+                                unsafe_allow_html=True,
+                            )
+                    else:
+                        phase_slot.markdown(
+                            f'<div class="phase-banner">{_mode_title}</div>',
+                            unsafe_allow_html=True,
+                        )
+
+                    _paint_run_timer(
+                        timer_slot,
+                        _run_timer_live(
+                            (
+                                f"Run {run_i}/{n_local} · collecting"
+                                if n_local > 1
+                                else (
+                                    "Only local · streaming"
+                                    if _local_bakeoff
+                                    else "QVAC only · streaming"
+                                )
+                            ),
+                            n_runs=n_local,
+                            elapsed_total=time.time() - t_run0,
+                            elapsed_this=0,
+                            collect_base=collect_s_acc,
+                            judge_base=judge_s_acc,
+                            bucket="collect",
+                        ),
+                        height=210 if n_local > 1 else 168,
+                        multi=n_local > 1,
+                    )
+
+                    live_snap = {
+                        c["key"]: {
+                            "text": "",
+                            "status": "Skipped",
+                            "error": False,
+                            "kpi": "",
+                        }
+                        for c in roster
+                    }
+
+                    # Pipeline: DeepSeek starts as soon as each GGUF finishes (overlap with next loads).
+                    pipe = None  # type: PipelinedJudge | None
+                    judge_model = (cfg.get("judge") or {}).get("model", "deepseek/deepseek-r1")
+                    judge_temp = float((cfg.get("judge") or {}).get("temperature", 0))
+                    # Need ≥2 slots for a ranking; avoid paying R1 for a lone QVAC-only GGUF.
+                    _pipe_on = bool(has_key) and len(local_slots) >= 2
+                    t_j0 = None
+                    collected = []
+                    judgments = []
+                    judge_status = None
+                    judge_status_ctx = None
+                    progress_slot = None
+                    board_slot = None
+                    started_keys: set[str] = set()
+                    label_by_key: dict[str, str] = {}
+                    submitted_local: set[str] = set()
+                    lo_board: dict = {}
+                    # Mutable bag — avoids nonlocal + annotated-assign pitfalls on Py3.9
+                    lo_ui = {"highlight": None, "queue_i": 0, "blind_i": 0}
+
+                    def _paint_lo_board() -> None:
+                        if board_slot is None:
+                            return
+                        board_slot.markdown(
+                            live_judging_board_html(
+                                lo_board,
+                                highlight_key=lo_ui["highlight"],
+                                title="Live judging · local + MedPsy",
+                            ),
+                            unsafe_allow_html=True,
+                        )
+
+                    def _on_lo_progress(evt: dict) -> None:
+                        if progress_slot is None:
+                            return
+                        phase = evt.get("phase")
+                        key = str(evt.get("key") or "")
+                        name = label_by_key.get(key) or evt.get("label") or key
+                        done_n = int(evt.get("done") or 0)
+                        tot = int(evt.get("total") or max(1, done_n))
+                        if phase == "queued" and key not in started_keys:
+                            started_keys.add(key)
+                            lo_ui["queue_i"] = int(lo_ui["queue_i"]) + 1
+                            lo_board[key] = {
+                                "label": name,
+                                "status": "judging",
+                                "accuracy": None,
+                                "queue_i": lo_ui["queue_i"],
+                                "progress_pct": int(evt.get("percent") or 10),
+                                "progress_label": str(evt.get("stage") or "queued"),
+                                "elapsed_s": float(evt.get("elapsed_s") or 0),
+                            }
+                            _paint_lo_board()
+                        elif phase == "progress" and key:
+                            prev = lo_board.get(key) or {}
+                            # Never regress a finished score; only reopen a failed row when
+                            # a real new attempt starts (active_attempt / retry stages).
+                            if prev.get("status") == "scored" or prev.get("status") == "failed" and not evt.get(
+                                "active_attempt"
+                            ):
+                                pass
+                            else:
+                                lo_board[key] = {
+                                    **prev,
+                                    "label": name,
+                                    "status": "judging",
+                                    "accuracy": None,
+                                    "progress_pct": int(evt.get("percent") or 10),
+                                    "progress_label": str(evt.get("stage") or "judging"),
+                                    "elapsed_s": float(evt.get("elapsed_s") or 0),
+                                }
+                                _paint_lo_board()
+                        elif phase in ("done", "retry_done"):
+                            prev_q = (lo_board.get(key) or {}).get("queue_i")
+                            if evt.get("failed"):
+                                reason = str(
+                                    evt.get("failure_reason")
+                                    or evt.get("note")
+                                    or evt.get("status")
+                                    or ""
+                                )
+                                status = str(evt.get("status") or "").lower()
+                                na_label = _na_failure_label(status, reason)
+                                lo_board[key] = {
+                                    "label": name,
+                                    "status": "failed",
+                                    "accuracy": None,
+                                    "queue_i": prev_q,
+                                    "progress_pct": 100,
+                                    "progress_label": "complete",
+                                    "elapsed_s": float(evt.get("elapsed_s") or 0),
+                                }
+                                if key in status_boxes:
+                                    status_boxes[key].markdown(
+                                        _status_pill("err", na_label),
+                                        unsafe_allow_html=True,
+                                    )
+                            else:
+                                acc = float(evt.get("accuracy") or 0)
+                                lo_board[key] = {
+                                    "label": name,
+                                    "status": "scored",
+                                    "accuracy": acc,
+                                    "coverage": evt.get("coverage"),
+                                    "quality": evt.get("quality"),
+                                    "discipline": evt.get("discipline"),
+                                    "queue_i": prev_q,
+                                    "progress_pct": 100,
+                                    "progress_label": "complete",
+                                    "elapsed_s": float(evt.get("elapsed_s") or 0),
+                                }
+                                if key in status_boxes:
+                                    status_boxes[key].markdown(
+                                        _status_pill("done", f"Judged · {acc:.0f}%"),
+                                        unsafe_allow_html=True,
+                                    )
+                            lo_ui["highlight"] = key
+                            _paint_lo_board()
+                            if judge_status is not None:
+                                judge_status.update(
+                                    label=f"DeepSeek R1 · {done_n}/{tot} scored"
+                                    + (f" · run {run_i}" if n_local > 1 else "")
+                                    + " · pipelined",
+                                    state="running",
+                                )
+                        elif phase == "retry":
+                            if key:
+                                prev = lo_board.get(key) or {}
+                                # Scored rows stay scored. Terminal N/A only reopens when
+                                # the pipeline marks a real new attempt (live clock).
+                                if prev.get("status") == "scored" or prev.get("status") == "failed" and not evt.get(
+                                    "active_attempt"
+                                ):
+                                    pass
+                                else:
+                                    if key not in lo_board:
+                                        lo_ui["queue_i"] = int(lo_ui["queue_i"]) + 1
+                                    lo_board[key] = {
+                                        "label": name,
+                                        "status": "judging",
+                                        "accuracy": None,
+                                        "queue_i": prev.get("queue_i", lo_ui["queue_i"]),
+                                        "progress_pct": int(evt.get("percent") or 75),
+                                        "progress_label": str(
+                                            evt.get("stage") or "corrective retry"
+                                        ),
+                                        "elapsed_s": float(evt.get("elapsed_s") or 0),
+                                    }
+                                    _paint_lo_board()
+                        progress_slot.progress(
+                            min(1.0, done_n / max(1, tot)),
+                            text=f"Judge · {done_n}/{tot} (overlap with collect)",
+                        )
+
+                    def _poll_pipe() -> None:
+                        if pipe is None:
+                            return
+                        pipe.poll()
+                        if pipe.submitted:
+                            phase_slot.markdown(
+                                '<div class="phase-banner">'
+                                + (
+                                    f"Only local · Run {run_i}/{n_local} · "
+                                    if n_local > 1 and _local_bakeoff
+                                    else f'{"Only local" if _local_bakeoff else "QVAC-only"} · '
+                                )
+                                + f"collect + judge {pipe.done_count}/{pipe.total}"
+                                + (f" · {pipe.pending_count} in flight" if pipe.pending_count else "")
+                                + "</div>",
+                                unsafe_allow_html=True,
+                            )
+
+                    if _pipe_on:
+                        try:
+                            _validate_judge_separation(
+                                cfg if isinstance(cfg, dict) else {},
+                                local_slots,
+                            )
+                        except ValueError as exc:
+                            st.error(f"Judge separation check failed: {exc}")
+                            st.stop()
+                        pipe = PipelinedJudge(
+                            live_case,
+                            judge_model,
+                            temperature=judge_temp,
+                            gold_reference=effective_gold,
+                            expected_total=len(local_slots),
+                            max_workers=min(6, max(2, len(local_slots))),
+                            on_progress=_on_lo_progress,
+                            api_key=st.session_state.get("or_key_session"),
+                            verifier_model=str(
+                                ((cfg.get("judge") or {}) if isinstance(cfg, dict) else {}).get(
+                                    "verifier_model"
+                                )
+                                or ""
+                            ),
+                            run_scope=st.session_state["_run_scope"],
+                            benchmark_track=benchmark_track,
+                            judge_allowed_providers=list(
+                                ((cfg.get("judge") or {}) if isinstance(cfg, dict) else {}).get(
+                                    "allowed_providers"
+                                )
+                                or []
+                            ),
+                        )
+                        judge_status_ctx = st.status(
+                            "DeepSeek R1 · pipelined with collect · "
+                            + (
+                                f"run {run_i}/{n_local}"
+                                if n_local > 1
+                                else ("Only local" if _local_bakeoff else "QVAC-only")
+                            ),
+                            expanded=True,
+                        )
+                        judge_status = judge_status_ctx.__enter__()
+                        progress_slot = st.empty()
+                        board_slot = st.empty()
+                        progress_slot.progress(0.0, text="Judge · waiting for first GGUF…")
+                        _paint_lo_board()
+
+                    def _terminalize_local(
+                        slot_cfg: dict,
+                        label_text: str,
+                        body_text: str,
+                        error_text,
+                        meta_fields: dict,
+                    ) -> None:
+                        """Hand one roster slot to the judge, including failed ones.
+
+                        A GGUF that never loaded or never streamed is still part of the
+                        fixed cohort, so it has to arrive as an explicit N/A row instead
+                        of quietly disappearing from the comparison.
+                        """
+                        if pipe is None:
+                            return
+                        key_ = str(slot_cfg.get("key") or "")
+                        if not key_ or key_ in submitted_local:
+                            return
+                        lo_ui["blind_i"] = int(lo_ui["blind_i"]) + 1
+                        blind_id_ = f"Candidate {lo_ui['blind_i']}"
+                        cand_row = CandidateAnswer(
+                            candidate_key=key_,
+                            label=str(slot_cfg.get("label") or key_),
+                            display_label=str(
+                                label_text or slot_cfg.get("display_label") or key_
+                            ),
+                            vendor=str(slot_cfg.get("vendor") or "local"),
+                            site=str(slot_cfg.get("site") or "local (QVAC SDK)"),
+                            blind_id=blind_id_,
+                            answers=(
+                                parse_candidate_answers(live_case, body_text)
+                                if body_text
+                                else {}
+                            ),
+                            raw_response=body_text or "",
+                            meta=ModelCallMeta(
+                                model=str(
+                                    meta_fields.get("model") or slot_cfg.get("model") or key_
+                                ),
+                                provider="qvac",
+                                display_label=str(label_text or key_),
+                                ttft_s=meta_fields.get("ttft_s"),
+                                tps=meta_fields.get("tps"),
+                                latency_s=meta_fields.get("latency_s"),
+                                finish_reason=str(meta_fields.get("finish_reason") or ""),
+                                completion_tokens=int(
+                                    meta_fields.get("completion_tokens") or 0
+                                ),
+                                ram_mb=meta_fields.get("ram_mb"),
+                                gguf_mb=meta_fields.get("gguf_mb"),
+                                gguf_sha256=str(meta_fields.get("gguf_sha256") or ""),
+                                device=str(meta_fields.get("device") or ""),
+                                gpu_layers=meta_fields.get("gpu_layers"),
+                                ctx_size=meta_fields.get("ctx_size"),
+                                predict=meta_fields.get("predict"),
+                                seed=meta_fields.get("seed"),
+                                temperature=meta_fields.get("temperature"),
+                                top_k=meta_fields.get("top_k"),
+                                top_p=meta_fields.get("top_p"),
+                                cost_usd=0.0,
+                                error=error_text,
+                                prior_attempts=list(meta_fields.get("prior_attempts") or []),
+                                retry_count=int(meta_fields.get("retry_count") or 0),
+                            ),
+                        )
+                        # Same format-repair / section recovery as the CLI collector.
+                        # Always clear Recovering status (timeout / exception / success).
+                        if not error_text and missing_section_ids(
+                            live_case, cand_row.answers or {}
+                        ):
+                            if key_ in status_boxes:
+                                status_boxes[key_].markdown(
+                                    _status_pill("wait", "Recovering sections…"),
+                                    unsafe_allow_html=True,
+                                )
+                            try:
+                                cand_row = maybe_retry_candidate(
+                                    live_case,
+                                    cand_row,
+                                    slot_cfg,
+                                    blind_id_,
+                                    benchmark_track=benchmark_track,
+                                )
+                            except Exception:
+                                # Leave first-pass answers; missing sections stay N/A.
+                                pass
+                            finally:
+                                if key_ in status_boxes:
+                                    status_boxes[key_].markdown(
+                                        _status_pill(
+                                            "done",
+                                            "Done · $0 · judge queued",
+                                        ),
+                                        unsafe_allow_html=True,
+                                    )
+                        submitted_local.add(key_)
+                        label_by_key[key_] = cand_row.display_label or cand_row.label
+                        if key_ not in started_keys:
+                            lo_ui["queue_i"] = int(lo_ui["queue_i"]) + 1
+                            lo_board[key_] = {
+                                "label": label_by_key[key_],
+                                "status": "judging",
+                                "accuracy": None,
+                                "queue_i": lo_ui["queue_i"],
+                            }
+                            _paint_lo_board()
+                        pipe.submit(cand_row)
+
+                    for slot in local_slots:
+                        qkey = slot["key"]
+                        qlabel = slot.get("display_label") or slot.get("label") or qkey
+                        gguf = slot.get("gguf_path")
+                        model_id = str(slot.get("model") or qkey)
+                        # Match CLI runner: blind id is assigned in order; seed uses
+                        # sha256(f"{blind_id}:{key}:{model_id}")[:8] % (2**31-1).
+                        _next_blind = f"Candidate {int(lo_ui['blind_i']) + 1}"
+                        _sampling: dict = {}
+                        if uses_controlled_sampling(benchmark_track):
+                            _sampling = {"temp": 0.2, "top_k": 20, "top_p": 0.95}
+                            if is_strict_track(benchmark_track):
+                                seed_basis = f"{_next_blind}:{qkey}:{model_id}"
+                                _sampling["seed"] = int(
+                                    hashlib.sha256(seed_basis.encode("utf-8")).hexdigest()[
+                                        :8
+                                    ],
+                                    16,
+                                ) % (2**31 - 1)
+                        status_boxes[qkey].markdown(
+                            _status_pill("wait", "Loading GGUF…" if gguf else "Streaming…"),
+                            unsafe_allow_html=True,
+                        )
+                        _runtime_pin: dict = {
+                            "seed": _sampling.get("seed"),
+                            "temperature": _sampling.get("temp"),
+                            "top_k": _sampling.get("top_k"),
+                            "top_p": _sampling.get("top_p"),
+                        }
+                        if gguf:
+                            loaded = qvac_load_model(gguf, sampling=_sampling)
+                            if not loaded.get("ok"):
+                                # A hot-swap can fail while the previous GGUF unloads;
+                                # spend one free local retry before calling it N/A.
+                                status_boxes[qkey].markdown(
+                                    _status_pill("wait", "Reloading GGUF…"),
+                                    unsafe_allow_html=True,
+                                )
+                                _time_live.sleep(1.5)
+                                loaded = qvac_load_model(gguf, sampling=_sampling)
+                            if not loaded.get("ok"):
+                                err_load = str(loaded.get("error") or "load failed")[:80]
+                                status_boxes[qkey].markdown(
+                                    _status_pill("err", err_load), unsafe_allow_html=True
+                                )
+                                live_snap[qkey] = {
+                                    "text": "",
+                                    "status": err_load,
+                                    "error": True,
+                                    "kpi": "",
+                                    "meta": {},
+                                    "label": qlabel,
+                                }
+                                _terminalize_local(
+                                    slot,
+                                    str(qlabel),
+                                    "",
+                                    str(loaded.get("error") or "Failed to load GGUF"),
+                                    {
+                                        **_runtime_pin,
+                                        "gguf_sha256": loaded.get("gguf_sha256") or "",
+                                        "device": loaded.get("device") or "",
+                                        "gpu_layers": loaded.get("gpu_layers"),
+                                        "ctx_size": loaded.get("ctx_size"),
+                                        "predict": loaded.get("predict"),
+                                    },
+                                )
+                                _poll_pipe()
+                                continue
+                            for _rk in (
+                                "device",
+                                "gpu_layers",
+                                "ctx_size",
+                                "predict",
+                                "gguf_sha256",
+                            ):
+                                if loaded.get(_rk) is not None and loaded.get(_rk) != "":
+                                    _runtime_pin[_rk] = loaded.get(_rk)
+                        status_boxes[qkey].markdown(
+                            _status_pill("wait", "Streaming…"), unsafe_allow_html=True
+                        )
+                        stream_state = {"last_paint": 0.0, "last_pipe_poll": 0.0}
+                        _chat_msgs = local_chat_messages(_base_chat_msgs, slot)
+                        _slot_prompt = "\n\n".join(
+                            str(m.get("content") or "") for m in _chat_msgs
+                        ) or prompt
+
+                        def _stream_local_once() -> tuple:
+                            """Consume one on-device generation, painting tokens live."""
+                            buf_ = ""
+                            done_ = {}
+                            err_ = None
+                            n_tok_ = 0
+                            t0_ = _time_live.time()
+                            ttft_ = None
+                            for evt in qvac_iter_tokens(
+                                _slot_prompt,
+                                messages=_chat_msgs,
+                                sampling=_sampling or None,
+                            ):
+                                et = evt.get("type")
+                                if et == "token":
+                                    tok = evt.get("token") or ""
+                                    if not tok:
+                                        continue
+                                    buf_ += tok
+                                    n_tok_ += 1
+                                    now = _time_live.time()
+                                    if ttft_ is None:
+                                        ttft_ = round(now - t0_, 2)
+                                    elapsed = round(now - t0_, 2)
+                                    gen_elapsed = max(elapsed - (ttft_ or 0), 0.001)
+                                    tps_live = round(n_tok_ / gen_elapsed, 1)
+                                    if (
+                                        n_tok_ == 1
+                                        or n_tok_ % 8 == 0
+                                        or (now - stream_state["last_paint"]) >= 0.25
+                                    ):
+                                        stream_state["last_paint"] = now
+                                        text_boxes[qkey].markdown(
+                                            _stream_body_html(buf_, live=True, panel_id=qkey),
+                                            unsafe_allow_html=True,
+                                        )
+                                        kpi_boxes[qkey].markdown(
+                                            f'<div class="kpi-slot"><p class="kpi-row live">'
+                                            f"{_kpi_live_line(ttft_, elapsed, tps_live)}"
+                                            "</p></div>",
+                                            unsafe_allow_html=True,
+                                        )
+                                    # Harvest finished DeepSeek calls while this GGUF streams
+                                    if (
+                                        pipe is not None
+                                        and (now - stream_state["last_pipe_poll"]) >= 0.45
+                                    ):
+                                        stream_state["last_pipe_poll"] = now
+                                        _poll_pipe()
+                                elif et == "done":
+                                    done_ = evt
+                                    if evt.get("content"):
+                                        buf_ = str(evt["content"])
+                                    if evt.get("error") and not (buf_ or "").strip():
+                                        err_ = str(evt["error"])
+                                elif et == "error":
+                                    err_ = str(evt.get("error") or "stream error")
+                                    break
+                            return buf_, done_, err_, n_tok_, ttft_
+
+                        buf, done_meta, err_msg, n_tok, ttft_s = _stream_local_once()
+                        # One free local re-stream: a sidecar worker or transport fault
+                        # says nothing about the model's clinical ability.
+                        if err_msg and not (buf or "").strip() and is_retryable_local_error(err_msg):
+                            status_boxes[qkey].markdown(
+                                _status_pill("wait", "Retrying local generation…"),
+                                unsafe_allow_html=True,
+                            )
+                            _time_live.sleep(1.5)
+                            buf, done_meta, err_msg, n_tok, ttft_s = _stream_local_once()
+
+                        if err_msg:
+                            low = err_msg.lower()
+                            if "libssl" in low or "openssl" in low:
+                                err_msg = (
+                                    "QVAC SDK needs OpenSSL 3. "
+                                    "Run: ./scripts/setup_qvac_sidecar.sh && cd sidecar && npm start"
+                                )
+                            elif "404" in err_msg or "not found" in low:
+                                err_msg = (
+                                    "Sidecar outdated / unreachable. "
+                                    "Restart: cd sidecar && npm start"
+                                )
+                            elif "rpc" in low or "worker" in low:
+                                err_msg = (
+                                    "QVAC SDK worker failed to start. "
+                                    "Run: ./scripts/setup_qvac_sidecar.sh && cd sidecar && npm start"
+                                )
+
+                        _body_chk = (buf or "").strip()
+                        if (
+                            not err_msg
+                            and _body_chk
+                            and len(_body_chk.split()) <= 2
+                            and len(_body_chk) > 200
+                        ):
+                            err_msg = "Collapsed / non-text output (not scored)"
+
+                        text_boxes[qkey].markdown(
+                            _stream_body_html(buf or "(empty)", live=False, panel_id=qkey),
+                            unsafe_allow_html=True,
+                        )
+                        if err_msg:
+                            status_boxes[qkey].markdown(
+                                _status_pill("err", err_msg[:80]), unsafe_allow_html=True
+                            )
+                            live_snap[qkey] = {
+                                "text": buf or "",
+                                "status": err_msg[:80],
+                                "error": True,
+                                "kpi": "",
+                                "meta": {},
+                                "label": qlabel,
+                            }
+                            _terminalize_local(
+                                slot,
+                                str(qlabel),
+                                buf or "",
+                                err_msg,
+                                {
+                                    **_runtime_pin,
+                                    "model": slot.get("model") or qkey,
+                                    "completion_tokens": done_meta.get("completion_tokens"),
+                                    "finish_reason": done_meta.get("finish_reason"),
+                                    "device": (
+                                        done_meta.get("device")
+                                        or _runtime_pin.get("device")
+                                        or qvac_health().get("device")
+                                        or ""
+                                    ),
+                                    "gpu_layers": (
+                                        done_meta.get("gpu_layers")
+                                        if done_meta.get("gpu_layers") is not None
+                                        else _runtime_pin.get("gpu_layers")
+                                    ),
+                                    "ctx_size": (
+                                        done_meta.get("ctx_size")
+                                        if done_meta.get("ctx_size") is not None
+                                        else _runtime_pin.get("ctx_size")
+                                    ),
+                                    "predict": (
+                                        done_meta.get("predict")
+                                        if done_meta.get("predict") is not None
+                                        else _runtime_pin.get("predict")
+                                    ),
+                                    "gguf_sha256": (
+                                        done_meta.get("gguf_sha256")
+                                        or _runtime_pin.get("gguf_sha256")
+                                        or ""
+                                    ),
+                                },
+                            )
+                        else:
+                            status_boxes[qkey].markdown(
+                                _status_pill(
+                                    "done",
+                                    "Done · $0 · judge queued" if pipe is not None else "Done · $0",
+                                ),
+                                unsafe_allow_html=True,
+                            )
+                            meta_done = {
+                                "ttft_s": done_meta.get("ttft_s")
+                                if done_meta.get("ttft_s") is not None
+                                else ttft_s,
+                                "tps": done_meta.get("tps"),
+                                "latency_s": done_meta.get("latency_s"),
+                                "cost_usd": 0,
+                                "completion_tokens": done_meta.get("completion_tokens") or 0,
+                                "ram_mb": done_meta.get("ram_mb"),
+                                "gguf_mb": done_meta.get("gguf_mb"),
+                                "finish_reason": done_meta.get("finish_reason"),
+                                "device": (
+                                    done_meta.get("device")
+                                    or _runtime_pin.get("device")
+                                    or qvac_health().get("device")
+                                    or ""
+                                ),
+                                "gpu_layers": (
+                                    done_meta.get("gpu_layers")
+                                    if done_meta.get("gpu_layers") is not None
+                                    else _runtime_pin.get("gpu_layers")
+                                    if _runtime_pin.get("gpu_layers") is not None
+                                    else qvac_health().get("gpu_layers")
+                                ),
+                                "ctx_size": (
+                                    done_meta.get("ctx_size")
+                                    if done_meta.get("ctx_size") is not None
+                                    else _runtime_pin.get("ctx_size")
+                                    if _runtime_pin.get("ctx_size") is not None
+                                    else qvac_health().get("ctx_size")
+                                ),
+                                "predict": (
+                                    done_meta.get("predict")
+                                    if done_meta.get("predict") is not None
+                                    else _runtime_pin.get("predict")
+                                    if _runtime_pin.get("predict") is not None
+                                    else qvac_health().get("predict")
+                                ),
+                                "seed": (
+                                    done_meta.get("seed")
+                                    if done_meta.get("seed") is not None
+                                    else _runtime_pin.get("seed")
+                                ),
+                                "temperature": _runtime_pin.get("temperature"),
+                                "top_k": _runtime_pin.get("top_k"),
+                                "top_p": _runtime_pin.get("top_p"),
+                                "gguf_sha256": (
+                                    done_meta.get("gguf_sha256")
+                                    or _runtime_pin.get("gguf_sha256")
+                                    or ""
+                                ),
+                                "model": slot.get("model") or qkey,
+                            }
+                            kpi = _kpi_line(meta_done, buf)
+                            kpi_full = f"{kpi} · device {meta_done['device'] or '?'}"
+                            if meta_done.get("gpu_layers") is not None:
+                                kpi_full += f" · L{meta_done['gpu_layers']}"
+                            if meta_done.get("seed") is not None:
+                                kpi_full += f" · seed {meta_done['seed']}"
+                            kpi_boxes[qkey].markdown(
+                                f'<div class="kpi-slot"><p class="kpi-row">{kpi_full}</p></div>',
+                                unsafe_allow_html=True,
+                            )
+                            live_snap[qkey] = {
+                                "text": buf or "",
+                                "status": "Done · $0",
+                                "error": False,
+                                "kpi": kpi_full,
+                                "meta": meta_done,
+                                "label": qlabel,
+                                "slot": slot,
+                            }
+                            # Kick DeepSeek while the next GGUF loads / streams
+                            if pipe is not None:
+                                body_ok = (buf or "").strip()
+                                words = body_ok.split()
+                                collapsed = len(words) <= 2 and len(body_ok) > 200
+                                candidate_error = (
+                                    str(meta_done.get("error") or "").strip()
+                                    or (
+                                        "Empty candidate output"
+                                        if not body_ok
+                                        else (
+                                            "Unusable collapsed candidate output"
+                                            if collapsed
+                                            else ""
+                                        )
+                                    )
+                                    or None
+                                )
+                                if qkey:
+                                    if candidate_error is None and t_j0 is None:
+                                        t_j0 = time.time()
+                                        # Both phases tick while DeepSeek overlaps next GGUFs
+                                        _el_this = t_j0 - t_run_i0
+                                        _paint_run_timer(
+                                            timer_slot,
+                                            _run_timer_live(
+                                                (
+                                                    f"Run {run_i}/{n_local} · collect∥judge"
+                                                    if n_local > 1
+                                                    else "collect∥judge · pipelined"
+                                                ),
+                                                n_runs=n_local,
+                                                elapsed_total=t_j0 - t_run0,
+                                                elapsed_this=_el_this,
+                                                collect_base=int(
+                                                    round(collect_s_acc + _el_this)
+                                                ),
+                                                judge_base=int(round(judge_s_acc)),
+                                                bucket="both",
+                                            ),
+                                            height=230 if n_local > 1 else 178,
+                                            multi=n_local > 1,
+                                        )
+                                    # Collect → judging: append to bottom of live board (FIFO)
+                                    _terminalize_local(
+                                        slot, str(qlabel), buf, candidate_error, meta_done
+                                    )
+                        _poll_pipe()
+
+                    t_collect_end = time.time()
+                    run_collect_s = t_collect_end - t_run_i0
+                    collect_s_acc += run_collect_s
+                    st.session_state["live_outputs"] = live_snap
+                    last_live_snap = live_snap
+
+                    def _ok_local_text(k: str) -> bool:
+                        snap = live_snap.get(k) or {}
+                        if snap.get("error"):
+                            return False
+                        body = (snap.get("text") or "").strip()
+                        if not body:
+                            return False
+                        words = body.split()
+                        if len(words) <= 2 and len(body) > 200:
+                            return False
+                        return True
+
+                    ok_local = [
+                        k for k in live_snap if k in _active_local and _ok_local_text(k)
+                    ]
+                    last_ok_local = list(ok_local)
+
+                    # KPI compare (single run only — multi shows mean after batch)
+                    if n_local == 1 and len(ok_local) >= 2:
+                        st.markdown(
+                            f'<div class="sec-label">'
+                            f'{"Only local" if _local_bakeoff else "QVAC-only"} · KPI compare'
+                            f"</div>",
+                            unsafe_allow_html=True,
+                        )
+                        kpi_rows = []
+                        for k in ok_local:
+                            snap = live_snap[k]
+                            m = snap.get("meta") or {}
+                            body = (snap.get("text") or "").strip()
+                            nm, ver = _nv(
+                                k, label=snap.get("label"), model=m.get("model")
+                            )
+                            kpi_rows.append(
+                                {
+                                    "Name": nm,
+                                    "Version": ver,
+                                    "TTFT s": m.get("ttft_s"),
+                                    "TPS": m.get("tps"),
+                                    "Latency s": m.get("latency_s"),
+                                    "RAM(RSS)": _fmt_ram_mb(m.get("ram_mb")) or "—",
+                                    "GGUF": _fmt_gguf_mb(m.get("gguf_mb")) or "—",
+                                    "Words": len(body.split()) if body else 0,
+                                    "Tok": int(m.get("completion_tokens") or 0),
+                                }
+                            )
+                        st.dataframe(
+                            pd.DataFrame(kpi_rows), use_container_width=True, hide_index=True
+                        )
+                        st.caption(
+                            "Local collect · $0 API · same prompt · sequential GGUF · "
+                            "judge overlaps collect when a key is present."
+                        )
+
+                    run_judge_s = 0.0
+                    ranking = None
+                    abort_multi = False
+                    _want_judge = len(ok_local) >= 2 and (
+                        has_key if not _local_bakeoff else True
+                    )
+
+                    if pipe is not None:
+                        try:
+                            # Shrink expected total to what we actually submitted
+                            pipe.set_expected_total(pipe.submitted)
+                            if pipe.submitted:
+                                phase_slot.markdown(
+                                    '<div class="phase-banner">'
+                                    + (
+                                        f"Only local · Run {run_i}/{n_local} · "
+                                        if n_local > 1
+                                        else f'{"Only local" if _local_bakeoff else "QVAC-only"} · '
+                                    )
+                                    + f"finishing judge {pipe.done_count}/{pipe.total}…</div>",
+                                    unsafe_allow_html=True,
+                                )
+                                _judge_so_far = (
+                                    (t_collect_end - t_j0) if t_j0 is not None else 0.0
+                                )
+                                _paint_run_timer(
+                                    timer_slot,
+                                    _run_timer_live(
+                                        (
+                                            f"Run {run_i}/{n_local} · DeepSeek tail"
+                                            if n_local > 1
+                                            else "DeepSeek · finishing overlap"
+                                        ),
+                                        n_runs=n_local,
+                                        elapsed_total=time.time() - t_run0,
+                                        elapsed_this=time.time() - t_run_i0,
+                                        collect_base=int(round(collect_s_acc)),
+                                        judge_base=int(round(judge_s_acc + _judge_so_far)),
+                                        bucket="judge",
+                                    ),
+                                    height=230 if n_local > 1 else 178,
+                                    multi=n_local > 1,
+                                )
+                                judgments = pipe.finalize()
+                                collected = pipe.candidates
+                            else:
+                                judgments = []
+                                collected = []
+                            if judge_status is not None:
+                                judge_status.update(
+                                    label=f"DeepSeek R1 · {len(judgments)} done · pipelined"
+                                    + (f" · run {run_i}" if n_local > 1 else ""),
+                                    state="complete",
+                                )
+                            # Full judge wall (includes overlap with collect) — not tail-only
+                            _t_j_end = time.time()
+                            if t_j0 is not None:
+                                run_judge_s = _t_j_end - t_j0
+                            else:
+                                run_judge_s = max(0.0, _t_j_end - t_collect_end)
+                            judge_s_acc += run_judge_s
+                            if not _want_judge:
+                                # Had key but <2 usable answers — drop ranking path
+                                judgments = judgments if len(collected) >= 2 else []
+                                if len(ok_local) < 2:
+                                    if n_local == 1 and _local_bakeoff:
+                                        st.warning(
+                                            "Fewer than 2 usable local answers — check GGUFs / sidecar "
+                                            "(empty or collapsed outputs are excluded from ranking)."
+                                        )
+                                    elif n_local > 1:
+                                        st.warning(
+                                            f"Run {run_i}/{n_local}: fewer than 2 usable "
+                                            "local answers — skipped."
+                                        )
+                        finally:
+                            try:
+                                pipe.close(cancel_pending=False)
+                            except Exception:
+                                pass
+                            if judge_status_ctx is not None:
+                                try:
+                                    judge_status_ctx.__exit__(None, None, None)
+                                except Exception:
+                                    pass
+                                judge_status_ctx = None
+                    elif len(ok_local) >= 2 and not has_key:
+                        if n_local == 1:
+                            st.info(
+                                "**KPI compare** above (local, $0). "
+                                "Paste an OpenRouter key to run DeepSeek R1 "
+                                "(cloud candidates stay skipped · judge tokens only)."
+                            )
+                    elif len(ok_local) < 2:
+                        if n_local == 1:
+                            st.session_state.pop("last_ranking", None)
+                            if _local_bakeoff:
+                                st.warning(
+                                    "Fewer than 2 usable local answers — check GGUFs / sidecar "
+                                    "(empty or collapsed outputs are excluded from ranking)."
+                                )
+                        else:
+                            st.warning(
+                                f"Run {run_i}/{n_local}: fewer than 2 usable local answers — skipped."
+                            )
+
+                    if judgments and len(collected) >= 2:
+                        ranking = build_ranking(judgments)
+                        by_meta = {c.candidate_key: c for c in collected}
+                        for row in ranking:
+                            c = by_meta.get(row["key"])
+                            if c:
+                                row["label"] = c.display_label or c.label
+                                row["model"] = c.meta.model
+                                if c.meta.ttft_s is not None:
+                                    row["ttft_s"] = c.meta.ttft_s
+                                if c.meta.tps is not None:
+                                    row["tps"] = c.meta.tps
+                                if c.meta.ram_mb is not None:
+                                    row["ram_mb"] = c.meta.ram_mb
+                                if c.meta.gguf_mb is not None:
+                                    row["gguf_mb"] = c.meta.gguf_mb
+                                row["cost_usd"] = 0.0
+                        last_ranking = ranking
+                        last_judgments = judgments
+                        last_collected = collected
+
+                        from benchmark.costing import cost_breakdown_for_run, run_cost_usd
+
+                        _extract_fee = float(
+                            getattr(
+                                load_confirmed_gold(effective_gold),
+                                "extraction_cost_usd",
+                                0.0,
+                            )
+                            or 0.0
+                        ) if effective_gold else 0.0
+                        judge_cost = run_cost_usd(collected, judgments)
+                        _local_cost_bd = cost_breakdown_for_run(
+                            collected, judgments, extraction_cost_usd=_extract_fee
+                        )
+                        abort_multi = n_local > 1 and systemic_judge_failure(judgments)
+                        notes = ""
+                        if abort_multi:
+                            notes = (
+                                f"Only-local multi aborted after run {run_i}/{n_local}: "
+                                "systemic judge failure. Remaining runs skipped."
+                            )
+                            st.warning(notes)
+                        # Planned roster model ids — not per-run sidecar labels
+                        # (meta.model can oscillate and split one Multi into mixed cohorts).
+                        _local_model_contract = planned_on_device_model_contract(
+                            local_slots
+                        )
+                        _local_cohort = build_cohort_id(
+                            case_stem=case_stem,
+                            gold=load_confirmed_gold(effective_gold),
+                            prompt_version="gold-only-v1",
+                            model_config={
+                                "candidates": _local_model_contract,
+                                "judge": cfg.get("judge") if isinstance(cfg, dict) else {},
+                            },
+                            benchmark_track=benchmark_track,
+                        )
+                        st.session_state["_active_cohort_id"] = _local_cohort
+                        artifact = build_run_artifact(
+                            config_snapshot=cfg,
+                            judge_temperature=judge_temp,
+                            run_id=f"{case_id}-{uuid.uuid4().hex[:10]}",
+                            case_id=case_id,
+                            started_at=_iteration_started,
+                            finished_at=utc_now_iso(),
+                            n_index=run_i,
+                            batch_id=_batch_id,
+                            models_config={
+                                "profile": (cfg.get("profile") if isinstance(cfg, dict) else None),
+                                "mode": run_mode,
+                                "pipelined_judge": True,
+                                "candidates": [
+                                    {
+                                        "key": c.candidate_key,
+                                        "label": c.label,
+                                        "display_label": c.display_label,
+                                        "model": c.meta.model,
+                                    }
+                                    for c in collected
+                                ],
+                                "judge": cfg.get("judge") if isinstance(cfg, dict) else None,
+                                "gold_reference": effective_gold.strip() if effective_gold else "",
+                                "case_stem": case_stem.strip(),
+                                "owner_id": owner_id_for_current_key(
+                                    st.session_state.get("or_key_session")
+                                ),
+                                "estimated_breakdown": (
+                                    bd_local_only_multi
+                                    if n_local > 1 and _local_bakeoff
+                                    else bd_local_only
+                                    if _local_bakeoff
+                                    else None
+                                ),
+                            },
+                            candidates=collected,
+                            judgments=judgments,
+                            ranking=ranking,
+                            total_cost_usd=round(judge_cost, 6),
+                            cost_breakdown=_local_cost_bd,
+                            notes=notes,
+                            cohort_id=_local_cohort,
+                            scoring_version=SCORING_VERSION,
+                            prompt_version="gold-only-v1",
+                            benchmark_track=benchmark_track,
+                            run_status=(
+                                "cancelled"
+                                if any(j.status == "cancelled" for j in judgments)
+                                else (
+                                    "complete"
+                                    if all(j.status == "valid" for j in judgments)
+                                    else "partial"
+                                )
+                            ),
+                            reproducibility={
+                                "benchmark_track": benchmark_track,
+                                "candidate_temperature": (
+                                    0.2
+                                    if uses_controlled_sampling(benchmark_track)
+                                    else None
+                                ),
+                                "judge_temperature": judge_temp,
+                                "blind_map": {
+                                    c.candidate_key: c.blind_id for c in collected
+                                },
+                            },
+                        )
+
+                        WORKSPACE_DIR.mkdir(parents=True, exist_ok=True)
+                        art_path = _persist_run_artifact(artifact, WORKSPACE_DIR)
+                        _account = st.session_state.get("account_session")
+                        if account_store_configured() and isinstance(_account, AccountSession):
+                            try:
+                                account_save_artifact(_account, artifact)
+                            except Exception as exc:
+                                st.warning(f"Encrypted cloud persistence failed: {exc}")
+                        all_artifacts.append(artifact)
+                        artifact_paths.append(str(art_path) if art_path else artifact.run_id)
+
+                        if n_local > 1:
+                            snap = snapshot_from_artifact(artifact)
+                            completed_snaps.append(snap)
+                            st.session_state["multi_progress"] = {
+                                "completed": list(completed_snaps),
+                                "n_total": n_local,
+                                "batch_done": False,
+                                "paths": list(artifact_paths),
+                            }
+                            _paint_multi_progress(
+                                multi_progress_slot,
+                                completed_snaps,
+                                n_total=n_local,
+                                batch_done=False,
+                                toast_html=client_toast_run_done(run_i, n_local, ranking),
+                                height=320,
+                            )
+                            leader = "—"
+                            if ranking:
+                                best = min(ranking, key=lambda r: int(r.get("rank") or 99))
+                                leader = (
+                                    f"{short_model(str(best.get('key')))} "
+                                    f"{float(best.get('accuracy') or 0):.1f}%"
+                                )
+                            st.toast(
+                                f"Only local · run {run_i}/{n_local} · leader {leader}",
+                                icon="✅",
+                            )
+                        else:
+                            # Single-run clinical ranking UI
+                            ranking = _current_ranking(ranking)
+                            for _r in ranking:
+                                _r.setdefault("n_runs", 1)
+                            st.session_state["last_ranking"] = ranking
+                            st.session_state["last_judgments"] = [
+                                j.model_dump()
+                                for j in filter_current_roster_rows(
+                                    judgments, key_field="candidate_key"
+                                )
+                            ]
+                            st.session_state["show_last_run_costs"] = True
+                            st.session_state["last_cost_rows"] = [
+                                {
+                                    "Key": c.candidate_key,
+                                    "Model": c.meta.model,
+                                    "$": 0.0,
+                                    "TTFT": c.meta.ttft_s,
+                                    "TPS": c.meta.tps,
+                                    "RAM(RSS)": _fmt_ram_mb(c.meta.ram_mb) or "—",
+                                    "GGUF": _fmt_gguf_mb(c.meta.gguf_mb) or "—",
+                                }
+                                for c in filter_current_roster_rows(
+                                    collected, key_field="candidate_key"
+                                )
+                            ] + [
+                                {
+                                    "Key": "judge",
+                                    "Model": judge_model,
+                                    "$": round(judge_cost, 6),
+                                    "TTFT": None,
+                                    "TPS": None,
+                                    "RAM(RSS)": "—",
+                                    "GGUF": "—",
+                                }
+                            ]
+                            st.markdown(
+                                f'<div class="sec-label">'
+                                f'{"Only local" if _local_bakeoff else "QVAC-only"} · clinical ranking'
+                                f"</div>",
+                                unsafe_allow_html=True,
+                            )
+                            st.plotly_chart(
+                                fig_judge_accuracy_bars(ranking, height=280),
+                                use_container_width=True,
+                                key=(
+                                    "rank_chart_local_only"
+                                    if _local_bakeoff
+                                    else "rank_chart_qvac_only"
+                                ),
+                            )
+                            _rank_rows = []
+                            _any_na = False
+                            for r in ranking:
+                                _nm, _ver = _nv(
+                                    r.get("key"), label=r.get("label"), model=r.get("model")
+                                )
+                                _na = str(r.get("status") or "ok") != "ok" or r.get(
+                                    "accuracy"
+                                ) is None
+                                _any_na = _any_na or _na
+                                _rank = r.get("rank")
+                                _rank_disp = (
+                                    "— · partial"
+                                    if _na
+                                    else (
+                                        f"#{_rank} · partial"
+                                        if r.get("partial") and _rank is not None
+                                        else _rank
+                                    )
+                                )
+                                _rank_rows.append(
+                                    {
+                                        "#": _rank_disp,
+                                        "Name": _nm,
+                                        "Version": _ver,
+                                        "Clinical Composite %": (
+                                            "N/A" if _na else r.get("accuracy")
+                                        ),
+                                        "Status": (
+                                            "partial"
+                                            if _na or r.get("partial")
+                                            else "ok"
+                                        ),
+                                        "TTFT": r.get("ttft_s"),
+                                        "TPS": r.get("tps"),
+                                        "RAM(RSS)": _fmt_ram_mb(r.get("ram_mb")) or "—",
+                                        "GGUF": _fmt_gguf_mb(r.get("gguf_mb")) or "—",
+                                        "Runs": int(r.get("n_runs") or 1),
+                                    }
+                                )
+                            if _any_na:
+                                st.markdown(
+                                    '<div style="margin:0.25rem 0 0.5rem;padding:0.45rem 0.7rem;'
+                                    "border-radius:8px;border:1px solid #f59e0b;"
+                                    'background:rgba(251,191,36,0.12);color:#fde68a;font-size:0.85rem">'
+                                    "<b style='color:#fbbf24'>partial</b> · technical N/A "
+                                    "remain listed; scored models keep their ranks "
+                                    "(not clinical 0%).</div>",
+                                    unsafe_allow_html=True,
+                                )
+                            st.dataframe(
+                                pd.DataFrame(_rank_rows),
+                                use_container_width=True,
+                                hide_index=True,
+                            )
+
+                    run_total_s = time.time() - t_run_i0
+                    per_run_timings.append(
+                        {
+                            "run": run_i,
+                            "collect_s": int(round(run_collect_s)),
+                            "judge_s": int(round(run_judge_s)),
+                            "total_s": int(round(run_total_s)),
+                        }
+                    )
+                    if abort_multi:
+                        break
+
+            except Exception as exc:
+                # Mirror full-Multi except: never leave multi_progress stuck at batch_done=false.
+                if n_local > 1:
+                    st.session_state["multi_progress"] = finished_multi_progress(
+                        completed_snaps,
+                        n_total=n_local,
+                        paths=artifact_paths,
+                        aborted_early=True,
+                    )
+                    try:
+                        _paint_multi_progress(
+                            multi_progress_slot,
+                            completed_snaps,
+                            n_total=n_local,
+                            batch_done=True,
+                            height=160,
+                        )
+                    except Exception:
+                        pass
+                try:
+                    cancel_run(st.session_state["_run_scope"])
+                    abandon_all_pipelines(st.session_state["_run_scope"])
+                except Exception:
+                    pass
+                _finish_scope_run()
+                st.session_state["benchmark_running"] = False
+                st.error(
+                    f"Local/QVAC multi-run failed: {type(exc).__name__}: {exc}"
+                )
+                st.stop()
+
+            # ---- Batch wrap-up ----
+            _finish_scope_run()
+            st.session_state["benchmark_running"] = False
+            st.session_state["live_outputs"] = last_live_snap or live_snap
+            total_s = int(round(time.time() - t_run0))
+            collect_s = int(round(collect_s_acc))
+            judge_s = int(round(judge_s_acc))
+            last_this_s = int(per_run_timings[-1]["total_s"]) if per_run_timings else total_s
+            # Do NOT force collect+judge == total: pipelined overlap makes sum ≥ wall.
+            _paint_run_timer(
+                timer_slot,
+                _run_timer_stop(
+                    total_s,
+                    this_s=last_this_s if n_local > 1 else None,
+                    n_runs=n_local,
+                    collect_s=collect_s,
+                    judge_s=judge_s,
+                    per_run=per_run_timings,
+                ),
+                height=220,
+                multi=n_local > 1,
+                per_run_n=len(per_run_timings),
+            )
+            st.session_state["last_run_timings"] = {
+                "collect_s": collect_s,
+                "judge_s": judge_s,
+                "total_s": total_s,
+                "last_run_s": last_this_s,
+                "per_run": per_run_timings,
+                "mode": run_mode,
+                "n": n_local,
+            }
+            st.session_state["last_multi_n"] = n_local
+
+            _done_label = "Only local" if _local_bakeoff else "QVAC-only"
+            if n_local > 1:
+                st.session_state["multi_progress"] = finished_multi_progress(
+                    completed_snaps,
+                    n_total=n_local,
+                    paths=artifact_paths,
+                    aborted_early=bool(abort_multi),
+                )
+                _paint_multi_progress(
+                    multi_progress_slot,
+                    completed_snaps,
+                    n_total=n_local,
+                    batch_done=True,
+                    height=160,
+                )
+            if len(all_artifacts) > 1:
+                phase_slot.markdown(
+                    f'<div class="phase-banner">{_done_label} ×{len(all_artifacts)} done · '
+                    f"mean ranking ready · judge wall {judge_s}s</div>",
+                    unsafe_allow_html=True,
+                )
+                summary, _mean_warn = summarize_multi_batch(all_artifacts)
+                if _mean_warn:
+                    st.warning(_mean_warn)
+                st.session_state["last_multi_paths"] = list(artifact_paths)
+                st.session_state["multi_progress"] = finished_multi_progress(
+                    completed_snaps,
+                    n_total=n_local,
+                    paths=artifact_paths,
+                    aborted_early=bool(abort_multi),
+                )
+                _paint_multi_progress(
+                    multi_progress_slot,
+                    completed_snaps,
+                    n_total=n_local,
+                    batch_done=True,
+                    height=160,
+                )
+
+                if summary is not None:
+                    _persist_summary(summary)
+                    st.session_state["last_multi_summary"] = summary.model_dump()
+
+                    st.markdown(
+                        '<div class="sec-label">Only local · official ranking · mean across runs</div>',
+                        unsafe_allow_html=True,
+                    )
+                    st.caption(reliability_caption(summary))
+                    _lo_art = all_artifacts[-1] if all_artifacts else None
+                    _lo_cohort = (
+                        str(getattr(_lo_art, "cohort_id", None) or "")
+                        if _lo_art is not None
+                        else ""
+                    )
+                    _lo_roster_n = len(
+                        filter_current_roster_rows(summary.ranking_mean or [])
+                    ) or DEFAULT_ROSTER_VERSION
+                    st.markdown(
+                        honesty_block_html(
+                            lang=_ui_lang(),
+                            roster_n=_lo_roster_n,
+                            scope="same_case",
+                            cohort_id=_lo_cohort,
+                        ),
+                        unsafe_allow_html=True,
+                    )
+                    _lo_eff = (
+                        ((_lo_art.reproducibility or {}).get("effective_judge") or "")
+                        if _lo_art is not None
+                        else ""
+                    )
+                    if _lo_eff:
+                        st.caption(f"Effective judge (last run) · `{_lo_eff}`")
+                    st.markdown("##### Ranking table")
+                    st.markdown(
+                        _reliability_table_html(summary.ranking_mean), unsafe_allow_html=True
+                    )
+                    st.markdown(
+                        screenshot_footer_html(
+                            lang=_ui_lang(),
+                            scope="same_case",
+                            roster_n=_lo_roster_n,
+                            cohort_id=_lo_cohort,
+                            n_label=f"N={summary.n} runs · successful scores",
+                        ),
+                        unsafe_allow_html=True,
+                    )
+                    st.markdown("##### Chart (mean %; whiskers = ±1 std)")
+                    st.plotly_chart(
+                        fig_judge_mean_accuracy_bars(
+                            summary.ranking_mean,
+                            title="Only local · mean Clinical Composite Score",
+                            height=280,
+                        ),
+                        use_container_width=True,
+                        key="rank_chart_local_only_mean",
+                    )
+                    st.markdown(
+                        screenshot_footer_html(
+                            lang=_ui_lang(),
+                            scope="same_case",
+                            roster_n=_lo_roster_n,
+                            cohort_id=_lo_cohort,
+                            n_label=f"N={summary.n} runs · successful scores",
+                            extra="mean±std whiskers",
+                        ),
+                        unsafe_allow_html=True,
+                    )
+                    if summary.outliers:
+                        _exec_notes = [
+                            o
+                            for o in summary.outliers
+                            if "execution_cohort" in o.lower()
+                        ]
+                        _other_notes = [
+                            o for o in summary.outliers if o not in _exec_notes
+                        ]
+                        if _exec_notes:
+                            st.caption(
+                                "⚠️ "
+                                + " · ".join(_exec_notes)
+                                + " · mean same recipe; routes/N/A may differ."
+                            )
+                        if _other_notes:
+                            st.caption("Notes · " + " · ".join(_other_notes[:4]))
+                        _prior_bits = []
+                        for art in all_artifacts:
+                            for cand in art.candidates or []:
+                                pa = list(getattr(cand.meta, "prior_attempts", None) or [])
+                                if pa:
+                                    _prior_bits.append(
+                                        f"{cand.candidate_key}×{len(pa)}"
+                                    )
+                            for j in art.judgments or []:
+                                pa = list(getattr(j, "prior_attempts", None) or [])
+                                if pa:
+                                    _prior_bits.append(
+                                        f"judge:{j.candidate_key}×{len(pa)}"
+                                    )
+                        if _prior_bits:
+                            st.caption(
+                                "Retries kept prior attempts · "
+                                + ", ".join(_prior_bits[:8])
+                            )
+                    import statistics as _stats_lo
+
+                    _kpi_acc: dict[str, dict[str, list]] = {}
+                    for art in all_artifacts:
+                        for c in art.candidates or []:
+                            k = c.candidate_key
+                            bucket = _kpi_acc.setdefault(
+                                k, {"ttft": [], "tps": [], "lat": [], "ram": [], "label": c.display_label or c.label}
+                            )
+                            if c.meta.ttft_s is not None:
+                                bucket["ttft"].append(float(c.meta.ttft_s))
+                            if c.meta.tps is not None:
+                                bucket["tps"].append(float(c.meta.tps))
+                            if c.meta.latency_s is not None:
+                                bucket["lat"].append(float(c.meta.latency_s))
+                            if c.meta.ram_mb is not None:
+                                bucket["ram"].append(float(c.meta.ram_mb))
+                    _kpi_mean_rows = []
+                    for k, b in _kpi_acc.items():
+                        nm, ver = _nv(k, label=b.get("label"))
+                        def _m(vals):
+                            return round(_stats_lo.fmean(vals), 2) if vals else None
+                        _kpi_mean_rows.append(
+                            {
+                                "Name": nm,
+                                "Version": ver,
+                                "TTFT mean": _m(b["ttft"]),
+                                "TPS mean": _m(b["tps"]),
+                                "Latency mean": _m(b["lat"]),
+                                "RAM mean": _fmt_ram_mb(_m(b["ram"])) if b["ram"] else "—",
+                                "n": len(all_artifacts),
+                            }
+                        )
+                    if _kpi_mean_rows:
+                        st.markdown(
+                            '<div class="sec-label">Only local · mean on-device KPIs</div>',
+                            unsafe_allow_html=True,
+                        )
+                        st.dataframe(
+                            pd.DataFrame(_kpi_mean_rows),
+                            use_container_width=True,
+                            hide_index=True,
+                        )
+                        st.caption(
+                            f"$0 collect × {n_local} requested iterations · "
+                            f"judge spend ≈ ${summary.total_cost_usd:.4f}"
+                        )
+
+                st.markdown(
+                    '<div class="sec-label">Per-run detail · open a tab</div>',
+                    unsafe_allow_html=True,
+                )
+                tab_cols = st.columns(min(len(artifact_paths), 5) or 1)
+                for i, path in enumerate(artifact_paths):
+                    snap = completed_snaps[i] if i < len(completed_snaps) else {}
+                    ri = snap.get("n_index") or (i + 1)
+                    top = "—"
+                    ranking_snap = snap.get("ranking") or []
+                    if ranking_snap:
+                        best = min(ranking_snap, key=lambda r: int(r.get("rank") or 99))
+                        top = (
+                            f"{short_model(str(best.get('key')))} "
+                            f"{float(best.get('accuracy') or 0):.0f}%"
+                        )
+                    with tab_cols[i % len(tab_cols)]:
+                        if st.button(
+                            f"Run {ri}\n{top}",
+                            use_container_width=True,
+                            key=f"lo_mrun_tab_btn_{ri}_{Path(path).stem[-6:]}",
+                        ):
+                            _arm_kpi_dialog("multi_run", path=path)
+                            st.rerun()
+
+                if summary is not None:
+                    st.session_state["last_ranking"] = _mean_rows_to_last_ranking(
+                        summary.ranking_mean
+                    )
+                if last_judgments:
+                    st.session_state["last_judgments"] = [
+                        j.model_dump() if hasattr(j, "model_dump") else j
+                        for j in filter_current_roster_rows(
+                            last_judgments, key_field="candidate_key"
+                        )
+                    ]
+                if last_collected:
+                    judge_model = (cfg.get("judge") or {}).get(
+                        "model", "deepseek/deepseek-r1"
+                    )
+                    judge_cost = sum(
+                        (j.judge_meta.cost_usd or 0) for j in last_judgments
+                    ) if last_judgments else 0
+                    st.session_state["last_cost_rows"] = [
+                        {
+                            "Key": c.candidate_key,
+                            "Model": c.meta.model,
+                            "$": 0.0,
+                            "TTFT": c.meta.ttft_s,
+                            "TPS": c.meta.tps,
+                            "RAM(RSS)": _fmt_ram_mb(c.meta.ram_mb) or "—",
+                            "GGUF": _fmt_gguf_mb(c.meta.gguf_mb) or "—",
+                        }
+                        for c in filter_current_roster_rows(
+                            last_collected, key_field="candidate_key"
+                        )
+                    ] + [
+                        {
+                            "Key": "judge (last run)",
+                            "Model": judge_model,
+                            "$": round(judge_cost, 6),
+                            "TTFT": None,
+                            "TPS": None,
+                            "RAM(RSS)": "—",
+                            "GGUF": "—",
+                        }
+                    ]
+                    st.session_state["show_last_run_costs"] = True
+
+                if per_run_timings:
+                    per_bits = " · ".join(
+                        f"run{p['run']} {p['total_s']}s (c{p['collect_s']}+j{p['judge_s']})"
+                        for p in per_run_timings
+                    )
+                    st.caption(
+                        f"**Wall time** · collect {collect_s}s · judge {judge_s}s · "
+                        f"**total {total_s}s** · {per_bits}"
+                    )
+            else:
+                if abort_multi:
+                    phase_slot.markdown(
+                        f'<div class="phase-banner">{_done_label} aborted early · '
+                        f"{len(all_artifacts)}/{n_local} run completed · "
+                        "judge infrastructure unavailable</div>",
+                        unsafe_allow_html=True,
+                    )
+                elif ranking:
+                    phase_slot.markdown(
+                        f'<div class="phase-banner">{_done_label} done · {len(ok_local)} local · '
+                        f"KPI + clinical ranking · judge {judge_s}s</div>",
+                        unsafe_allow_html=True,
+                    )
+                else:
+                    phase_slot.markdown(
+                        f'<div class="phase-banner">{_done_label} done · {len(ok_local)} local · '
+                        f"$0 collect · KPI {'compare' if len(ok_local) >= 2 else 'single'}</div>",
+                        unsafe_allow_html=True,
+                    )
+                st.caption(
+                    f"Wall time · collect {collect_s}s"
+                    + (f" · judge {judge_s}s" if judge_s else "")
+                    + " (matches sidebar Run clock)"
+                )
+            st.stop()
+
+        if not is_usable_openrouter_key(st.session_state.get("or_key_session")):
+            _abort_run(
+                "OpenRouter API key missing or invalid (truncated placeholder). "
+                "Paste the full key from https://openrouter.ai/keys in the sidebar."
+            )
         if not case_stem.strip():
             _abort_run("Clinical case is empty.")
         if not effective_gold.strip():
             _abort_run(
                 "Automatic reference setup is unavailable; retry the run."
             )
-        if not qvac_run_ok:
-            _abort_run(
-                "QVAC SDK sidecar offline — start it: `cd sidecar && npm start` "
-                "(requires OpenSSL 3: `brew install openssl@3`)."
-            )
-        if _local_bakeoff and not has_key:
-            _abort_run(
-                "Only local needs an OpenRouter key for DeepSeek R1 judge "
-                "(collect stays $0 · you pay judge tokens only)."
-            )
 
-        if _local_bakeoff:
-            # Respect active toggles (generic / medical / MedPsy) — not a fixed 6.
-            local_slots = [c for c in roster if is_on_device_key(str(c.get("key") or ""))]
-            for slot in local_slots:
-                k = slot["key"]
-                if k not in status_boxes:
-                    _abort_run(
-                        "UI panels missing for Only local — reload the page "
-                        "after changing roster toggles."
-                    )
-        else:
-            local_slots = [c for c in roster if is_qvac_key(c["key"])]
-        if not local_slots:
-            _abort_run("No on-device slots available.")
+        try:
+            prep = prepare_run(
+                case_id,
+                skip_qvac=not _eff_medpsy,
+                require_qvac=False,
+                triple_qvac=_eff_triple,
+                include_local_peers=_eff_generic,
+                include_medical_peers=_eff_medical,
+                optional_legacy_keys=_optional_legacy_keys,
+            )
+        except RuntimeError as exc:
+            _abort_run(str(exc))
 
-        n_local = max(1, int(n_runs)) if _local_bakeoff else 1
-        _mode_title = (
-            f"Only local ×{n_local} · {len(local_slots)} GGUFs · $0 collect"
-            if _local_bakeoff
-            else f"QVAC only · {len(local_slots)} MedPsy GGUF(s) sequential · $0"
-        )
+        candidates_cfg = prep["candidates_cfg"]
+        blind_map = prep["blind_map"]
+        case_obj: Case = live_case
+        judge_model = (prep["cfg"].get("judge") or {}).get("model", "deepseek/deepseek-r1")
+        judge_label = (prep["cfg"].get("judge") or {}).get("display_label") or judge_model
+        judge_temp = float((prep["cfg"].get("judge") or {}).get("temperature", 0))
+        active_keys = {c["key"] for c in candidates_cfg}
+
         phase_slot.markdown(
-            f'<div class="phase-banner">{_mode_title}</div>',
+            f'<div class="phase-banner">Calling {len(candidates_cfg)} models · '
+            f"Judge {judge_label} · N={n_runs}</div>",
             unsafe_allow_html=True,
         )
-        _paint_run_timer(
-            timer_slot,
-            _run_timer_live(
-                "Only local · streaming" if _local_bakeoff else "QVAC only · streaming",
-                n_runs=n_local,
-                elapsed_total=time.time() - t_run0,
-                elapsed_this=time.time() - t_run0,
-                collect_base=0,
-                judge_base=0,
-                bucket="collect",
-            ),
-            height=210 if n_local > 1 else 168,
-            multi=n_local > 1,
-        )
-        _active_local = {c["key"] for c in local_slots}
+
+        # Mark slots not in this run (e.g. QVAC offline) — same HTML box, no text_area
         for c in roster:
-            if c["key"] not in _active_local:
+            if c["key"] not in active_keys:
                 status_boxes[c["key"]].markdown(
                     _status_pill("skip", "Skipped"), unsafe_allow_html=True
                 )
+                text_boxes[c["key"]].markdown(
+                    _stream_body_html(
+                        "(start QVAC SDK sidecar to include MedPsy)",
+                        live=False,
+                        panel_id=c["key"],
+                    ),
+                    unsafe_allow_html=True,
+                )
 
-        _sys_p = candidate_system()
-        _user_p = candidate_user(live_case)
-        prompt = _sys_p + "\n\n" + _user_p
-        _base_chat_msgs = [
-            {"role": "system", "content": _sys_p},
-            {"role": "user", "content": _user_p},
-        ]
-        import time as _time_live
-
-        # Multi N for Only local; QVAC-only stays single-pass
-        all_artifacts: list[RunArtifact] = []
+        all_artifacts = []
+        completed_snaps: list[dict] = []
         artifact_paths: list[str] = []
-        completed_snaps: list = []
+        last_ranking = None
+        last_judgments = []
+        last_collected = []
         collect_s_acc = 0.0
         judge_s_acc = 0.0
         per_run_timings: list[dict] = []
-        last_ranking = None
-        last_judgments: list = []
-        last_collected: list = []
-        last_ok_local: list[str] = []
-        last_live_snap: dict = {}
-        ranking = None
-        judgments: list = []
-        collected: list = []
-        ok_local: list[str] = []
-        judge_s = 0
-        live_snap: dict = {}
         abort_multi = False
-
-        if n_local > 1:
+        live_snap: dict = {
+            c["key"]: {
+                "text": "(start QVAC SDK sidecar to include MedPsy)",
+                "status": "Skipped",
+                "error": False,
+                "kpi": "",
+            }
+            for c in roster
+            if c["key"] not in active_keys
+        }
+        if n_runs > 1:
             st.session_state["multi_progress"] = {
                 "completed": [],
-                "n_total": n_local,
+                "n_total": n_runs,
                 "batch_done": False,
-                "paths": [],
             }
             _paint_multi_progress(
-                multi_progress_slot, [], n_total=n_local, batch_done=False, height=120
+                multi_progress_slot, [], n_total=n_runs, batch_done=False, height=120
             )
 
         try:
-            for run_i in range(1, n_local + 1):
+            for run_i in range(1, n_runs + 1):
                 if is_cancelled(st.session_state["_run_scope"]):
                     st.warning("Run cancelled before the next iteration.")
                     break
                 _iteration_started = utc_now_iso()
-                t_run_i0 = _time_live.time()
-                if n_local > 1:
-                    phase_slot.markdown(
-                        f'<div class="phase-banner">Only local · Run {run_i}/{n_local} · '
-                        f"collecting {len(local_slots)} GGUFs…</div>",
-                        unsafe_allow_html=True,
-                    )
-                    for qkey in _active_local:
-                        status_boxes[qkey].markdown(
-                            _status_pill("wait", f"Run {run_i}/{n_local}…"),
-                            unsafe_allow_html=True,
-                        )
-                        text_boxes[qkey].markdown(
-                            _stream_body_html("", live=False, panel_id=qkey),
-                            unsafe_allow_html=True,
-                        )
-                        kpi_boxes[qkey].markdown(
-                            '<div class="kpi-slot"><p class="kpi-row">—</p></div>',
-                            unsafe_allow_html=True,
-                        )
-                else:
-                    phase_slot.markdown(
-                        f'<div class="phase-banner">{_mode_title}</div>',
-                        unsafe_allow_html=True,
-                    )
-
+                phase_slot.markdown(
+                    f'<div class="phase-banner">Run {run_i}/{n_runs} · Collecting answers…</div>',
+                    unsafe_allow_html=True,
+                )
+                t_run_i0 = time.time()
+                t_collect0 = time.time()
                 _paint_run_timer(
                     timer_slot,
                     _run_timer_live(
-                        (
-                            f"Run {run_i}/{n_local} · collecting"
-                            if n_local > 1
-                            else (
-                                "Only local · streaming"
-                                if _local_bakeoff
-                                else "QVAC only · streaming"
-                            )
-                        ),
-                        n_runs=n_local,
-                        elapsed_total=time.time() - t_run0,
+                        f"Run {run_i}/{n_runs} · collecting",
+                        n_runs=n_runs,
+                        elapsed_total=t_collect0 - t_run0,
                         elapsed_this=0,
-                        collect_base=collect_s_acc,
-                        judge_base=judge_s_acc,
+                        collect_base=int(round(collect_s_acc)),
+                        judge_base=int(round(judge_s_acc)),
                         bucket="collect",
                     ),
-                    height=210 if n_local > 1 else 168,
-                    multi=n_local > 1,
+                    height=210 if n_runs > 1 else 168,
+                    multi=n_runs > 1,
                 )
-
-                live_snap = {
-                    c["key"]: {
-                        "text": "",
-                        "status": "Skipped",
-                        "error": False,
-                        "kpi": "",
-                    }
-                    for c in roster
-                }
-
-                # Pipeline: DeepSeek starts as soon as each GGUF finishes (overlap with next loads).
-                pipe = None  # type: PipelinedJudge | None
-                judge_model = (cfg.get("judge") or {}).get("model", "deepseek/deepseek-r1")
-                judge_temp = float((cfg.get("judge") or {}).get("temperature", 0))
-                # Need ≥2 slots for a ranking; avoid paying R1 for a lone QVAC-only GGUF.
-                _pipe_on = bool(has_key) and len(local_slots) >= 2
-                t_j0 = None
                 collected = []
-                judgments = []
-                judge_status = None
-                judge_status_ctx = None
-                progress_slot = None
-                board_slot = None
-                started_keys: set[str] = set()
-                label_by_key: dict[str, str] = {}
-                submitted_local: set[str] = set()
-                lo_board: dict = {}
-                # Mutable bag — avoids nonlocal + annotated-assign pitfalls on Py3.9
-                lo_ui = {"highlight": None, "queue_i": 0, "blind_i": 0}
+                bufs = {c["key"]: "" for c in candidates_cfg}
+                tok_n = {c["key"]: 0 for c in candidates_cfg}
+                label_live = {
+                    c["key"]: (c.get("display_label") or c.get("label") or c["key"])
+                    for c in candidates_cfg
+                }
+                last_paint_at: dict[str, float] = {}
+                last_pipe_poll = 0.0
+                t_j0_full = None  # first DeepSeek submit (overlap start)
+                for c in candidates_cfg:
+                    status_boxes[c["key"]].markdown(
+                        _status_pill("wait", "Streaming…"), unsafe_allow_html=True
+                    )
+                    kpi_boxes[c["key"]].markdown(
+                        '<div class="kpi-slot"></div>', unsafe_allow_html=True
+                    )
+                    # Shell already mounted once — only clear the fixed-height body
+                    text_boxes[c["key"]].markdown(
+                        _stream_body_html("", live=True, panel_id=c["key"]),
+                        unsafe_allow_html=True,
+                    )
 
-                def _paint_lo_board() -> None:
-                    if board_slot is None:
+                # Start DeepSeek as each model finishes (esp. while QVAC GGUFs still load).
+                try:
+                    _validate_judge_separation(
+                        prep["cfg"] if isinstance(prep.get("cfg"), dict) else {},
+                        candidates_cfg,
+                    )
+                except ValueError as exc:
+                    st.error(f"Judge separation check failed: {exc}")
+                    st.stop()
+                full_pipe = PipelinedJudge(
+                    case_obj,
+                    judge_model,
+                    temperature=judge_temp,
+                    gold_reference=effective_gold,
+                    expected_total=len(candidates_cfg),
+                    max_workers=min(8, max(2, len(candidates_cfg))),
+                    on_progress=None,  # wired below inside st.status
+                    api_key=st.session_state.get("or_key_session"),
+                    verifier_model=str(
+                        (prep["cfg"].get("judge") or {}).get("verifier_model") or ""
+                    ),
+                    run_scope=st.session_state["_run_scope"],
+                    benchmark_track=benchmark_track,
+                    judge_allowed_providers=list(
+                        (prep["cfg"].get("judge") or {}).get("allowed_providers") or []
+                    ),
+                )
+                full_started: set[str] = set()
+                full_progress_slot = None
+                full_board_slot = None
+                full_judge_status = None
+                full_board: dict = {}
+                full_ui = {"highlight": None, "queue_i": 0}
+
+                def _paint_full_board() -> None:
+                    if full_board_slot is None:
                         return
-                    board_slot.markdown(
+                    full_board_slot.markdown(
                         live_judging_board_html(
-                            lo_board,
-                            highlight_key=lo_ui["highlight"],
-                            title="Live judging · local + MedPsy",
+                            full_board,
+                            highlight_key=full_ui["highlight"],
+                            title="Live judging · cloud + local + MedPsy",
                         ),
                         unsafe_allow_html=True,
                     )
 
-                def _on_lo_progress(evt: dict) -> None:
-                    if progress_slot is None:
+                def _on_full_progress(evt: dict) -> None:
+                    if full_progress_slot is None:
                         return
                     phase = evt.get("phase")
                     key = str(evt.get("key") or "")
-                    name = label_by_key.get(key) or evt.get("label") or key
+                    name = label_live.get(key) or evt.get("label") or key
                     done_n = int(evt.get("done") or 0)
                     tot = int(evt.get("total") or max(1, done_n))
-                    if phase == "queued" and key not in started_keys:
-                        started_keys.add(key)
-                        lo_ui["queue_i"] = int(lo_ui["queue_i"]) + 1
-                        lo_board[key] = {
+                    if phase == "queued" and key not in full_started:
+                        full_started.add(key)
+                        if key not in full_board or full_board[key].get("status") not in (
+                            "judging",
+                            "scored",
+                            "failed",
+                        ):
+                            full_ui["queue_i"] = int(full_ui["queue_i"]) + 1
+                            qi = full_ui["queue_i"]
+                        else:
+                            qi = (full_board.get(key) or {}).get("queue_i") or full_ui[
+                                "queue_i"
+                            ]
+                        full_board[key] = {
                             "label": name,
                             "status": "judging",
                             "accuracy": None,
-                            "queue_i": lo_ui["queue_i"],
+                            "queue_i": qi,
                             "progress_pct": int(evt.get("percent") or 10),
                             "progress_label": str(evt.get("stage") or "queued"),
                             "elapsed_s": float(evt.get("elapsed_s") or 0),
                         }
-                        _paint_lo_board()
+                        _paint_full_board()
                     elif phase == "progress" and key:
-                        prev = lo_board.get(key) or {}
-                        # Never regress a finished score; only reopen a failed row when
-                        # a real new attempt starts (active_attempt / retry stages).
+                        prev = full_board.get(key) or {}
                         if prev.get("status") == "scored" or prev.get("status") == "failed" and not evt.get(
                             "active_attempt"
                         ):
                             pass
                         else:
-                            lo_board[key] = {
+                            full_board[key] = {
                                 **prev,
                                 "label": name,
                                 "status": "judging",
@@ -4331,9 +5213,28 @@ if st.session_state.get("confirmed_run"):
                                 "progress_label": str(evt.get("stage") or "judging"),
                                 "elapsed_s": float(evt.get("elapsed_s") or 0),
                             }
-                            _paint_lo_board()
+                            _paint_full_board()
+                    elif phase == "retry" and key:
+                        prev = full_board.get(key) or {}
+                        if prev.get("status") == "scored" or prev.get("status") == "failed" and not evt.get(
+                            "active_attempt"
+                        ):
+                            pass
+                        else:
+                            full_board[key] = {
+                                **prev,
+                                "label": name,
+                                "status": "judging",
+                                "accuracy": None,
+                                "progress_pct": int(evt.get("percent") or 75),
+                                "progress_label": str(
+                                    evt.get("stage") or "corrective retry"
+                                ),
+                                "elapsed_s": float(evt.get("elapsed_s") or 0),
+                            }
+                            _paint_full_board()
                     elif phase in ("done", "retry_done"):
-                        prev_q = (lo_board.get(key) or {}).get("queue_i")
+                        prev_q = (full_board.get(key) or {}).get("queue_i")
                         if evt.get("failed"):
                             reason = str(
                                 evt.get("failure_reason")
@@ -4343,7 +5244,7 @@ if st.session_state.get("confirmed_run"):
                             )
                             status = str(evt.get("status") or "").lower()
                             na_label = _na_failure_label(status, reason)
-                            lo_board[key] = {
+                            full_board[key] = {
                                 "label": name,
                                 "status": "failed",
                                 "accuracy": None,
@@ -4359,7 +5260,7 @@ if st.session_state.get("confirmed_run"):
                                 )
                         else:
                             acc = float(evt.get("accuracy") or 0)
-                            lo_board[key] = {
+                            full_board[key] = {
                                 "label": name,
                                 "status": "scored",
                                 "accuracy": acc,
@@ -4376,1028 +5277,232 @@ if st.session_state.get("confirmed_run"):
                                     _status_pill("done", f"Judged · {acc:.0f}%"),
                                     unsafe_allow_html=True,
                                 )
-                        lo_ui["highlight"] = key
-                        _paint_lo_board()
-                        if judge_status is not None:
-                            judge_status.update(
-                                label=f"DeepSeek R1 · {done_n}/{tot} scored"
-                                + (f" · run {run_i}" if n_local > 1 else "")
-                                + " · pipelined",
+                        full_ui["highlight"] = key
+                        _paint_full_board()
+                        if full_judge_status is not None:
+                            full_judge_status.update(
+                                label=f"DeepSeek R1 · {done_n}/{tot} scored · pipelined",
                                 state="running",
                             )
-                    elif phase == "retry":
-                        if key:
-                            prev = lo_board.get(key) or {}
-                            # Scored rows stay scored. Terminal N/A only reopens when
-                            # the pipeline marks a real new attempt (live clock).
-                            if prev.get("status") == "scored" or prev.get("status") == "failed" and not evt.get(
-                                "active_attempt"
-                            ):
-                                pass
-                            else:
-                                if key not in lo_board:
-                                    lo_ui["queue_i"] = int(lo_ui["queue_i"]) + 1
-                                lo_board[key] = {
-                                    "label": name,
-                                    "status": "judging",
-                                    "accuracy": None,
-                                    "queue_i": prev.get("queue_i", lo_ui["queue_i"]),
-                                    "progress_pct": int(evt.get("percent") or 75),
-                                    "progress_label": str(
-                                        evt.get("stage") or "corrective retry"
-                                    ),
-                                    "elapsed_s": float(evt.get("elapsed_s") or 0),
-                                }
-                                _paint_lo_board()
-                    progress_slot.progress(
+                    full_progress_slot.progress(
                         min(1.0, done_n / max(1, tot)),
                         text=f"Judge · {done_n}/{tot} (overlap with collect)",
                     )
 
-                def _poll_pipe() -> None:
-                    if pipe is None:
-                        return
-                    pipe.poll()
-                    if pipe.submitted:
-                        phase_slot.markdown(
-                            '<div class="phase-banner">'
-                            + (
-                                f"Only local · Run {run_i}/{n_local} · "
-                                if n_local > 1 and _local_bakeoff
-                                else f'{"Only local" if _local_bakeoff else "QVAC-only"} · '
-                            )
-                            + f"collect + judge {pipe.done_count}/{pipe.total}"
-                            + (f" · {pipe.pending_count} in flight" if pipe.pending_count else "")
-                            + "</div>",
-                            unsafe_allow_html=True,
-                        )
+                full_pipe.on_progress = _on_full_progress
+                full_status_ctx = st.status(
+                    f"DeepSeek R1 · pipelined with collect · run {run_i}/{n_runs}",
+                    expanded=True,
+                )
+                full_judge_status = full_status_ctx.__enter__()
+                full_progress_slot = st.empty()
+                full_board_slot = st.empty()
+                full_progress_slot.progress(0.0, text="Judge · waiting for first answer…")
+                _paint_full_board()
 
-                if _pipe_on:
-                    try:
-                        _validate_judge_separation(
-                            cfg if isinstance(cfg, dict) else {},
-                            local_slots,
-                        )
-                    except ValueError as exc:
-                        st.error(f"Judge separation check failed: {exc}")
-                        st.stop()
-                    pipe = PipelinedJudge(
-                        live_case,
-                        judge_model,
-                        temperature=judge_temp,
-                        gold_reference=effective_gold,
-                        expected_total=len(local_slots),
-                        max_workers=min(6, max(2, len(local_slots))),
-                        on_progress=_on_lo_progress,
-                        api_key=st.session_state.get("or_key_session"),
-                        verifier_model=str(
-                            ((cfg.get("judge") or {}) if isinstance(cfg, dict) else {}).get(
-                                "verifier_model"
-                            )
-                            or ""
-                        ),
-                        run_scope=st.session_state["_run_scope"],
-                        benchmark_track=benchmark_track,
-                        judge_allowed_providers=list(
-                            ((cfg.get("judge") or {}) if isinstance(cfg, dict) else {}).get(
-                                "allowed_providers"
-                            )
-                            or []
-                        ),
-                    )
-                    judge_status_ctx = st.status(
-                        "DeepSeek R1 · pipelined with collect · "
-                        + (
-                            f"run {run_i}/{n_local}"
-                            if n_local > 1
-                            else ("Only local" if _local_bakeoff else "QVAC-only")
-                        ),
-                        expanded=True,
-                    )
-                    judge_status = judge_status_ctx.__enter__()
-                    progress_slot = st.empty()
-                    board_slot = st.empty()
-                    progress_slot.progress(0.0, text="Judge · waiting for first GGUF…")
-                    _paint_lo_board()
-
-                def _terminalize_local(
-                    slot_cfg: dict,
-                    label_text: str,
-                    body_text: str,
-                    error_text,
-                    meta_fields: dict,
-                ) -> None:
-                    """Hand one roster slot to the judge, including failed ones.
-
-                    A GGUF that never loaded or never streamed is still part of the
-                    fixed cohort, so it has to arrive as an explicit N/A row instead
-                    of quietly disappearing from the comparison.
-                    """
-                    if pipe is None:
-                        return
-                    key_ = str(slot_cfg.get("key") or "")
-                    if not key_ or key_ in submitted_local:
-                        return
-                    lo_ui["blind_i"] = int(lo_ui["blind_i"]) + 1
-                    blind_id_ = f"Candidate {lo_ui['blind_i']}"
-                    cand_row = CandidateAnswer(
-                        candidate_key=key_,
-                        label=str(slot_cfg.get("label") or key_),
-                        display_label=str(
-                            label_text or slot_cfg.get("display_label") or key_
-                        ),
-                        vendor=str(slot_cfg.get("vendor") or "local"),
-                        site=str(slot_cfg.get("site") or "local (QVAC SDK)"),
-                        blind_id=blind_id_,
-                        answers=(
-                            parse_candidate_answers(live_case, body_text)
-                            if body_text
-                            else {}
-                        ),
-                        raw_response=body_text or "",
-                        meta=ModelCallMeta(
-                            model=str(
-                                meta_fields.get("model") or slot_cfg.get("model") or key_
-                            ),
-                            provider="qvac",
-                            display_label=str(label_text or key_),
-                            ttft_s=meta_fields.get("ttft_s"),
-                            tps=meta_fields.get("tps"),
-                            latency_s=meta_fields.get("latency_s"),
-                            finish_reason=str(meta_fields.get("finish_reason") or ""),
-                            completion_tokens=int(
-                                meta_fields.get("completion_tokens") or 0
-                            ),
-                            ram_mb=meta_fields.get("ram_mb"),
-                            gguf_mb=meta_fields.get("gguf_mb"),
-                            gguf_sha256=str(meta_fields.get("gguf_sha256") or ""),
-                            device=str(meta_fields.get("device") or ""),
-                            gpu_layers=meta_fields.get("gpu_layers"),
-                            ctx_size=meta_fields.get("ctx_size"),
-                            predict=meta_fields.get("predict"),
-                            seed=meta_fields.get("seed"),
-                            temperature=meta_fields.get("temperature"),
-                            top_k=meta_fields.get("top_k"),
-                            top_p=meta_fields.get("top_p"),
-                            cost_usd=0.0,
-                            error=error_text,
-                            prior_attempts=list(meta_fields.get("prior_attempts") or []),
-                            retry_count=int(meta_fields.get("retry_count") or 0),
-                        ),
-                    )
-                    # Same format-repair / section recovery as the CLI collector.
-                    # Always clear Recovering status (timeout / exception / success).
-                    if not error_text and missing_section_ids(
-                        live_case, cand_row.answers or {}
-                    ):
-                        if key_ in status_boxes:
-                            status_boxes[key_].markdown(
-                                _status_pill("wait", "Recovering sections…"),
+                for evt in iter_collect_live(
+                    case_obj,
+                    candidates_cfg,
+                    blind_map,
+                    benchmark_track=benchmark_track,
+                    api_key=st.session_state.get("or_key_session"),
+                ):
+                    if evt.get("type") == "token":
+                        key = evt["key"]
+                        bufs[key] = bufs.get(key, "") + (evt.get("delta") or "")
+                        tok_n[key] = tok_n.get(key, 0) + 1
+                        now_paint = time.time()
+                        # Body-only remount; throttle ~8 tokens or ~250ms (no overlay remount)
+                        if (
+                            tok_n[key] == 1
+                            or tok_n[key] % 8 == 0
+                            or (now_paint - last_paint_at.get(key, 0.0)) >= 0.25
+                        ):
+                            last_paint_at[key] = now_paint
+                            text_boxes[key].markdown(
+                                _stream_body_html(
+                                    bufs[key], live=True, panel_id=key
+                                ),
                                 unsafe_allow_html=True,
                             )
-                        try:
-                            cand_row = maybe_retry_candidate(
-                                live_case,
-                                cand_row,
-                                slot_cfg,
-                                blind_id_,
-                                benchmark_track=benchmark_track,
-                            )
-                        except Exception:
-                            # Leave first-pass answers; missing sections stay N/A.
-                            pass
-                        finally:
-                            if key_ in status_boxes:
-                                status_boxes[key_].markdown(
-                                    _status_pill(
-                                        "done",
-                                        "Done · $0 · judge queued",
-                                    ),
-                                    unsafe_allow_html=True,
-                                )
-                    submitted_local.add(key_)
-                    label_by_key[key_] = cand_row.display_label or cand_row.label
-                    if key_ not in started_keys:
-                        lo_ui["queue_i"] = int(lo_ui["queue_i"]) + 1
-                        lo_board[key_] = {
-                            "label": label_by_key[key_],
-                            "status": "judging",
-                            "accuracy": None,
-                            "queue_i": lo_ui["queue_i"],
-                        }
-                        _paint_lo_board()
-                    pipe.submit(cand_row)
-
-                for slot in local_slots:
-                    qkey = slot["key"]
-                    qlabel = slot.get("display_label") or slot.get("label") or qkey
-                    gguf = slot.get("gguf_path")
-                    model_id = str(slot.get("model") or qkey)
-                    # Match CLI runner: blind id is assigned in order; seed uses
-                    # sha256(f"{blind_id}:{key}:{model_id}")[:8] % (2**31-1).
-                    _next_blind = f"Candidate {int(lo_ui['blind_i']) + 1}"
-                    _sampling: dict = {}
-                    if uses_controlled_sampling(benchmark_track):
-                        _sampling = {"temp": 0.2, "top_k": 20, "top_p": 0.95}
-                        if is_strict_track(benchmark_track):
-                            seed_basis = f"{_next_blind}:{qkey}:{model_id}"
-                            _sampling["seed"] = int(
-                                hashlib.sha256(seed_basis.encode("utf-8")).hexdigest()[
-                                    :8
-                                ],
-                                16,
-                            ) % (2**31 - 1)
-                    status_boxes[qkey].markdown(
-                        _status_pill("wait", "Loading GGUF…" if gguf else "Streaming…"),
-                        unsafe_allow_html=True,
-                    )
-                    _runtime_pin: dict = {
-                        "seed": _sampling.get("seed"),
-                        "temperature": _sampling.get("temp"),
-                        "top_k": _sampling.get("top_k"),
-                        "top_p": _sampling.get("top_p"),
-                    }
-                    if gguf:
-                        loaded = qvac_load_model(gguf, sampling=_sampling)
-                        if not loaded.get("ok"):
-                            # A hot-swap can fail while the previous GGUF unloads;
-                            # spend one free local retry before calling it N/A.
-                            status_boxes[qkey].markdown(
-                                _status_pill("wait", "Reloading GGUF…"),
+                            kpi_boxes[key].markdown(
+                                f'<div class="kpi-slot"><p class="kpi-row live">'
+                                f'{_kpi_live_line(evt.get("ttft_s"), evt.get("elapsed_s"), evt.get("tps_live"))}'
+                                f"</p></div>",
                                 unsafe_allow_html=True,
                             )
-                            _time_live.sleep(1.5)
-                            loaded = qvac_load_model(gguf, sampling=_sampling)
-                        if not loaded.get("ok"):
-                            err_load = str(loaded.get("error") or "load failed")[:80]
-                            status_boxes[qkey].markdown(
-                                _status_pill("err", err_load), unsafe_allow_html=True
-                            )
-                            live_snap[qkey] = {
-                                "text": "",
-                                "status": err_load,
-                                "error": True,
-                                "kpi": "",
-                                "meta": {},
-                                "label": qlabel,
-                            }
-                            _terminalize_local(
-                                slot,
-                                str(qlabel),
-                                "",
-                                str(loaded.get("error") or "Failed to load GGUF"),
-                                {
-                                    **_runtime_pin,
-                                    "gguf_sha256": loaded.get("gguf_sha256") or "",
-                                    "device": loaded.get("device") or "",
-                                    "gpu_layers": loaded.get("gpu_layers"),
-                                    "ctx_size": loaded.get("ctx_size"),
-                                    "predict": loaded.get("predict"),
-                                },
-                            )
-                            _poll_pipe()
-                            continue
-                        for _rk in (
-                            "device",
-                            "gpu_layers",
-                            "ctx_size",
-                            "predict",
-                            "gguf_sha256",
-                        ):
-                            if loaded.get(_rk) is not None and loaded.get(_rk) != "":
-                                _runtime_pin[_rk] = loaded.get(_rk)
-                    status_boxes[qkey].markdown(
-                        _status_pill("wait", "Streaming…"), unsafe_allow_html=True
-                    )
-                    stream_state = {"last_paint": 0.0, "last_pipe_poll": 0.0}
-                    _chat_msgs = local_chat_messages(_base_chat_msgs, slot)
-                    _slot_prompt = "\n\n".join(
-                        str(m.get("content") or "") for m in _chat_msgs
-                    ) or prompt
-
-                    def _stream_local_once() -> tuple:
-                        """Consume one on-device generation, painting tokens live."""
-                        buf_ = ""
-                        done_ = {}
-                        err_ = None
-                        n_tok_ = 0
-                        t0_ = _time_live.time()
-                        ttft_ = None
-                        for evt in qvac_iter_tokens(
-                            _slot_prompt,
-                            messages=_chat_msgs,
-                            sampling=_sampling or None,
-                        ):
-                            et = evt.get("type")
-                            if et == "token":
-                                tok = evt.get("token") or ""
-                                if not tok:
-                                    continue
-                                buf_ += tok
-                                n_tok_ += 1
-                                now = _time_live.time()
-                                if ttft_ is None:
-                                    ttft_ = round(now - t0_, 2)
-                                elapsed = round(now - t0_, 2)
-                                gen_elapsed = max(elapsed - (ttft_ or 0), 0.001)
-                                tps_live = round(n_tok_ / gen_elapsed, 1)
-                                if (
-                                    n_tok_ == 1
-                                    or n_tok_ % 8 == 0
-                                    or (now - stream_state["last_paint"]) >= 0.25
-                                ):
-                                    stream_state["last_paint"] = now
-                                    text_boxes[qkey].markdown(
-                                        _stream_body_html(buf_, live=True, panel_id=qkey),
-                                        unsafe_allow_html=True,
-                                    )
-                                    kpi_boxes[qkey].markdown(
-                                        f'<div class="kpi-slot"><p class="kpi-row live">'
-                                        f"{_kpi_live_line(ttft_, elapsed, tps_live)}"
-                                        "</p></div>",
-                                        unsafe_allow_html=True,
-                                    )
-                                # Harvest finished DeepSeek calls while this GGUF streams
-                                if (
-                                    pipe is not None
-                                    and (now - stream_state["last_pipe_poll"]) >= 0.45
-                                ):
-                                    stream_state["last_pipe_poll"] = now
-                                    _poll_pipe()
-                            elif et == "done":
-                                done_ = evt
-                                if evt.get("content"):
-                                    buf_ = str(evt["content"])
-                                if evt.get("error") and not (buf_ or "").strip():
-                                    err_ = str(evt["error"])
-                            elif et == "error":
-                                err_ = str(evt.get("error") or "stream error")
-                                break
-                        return buf_, done_, err_, n_tok_, ttft_
-
-                    buf, done_meta, err_msg, n_tok, ttft_s = _stream_local_once()
-                    # One free local re-stream: a sidecar worker or transport fault
-                    # says nothing about the model's clinical ability.
-                    if err_msg and not (buf or "").strip() and is_retryable_local_error(err_msg):
-                        status_boxes[qkey].markdown(
-                            _status_pill("wait", "Retrying local generation…"),
-                            unsafe_allow_html=True,
-                        )
-                        _time_live.sleep(1.5)
-                        buf, done_meta, err_msg, n_tok, ttft_s = _stream_local_once()
-
-                    if err_msg:
-                        low = err_msg.lower()
-                        if "libssl" in low or "openssl" in low:
-                            err_msg = (
-                                "QVAC SDK needs OpenSSL 3. "
-                                "Run: ./scripts/setup_qvac_sidecar.sh && cd sidecar && npm start"
-                            )
-                        elif "404" in err_msg or "not found" in low:
-                            err_msg = (
-                                "Sidecar outdated / unreachable. "
-                                "Restart: cd sidecar && npm start"
-                            )
-                        elif "rpc" in low or "worker" in low:
-                            err_msg = (
-                                "QVAC SDK worker failed to start. "
-                                "Run: ./scripts/setup_qvac_sidecar.sh && cd sidecar && npm start"
-                            )
-
-                    _body_chk = (buf or "").strip()
-                    if (
-                        not err_msg
-                        and _body_chk
-                        and len(_body_chk.split()) <= 2
-                        and len(_body_chk) > 200
-                    ):
-                        err_msg = "Collapsed / non-text output (not scored)"
-
-                    text_boxes[qkey].markdown(
-                        _stream_body_html(buf or "(empty)", live=False, panel_id=qkey),
-                        unsafe_allow_html=True,
-                    )
-                    if err_msg:
-                        status_boxes[qkey].markdown(
-                            _status_pill("err", err_msg[:80]), unsafe_allow_html=True
-                        )
-                        live_snap[qkey] = {
-                            "text": buf or "",
-                            "status": err_msg[:80],
-                            "error": True,
-                            "kpi": "",
-                            "meta": {},
-                            "label": qlabel,
-                        }
-                        _terminalize_local(
-                            slot,
-                            str(qlabel),
-                            buf or "",
-                            err_msg,
-                            {
-                                **_runtime_pin,
-                                "model": slot.get("model") or qkey,
-                                "completion_tokens": done_meta.get("completion_tokens"),
-                                "finish_reason": done_meta.get("finish_reason"),
-                                "device": (
-                                    done_meta.get("device")
-                                    or _runtime_pin.get("device")
-                                    or qvac_health().get("device")
-                                    or ""
-                                ),
-                                "gpu_layers": (
-                                    done_meta.get("gpu_layers")
-                                    if done_meta.get("gpu_layers") is not None
-                                    else _runtime_pin.get("gpu_layers")
-                                ),
-                                "ctx_size": (
-                                    done_meta.get("ctx_size")
-                                    if done_meta.get("ctx_size") is not None
-                                    else _runtime_pin.get("ctx_size")
-                                ),
-                                "predict": (
-                                    done_meta.get("predict")
-                                    if done_meta.get("predict") is not None
-                                    else _runtime_pin.get("predict")
-                                ),
-                                "gguf_sha256": (
-                                    done_meta.get("gguf_sha256")
-                                    or _runtime_pin.get("gguf_sha256")
-                                    or ""
-                                ),
-                            },
-                        )
-                    else:
-                        status_boxes[qkey].markdown(
-                            _status_pill(
-                                "done",
-                                "Done · $0 · judge queued" if pipe is not None else "Done · $0",
-                            ),
-                            unsafe_allow_html=True,
-                        )
-                        meta_done = {
-                            "ttft_s": done_meta.get("ttft_s")
-                            if done_meta.get("ttft_s") is not None
-                            else ttft_s,
-                            "tps": done_meta.get("tps"),
-                            "latency_s": done_meta.get("latency_s"),
-                            "cost_usd": 0,
-                            "completion_tokens": done_meta.get("completion_tokens") or 0,
-                            "ram_mb": done_meta.get("ram_mb"),
-                            "gguf_mb": done_meta.get("gguf_mb"),
-                            "finish_reason": done_meta.get("finish_reason"),
-                            "device": (
-                                done_meta.get("device")
-                                or _runtime_pin.get("device")
-                                or qvac_health().get("device")
-                                or ""
-                            ),
-                            "gpu_layers": (
-                                done_meta.get("gpu_layers")
-                                if done_meta.get("gpu_layers") is not None
-                                else _runtime_pin.get("gpu_layers")
-                                if _runtime_pin.get("gpu_layers") is not None
-                                else qvac_health().get("gpu_layers")
-                            ),
-                            "ctx_size": (
-                                done_meta.get("ctx_size")
-                                if done_meta.get("ctx_size") is not None
-                                else _runtime_pin.get("ctx_size")
-                                if _runtime_pin.get("ctx_size") is not None
-                                else qvac_health().get("ctx_size")
-                            ),
-                            "predict": (
-                                done_meta.get("predict")
-                                if done_meta.get("predict") is not None
-                                else _runtime_pin.get("predict")
-                                if _runtime_pin.get("predict") is not None
-                                else qvac_health().get("predict")
-                            ),
-                            "seed": (
-                                done_meta.get("seed")
-                                if done_meta.get("seed") is not None
-                                else _runtime_pin.get("seed")
-                            ),
-                            "temperature": _runtime_pin.get("temperature"),
-                            "top_k": _runtime_pin.get("top_k"),
-                            "top_p": _runtime_pin.get("top_p"),
-                            "gguf_sha256": (
-                                done_meta.get("gguf_sha256")
-                                or _runtime_pin.get("gguf_sha256")
-                                or ""
-                            ),
-                            "model": slot.get("model") or qkey,
-                        }
-                        kpi = _kpi_line(meta_done, buf)
-                        kpi_full = f"{kpi} · device {meta_done['device'] or '?'}"
-                        if meta_done.get("gpu_layers") is not None:
-                            kpi_full += f" · L{meta_done['gpu_layers']}"
-                        if meta_done.get("seed") is not None:
-                            kpi_full += f" · seed {meta_done['seed']}"
-                        kpi_boxes[qkey].markdown(
-                            f'<div class="kpi-slot"><p class="kpi-row">{kpi_full}</p></div>',
-                            unsafe_allow_html=True,
-                        )
-                        live_snap[qkey] = {
-                            "text": buf or "",
-                            "status": "Done · $0",
-                            "error": False,
-                            "kpi": kpi_full,
-                            "meta": meta_done,
-                            "label": qlabel,
-                            "slot": slot,
-                        }
-                        # Kick DeepSeek while the next GGUF loads / streams
-                        if pipe is not None:
-                            body_ok = (buf or "").strip()
-                            words = body_ok.split()
-                            collapsed = len(words) <= 2 and len(body_ok) > 200
-                            candidate_error = (
-                                str(meta_done.get("error") or "").strip()
-                                or (
-                                    "Empty candidate output"
-                                    if not body_ok
-                                    else (
-                                        "Unusable collapsed candidate output"
-                                        if collapsed
+                        if (now_paint - last_pipe_poll) >= 0.45:
+                            last_pipe_poll = now_paint
+                            full_pipe.poll()
+                            if full_pipe.submitted:
+                                phase_slot.markdown(
+                                    f'<div class="phase-banner">Run {run_i}/{n_runs} · '
+                                    f"collect + judge {full_pipe.done_count}/{full_pipe.total}"
+                                    + (
+                                        f" · {full_pipe.pending_count} in flight"
+                                        if full_pipe.pending_count
                                         else ""
                                     )
+                                    + "</div>",
+                                    unsafe_allow_html=True,
                                 )
-                                or None
-                            )
-                            if qkey:
-                                if candidate_error is None and t_j0 is None:
-                                    t_j0 = time.time()
-                                    # Both phases tick while DeepSeek overlaps next GGUFs
-                                    _el_this = t_j0 - t_run_i0
-                                    _paint_run_timer(
-                                        timer_slot,
-                                        _run_timer_live(
-                                            (
-                                                f"Run {run_i}/{n_local} · collect∥judge"
-                                                if n_local > 1
-                                                else "collect∥judge · pipelined"
-                                            ),
-                                            n_runs=n_local,
-                                            elapsed_total=t_j0 - t_run0,
-                                            elapsed_this=_el_this,
-                                            collect_base=int(
-                                                round(collect_s_acc + _el_this)
-                                            ),
-                                            judge_base=int(round(judge_s_acc)),
-                                            bucket="both",
-                                        ),
-                                        height=230 if n_local > 1 else 178,
-                                        multi=n_local > 1,
-                                    )
-                                # Collect → judging: append to bottom of live board (FIFO)
-                                _terminalize_local(
-                                    slot, str(qlabel), buf, candidate_error, meta_done
-                                )
-                    _poll_pipe()
-
-                t_collect_end = time.time()
-                run_collect_s = t_collect_end - t_run_i0
-                collect_s_acc += run_collect_s
-                st.session_state["live_outputs"] = live_snap
-                last_live_snap = live_snap
-
-                def _ok_local_text(k: str) -> bool:
-                    snap = live_snap.get(k) or {}
-                    if snap.get("error"):
-                        return False
-                    body = (snap.get("text") or "").strip()
-                    if not body:
-                        return False
-                    words = body.split()
-                    if len(words) <= 2 and len(body) > 200:
-                        return False
-                    return True
-
-                ok_local = [
-                    k for k in live_snap if k in _active_local and _ok_local_text(k)
-                ]
-                last_ok_local = list(ok_local)
-
-                # KPI compare (single run only — multi shows mean after batch)
-                if n_local == 1 and len(ok_local) >= 2:
-                    st.markdown(
-                        f'<div class="sec-label">'
-                        f'{"Only local" if _local_bakeoff else "QVAC-only"} · KPI compare'
-                        f"</div>",
-                        unsafe_allow_html=True,
-                    )
-                    kpi_rows = []
-                    for k in ok_local:
-                        snap = live_snap[k]
-                        m = snap.get("meta") or {}
-                        body = (snap.get("text") or "").strip()
-                        nm, ver = _nv(
-                            k, label=snap.get("label"), model=m.get("model")
-                        )
-                        kpi_rows.append(
-                            {
-                                "Name": nm,
-                                "Version": ver,
-                                "TTFT s": m.get("ttft_s"),
-                                "TPS": m.get("tps"),
-                                "Latency s": m.get("latency_s"),
-                                "RAM(RSS)": _fmt_ram_mb(m.get("ram_mb")) or "—",
-                                "GGUF": _fmt_gguf_mb(m.get("gguf_mb")) or "—",
-                                "Words": len(body.split()) if body else 0,
-                                "Tok": int(m.get("completion_tokens") or 0),
-                            }
-                        )
-                    st.dataframe(
-                        pd.DataFrame(kpi_rows), use_container_width=True, hide_index=True
-                    )
-                    st.caption(
-                        "Local collect · $0 API · same prompt · sequential GGUF · "
-                        "judge overlaps collect when a key is present."
-                    )
-
-                run_judge_s = 0.0
-                ranking = None
-                abort_multi = False
-                _want_judge = len(ok_local) >= 2 and (
-                    has_key if not _local_bakeoff else True
-                )
-
-                if pipe is not None:
-                    try:
-                        # Shrink expected total to what we actually submitted
-                        pipe.set_expected_total(pipe.submitted)
-                        if pipe.submitted:
-                            phase_slot.markdown(
-                                '<div class="phase-banner">'
-                                + (
-                                    f"Only local · Run {run_i}/{n_local} · "
-                                    if n_local > 1
-                                    else f'{"Only local" if _local_bakeoff else "QVAC-only"} · '
-                                )
-                                + f"finishing judge {pipe.done_count}/{pipe.total}…</div>",
-                                unsafe_allow_html=True,
-                            )
-                            _judge_so_far = (
-                                (t_collect_end - t_j0) if t_j0 is not None else 0.0
-                            )
-                            _paint_run_timer(
-                                timer_slot,
-                                _run_timer_live(
-                                    (
-                                        f"Run {run_i}/{n_local} · DeepSeek tail"
-                                        if n_local > 1
-                                        else "DeepSeek · finishing overlap"
-                                    ),
-                                    n_runs=n_local,
-                                    elapsed_total=time.time() - t_run0,
-                                    elapsed_this=time.time() - t_run_i0,
-                                    collect_base=int(round(collect_s_acc)),
-                                    judge_base=int(round(judge_s_acc + _judge_so_far)),
-                                    bucket="judge",
-                                ),
-                                height=230 if n_local > 1 else 178,
-                                multi=n_local > 1,
-                            )
-                            judgments = pipe.finalize()
-                            collected = pipe.candidates
-                        else:
-                            judgments = []
-                            collected = []
-                        if judge_status is not None:
-                            judge_status.update(
-                                label=f"DeepSeek R1 · {len(judgments)} done · pipelined"
-                                + (f" · run {run_i}" if n_local > 1 else ""),
-                                state="complete",
-                            )
-                        # Full judge wall (includes overlap with collect) — not tail-only
-                        _t_j_end = time.time()
-                        if t_j0 is not None:
-                            run_judge_s = _t_j_end - t_j0
-                        else:
-                            run_judge_s = max(0.0, _t_j_end - t_collect_end)
-                        judge_s_acc += run_judge_s
-                        if not _want_judge:
-                            # Had key but <2 usable answers — drop ranking path
-                            judgments = judgments if len(collected) >= 2 else []
-                            if len(ok_local) < 2:
-                                if n_local == 1 and _local_bakeoff:
-                                    st.warning(
-                                        "Fewer than 2 usable local answers — check GGUFs / sidecar "
-                                        "(empty or collapsed outputs are excluded from ranking)."
-                                    )
-                                elif n_local > 1:
-                                    st.warning(
-                                        f"Run {run_i}/{n_local}: fewer than 2 usable "
-                                        "local answers — skipped."
-                                    )
-                    finally:
-                        try:
-                            pipe.close(cancel_pending=False)
-                        except Exception:
-                            pass
-                        if judge_status_ctx is not None:
-                            try:
-                                judge_status_ctx.__exit__(None, None, None)
-                            except Exception:
-                                pass
-                            judge_status_ctx = None
-                elif len(ok_local) >= 2 and not has_key:
-                    if n_local == 1:
-                        st.info(
-                            "**KPI compare** above (local, $0). "
-                            "Paste an OpenRouter key to run DeepSeek R1 "
-                            "(cloud candidates stay skipped · judge tokens only)."
-                        )
-                elif len(ok_local) < 2:
-                    if n_local == 1:
-                        st.session_state.pop("last_ranking", None)
-                        if _local_bakeoff:
-                            st.warning(
-                                "Fewer than 2 usable local answers — check GGUFs / sidecar "
-                                "(empty or collapsed outputs are excluded from ranking)."
-                            )
-                    else:
-                        st.warning(
-                            f"Run {run_i}/{n_local}: fewer than 2 usable local answers — skipped."
-                        )
-
-                if judgments and len(collected) >= 2:
-                    ranking = build_ranking(judgments)
-                    by_meta = {c.candidate_key: c for c in collected}
-                    for row in ranking:
-                        c = by_meta.get(row["key"])
-                        if c:
-                            row["label"] = c.display_label or c.label
-                            row["model"] = c.meta.model
-                            if c.meta.ttft_s is not None:
-                                row["ttft_s"] = c.meta.ttft_s
-                            if c.meta.tps is not None:
-                                row["tps"] = c.meta.tps
-                            if c.meta.ram_mb is not None:
-                                row["ram_mb"] = c.meta.ram_mb
-                            if c.meta.gguf_mb is not None:
-                                row["gguf_mb"] = c.meta.gguf_mb
-                            row["cost_usd"] = 0.0
-                    last_ranking = ranking
-                    last_judgments = judgments
-                    last_collected = collected
-
-                    from benchmark.costing import cost_breakdown_for_run, run_cost_usd
-
-                    _extract_fee = float(
-                        getattr(
-                            load_confirmed_gold(effective_gold),
-                            "extraction_cost_usd",
-                            0.0,
-                        )
-                        or 0.0
-                    ) if effective_gold else 0.0
-                    judge_cost = run_cost_usd(collected, judgments)
-                    _local_cost_bd = cost_breakdown_for_run(
-                        collected, judgments, extraction_cost_usd=_extract_fee
-                    )
-                    abort_multi = n_local > 1 and systemic_judge_failure(judgments)
-                    notes = ""
-                    if abort_multi:
-                        notes = (
-                            f"Only-local multi aborted after run {run_i}/{n_local}: "
-                            "systemic judge failure. Remaining runs skipped."
-                        )
-                        st.warning(notes)
-                    # Planned roster model ids — not per-run sidecar labels
-                    # (meta.model can oscillate and split one Multi into mixed cohorts).
-                    _local_model_contract = planned_on_device_model_contract(
-                        local_slots
-                    )
-                    _local_cohort = build_cohort_id(
-                        case_stem=case_stem,
-                        gold=load_confirmed_gold(effective_gold),
-                        prompt_version="gold-only-v1",
-                        model_config={
-                            "candidates": _local_model_contract,
-                            "judge": cfg.get("judge") if isinstance(cfg, dict) else {},
-                        },
-                        benchmark_track=benchmark_track,
-                    )
-                    st.session_state["_active_cohort_id"] = _local_cohort
-                    artifact = build_run_artifact(
-                        config_snapshot=cfg,
-                        judge_temperature=judge_temp,
-                        run_id=f"{case_id}-{uuid.uuid4().hex[:10]}",
-                        case_id=case_id,
-                        started_at=_iteration_started,
-                        finished_at=utc_now_iso(),
-                        n_index=run_i,
-                        batch_id=_batch_id,
-                        models_config={
-                            "profile": (cfg.get("profile") if isinstance(cfg, dict) else None),
-                            "mode": run_mode,
-                            "pipelined_judge": True,
-                            "candidates": [
-                                {
-                                    "key": c.candidate_key,
-                                    "label": c.label,
-                                    "display_label": c.display_label,
-                                    "model": c.meta.model,
-                                }
-                                for c in collected
-                            ],
-                            "judge": cfg.get("judge") if isinstance(cfg, dict) else None,
-                            "gold_reference": effective_gold.strip() if effective_gold else "",
-                            "case_stem": case_stem.strip(),
-                            "owner_id": owner_id_for_current_key(
-                                st.session_state.get("or_key_session")
+                    elif evt.get("type") == "retry":
+                        key = evt["key"]
+                        bufs[key] = ""
+                        tok_n[key] = 0
+                        status_boxes[key].markdown(
+                            _status_pill(
+                                "run",
+                                f"Retrying once · {evt.get('reason') or 'transport'}",
                             ),
-                            "estimated_breakdown": (
-                                bd_local_only_multi
-                                if n_local > 1 and _local_bakeoff
-                                else bd_local_only
-                                if _local_bakeoff
-                                else None
-                            ),
-                        },
-                        candidates=collected,
-                        judgments=judgments,
-                        ranking=ranking,
-                        total_cost_usd=round(judge_cost, 6),
-                        cost_breakdown=_local_cost_bd,
-                        notes=notes,
-                        cohort_id=_local_cohort,
-                        scoring_version=SCORING_VERSION,
-                        prompt_version="gold-only-v1",
-                        benchmark_track=benchmark_track,
-                        run_status=(
-                            "cancelled"
-                            if any(j.status == "cancelled" for j in judgments)
-                            else (
-                                "complete"
-                                if all(j.status == "valid" for j in judgments)
-                                else "partial"
-                            )
-                        ),
-                        reproducibility={
-                            "benchmark_track": benchmark_track,
-                            "candidate_temperature": (
-                                0.2
-                                if uses_controlled_sampling(benchmark_track)
-                                else None
-                            ),
-                            "judge_temperature": judge_temp,
-                            "blind_map": {
-                                c.candidate_key: c.blind_id for c in collected
-                            },
-                        },
-                    )
-
-                    WORKSPACE_DIR.mkdir(parents=True, exist_ok=True)
-                    art_path = _persist_run_artifact(artifact, WORKSPACE_DIR)
-                    _account = st.session_state.get("account_session")
-                    if account_store_configured() and isinstance(_account, AccountSession):
-                        try:
-                            account_save_artifact(_account, artifact)
-                        except Exception as exc:
-                            st.warning(f"Encrypted cloud persistence failed: {exc}")
-                    all_artifacts.append(artifact)
-                    artifact_paths.append(str(art_path) if art_path else artifact.run_id)
-
-                    if n_local > 1:
-                        snap = snapshot_from_artifact(artifact)
-                        completed_snaps.append(snap)
-                        st.session_state["multi_progress"] = {
-                            "completed": list(completed_snaps),
-                            "n_total": n_local,
-                            "batch_done": False,
-                            "paths": list(artifact_paths),
-                        }
-                        _paint_multi_progress(
-                            multi_progress_slot,
-                            completed_snaps,
-                            n_total=n_local,
-                            batch_done=False,
-                            toast_html=client_toast_run_done(run_i, n_local, ranking),
-                            height=320,
-                        )
-                        leader = "—"
-                        if ranking:
-                            best = min(ranking, key=lambda r: int(r.get("rank") or 99))
-                            leader = (
-                                f"{short_model(str(best.get('key')))} "
-                                f"{float(best.get('accuracy') or 0):.1f}%"
-                            )
-                        st.toast(
-                            f"Only local · run {run_i}/{n_local} · leader {leader}",
-                            icon="✅",
-                        )
-                    else:
-                        # Single-run clinical ranking UI
-                        ranking = _current_ranking(ranking)
-                        for _r in ranking:
-                            _r.setdefault("n_runs", 1)
-                        st.session_state["last_ranking"] = ranking
-                        st.session_state["last_judgments"] = [
-                            j.model_dump()
-                            for j in filter_current_roster_rows(
-                                judgments, key_field="candidate_key"
-                            )
-                        ]
-                        st.session_state["show_last_run_costs"] = True
-                        st.session_state["last_cost_rows"] = [
-                            {
-                                "Key": c.candidate_key,
-                                "Model": c.meta.model,
-                                "$": 0.0,
-                                "TTFT": c.meta.ttft_s,
-                                "TPS": c.meta.tps,
-                                "RAM(RSS)": _fmt_ram_mb(c.meta.ram_mb) or "—",
-                                "GGUF": _fmt_gguf_mb(c.meta.gguf_mb) or "—",
-                            }
-                            for c in filter_current_roster_rows(
-                                collected, key_field="candidate_key"
-                            )
-                        ] + [
-                            {
-                                "Key": "judge",
-                                "Model": judge_model,
-                                "$": round(judge_cost, 6),
-                                "TTFT": None,
-                                "TPS": None,
-                                "RAM(RSS)": "—",
-                                "GGUF": "—",
-                            }
-                        ]
-                        st.markdown(
-                            f'<div class="sec-label">'
-                            f'{"Only local" if _local_bakeoff else "QVAC-only"} · clinical ranking'
-                            f"</div>",
                             unsafe_allow_html=True,
                         )
-                        st.plotly_chart(
-                            fig_judge_accuracy_bars(ranking, height=280),
-                            use_container_width=True,
-                            key=(
-                                "rank_chart_local_only"
-                                if _local_bakeoff
-                                else "rank_chart_qvac_only"
+                        text_boxes[key].markdown(
+                            _stream_body_html("", live=True, panel_id=key),
+                            unsafe_allow_html=True,
+                        )
+                    elif evt.get("type") == "done":
+                        cand = evt["candidate"]
+                        collected.append(cand)
+                        err = bool(cand.meta.error)
+                        status_msg = (
+                            "Done · judge queued"
+                            if not err
+                            else f"Error: {str(cand.meta.error)[:60]}"
+                        )
+                        status_boxes[cand.candidate_key].markdown(
+                            _status_pill("err" if err else "done", status_msg),
+                            unsafe_allow_html=True,
+                        )
+                        text = cand.raw_response or bufs.get(cand.candidate_key) or "(empty)"
+                        kpi = _kpi_line(cand.meta.model_dump(), text)
+                        kpi_boxes[cand.candidate_key].markdown(
+                            f'<div class="kpi-slot"><p class="kpi-row">{kpi}</p></div>',
+                            unsafe_allow_html=True,
+                        )
+                        text_boxes[cand.candidate_key].markdown(
+                            _stream_body_html(
+                                text, live=False, panel_id=cand.candidate_key
                             ),
+                            unsafe_allow_html=True,
                         )
-                        _rank_rows = []
-                        _any_na = False
-                        for r in ranking:
-                            _nm, _ver = _nv(
-                                r.get("key"), label=r.get("label"), model=r.get("model")
-                            )
-                            _na = str(r.get("status") or "ok") != "ok" or r.get(
-                                "accuracy"
-                            ) is None
-                            _any_na = _any_na or _na
-                            _rank = r.get("rank")
-                            _rank_disp = (
-                                "— · partial"
-                                if _na
-                                else (
-                                    f"#{_rank} · partial"
-                                    if r.get("partial") and _rank is not None
-                                    else _rank
+                        live_snap[cand.candidate_key] = {
+                            "text": text,
+                            "status": status_msg,
+                            "error": err,
+                            "kpi": kpi,
+                        }
+                        # Submit every fixed candidate. The pipeline terminalizes
+                        # collection errors/empty output as explicit N/A without a paid call.
+                        if cand.candidate_key:
+                            if (
+                                not err
+                                and (cand.raw_response or "").strip()
+                                and t_j0_full is None
+                            ):
+                                t_j0_full = time.time()
+                                _el_this = t_j0_full - t_run_i0
+                                _paint_run_timer(
+                                    timer_slot,
+                                    _run_timer_live(
+                                        f"Run {run_i}/{n_runs} · collect∥judge",
+                                        n_runs=n_runs,
+                                        elapsed_total=t_j0_full - t_run0,
+                                        elapsed_this=_el_this,
+                                        collect_base=int(
+                                            round(collect_s_acc + (t_j0_full - t_collect0))
+                                        ),
+                                        judge_base=int(round(judge_s_acc)),
+                                        bucket="both",
+                                    ),
+                                    height=230 if n_runs > 1 else 178,
+                                    multi=n_runs > 1,
                                 )
+                            # Collect → judging: append to bottom of live board (FIFO)
+                            # before DeepSeek finishes (cloud + local + MedPsy).
+                            _ck = cand.candidate_key
+                            _clab = (
+                                label_live.get(_ck)
+                                or cand.display_label
+                                or cand.label
+                                or _ck
                             )
-                            _rank_rows.append(
-                                {
-                                    "#": _rank_disp,
-                                    "Name": _nm,
-                                    "Version": _ver,
-                                    "Clinical Composite %": (
-                                        "N/A" if _na else r.get("accuracy")
-                                    ),
-                                    "Status": (
-                                        "partial"
-                                        if _na or r.get("partial")
-                                        else "ok"
-                                    ),
-                                    "TTFT": r.get("ttft_s"),
-                                    "TPS": r.get("tps"),
-                                    "RAM(RSS)": _fmt_ram_mb(r.get("ram_mb")) or "—",
-                                    "GGUF": _fmt_gguf_mb(r.get("gguf_mb")) or "—",
-                                    "Runs": int(r.get("n_runs") or 1),
+                            if _ck not in full_started:
+                                full_ui["queue_i"] = int(full_ui["queue_i"]) + 1
+                                full_board[_ck] = {
+                                    "label": _clab,
+                                    "status": "judging",
+                                    "accuracy": None,
+                                    "queue_i": full_ui["queue_i"],
                                 }
-                            )
-                        if _any_na:
-                            st.markdown(
-                                '<div style="margin:0.25rem 0 0.5rem;padding:0.45rem 0.7rem;'
-                                "border-radius:8px;border:1px solid #f59e0b;"
-                                'background:rgba(251,191,36,0.12);color:#fde68a;font-size:0.85rem">'
-                                "<b style='color:#fbbf24'>partial</b> · technical N/A "
-                                "remain listed; scored models keep their ranks "
-                                "(not clinical 0%).</div>",
-                                unsafe_allow_html=True,
-                            )
-                        st.dataframe(
-                            pd.DataFrame(_rank_rows),
-                            use_container_width=True,
-                            hide_index=True,
-                        )
+                                _paint_full_board()
+                            full_pipe.submit(cand)
+                            full_pipe.poll()
 
-                run_total_s = time.time() - t_run_i0
+                by_key = {c.candidate_key: c for c in collected}
+                collected = [by_key[c["key"]] for c in candidates_cfg if c["key"] in by_key]
+                t_collect_end = time.time()
+                run_collect_s = t_collect_end - t_collect0
+                collect_s_acc += run_collect_s
+
+                phase_slot.markdown(
+                    f'<div class="phase-banner">Run {run_i}/{n_runs} · Collect done · '
+                    f"finishing judge {full_pipe.done_count}/{full_pipe.total}…</div>",
+                    unsafe_allow_html=True,
+                )
+                if full_pipe.done_count < full_pipe.submitted:
+                    _flash_collect_done(n_answers=len(collected))
+
+                _now_tail = time.time()
+                _judge_so_far = (
+                    (_now_tail - t_j0_full) if t_j0_full is not None else 0.0
+                )
+                _paint_run_timer(
+                    timer_slot,
+                    _run_timer_live(
+                        f"Run {run_i}/{n_runs} · DeepSeek R1 tail",
+                        n_runs=n_runs,
+                        elapsed_total=_now_tail - t_run0,
+                        elapsed_this=_now_tail - t_run_i0,
+                        collect_base=int(round(collect_s_acc)),
+                        judge_base=int(round(judge_s_acc + _judge_so_far)),
+                        bucket="judge",
+                    ),
+                    height=230 if n_runs > 1 else 178,
+                    multi=n_runs > 1,
+                )
+                try:
+                    full_pipe.set_expected_total(full_pipe.submitted or len(collected))
+                    judgments = full_pipe.finalize()
+                    # Prefer cfg order for ranking join
+                    by_j = {j.candidate_key: j for j in judgments}
+                    judgments = [
+                        by_j[c["key"]] for c in candidates_cfg if c["key"] in by_j
+                    ]
+                    if full_judge_status is not None:
+                        full_judge_status.update(
+                            label=(
+                                f"DeepSeek R1 · {len(judgments)}/{len(collected)} done · "
+                                f"pipelined · run {run_i}"
+                            ),
+                            state="complete",
+                        )
+                finally:
+                    try:
+                        full_pipe.close(cancel_pending=False)
+                    except Exception:
+                        pass
+                    try:
+                        full_status_ctx.__exit__(None, None, None)
+                    except Exception:
+                        pass
+                _t_j_end = time.time()
+                if t_j0_full is not None:
+                    run_judge_s = _t_j_end - t_j0_full
+                else:
+                    run_judge_s = max(0.0, _t_j_end - t_collect_end)
+                judge_s_acc += run_judge_s
+                run_total_s = _t_j_end - t_run_i0
                 per_run_timings.append(
                     {
                         "run": run_i,
@@ -5406,1608 +5511,274 @@ if st.session_state.get("confirmed_run"):
                         "total_s": int(round(run_total_s)),
                     }
                 )
-                if abort_multi:
-                    break
 
-        except Exception as exc:
-            # Mirror full-Multi except: never leave multi_progress stuck at batch_done=false.
-            if n_local > 1:
-                st.session_state["multi_progress"] = finished_multi_progress(
-                    completed_snaps,
-                    n_total=n_local,
-                    paths=artifact_paths,
-                    aborted_early=True,
+                ranking = build_ranking(judgments)
+                for row in ranking:
+                    cand = by_key.get(row["key"])
+                    if cand:
+                        row["label"] = cand.display_label or cand.label
+                        row["ttft_s"] = cand.meta.ttft_s
+                        row["tps"] = cand.meta.tps
+                        row["latency_s"] = cand.meta.latency_s
+                        row["cost_usd"] = cand.meta.cost_usd
+                        row["model"] = cand.meta.model
+                        if cand.meta.ram_mb is not None:
+                            row["ram_mb"] = cand.meta.ram_mb
+                        if cand.meta.gguf_mb is not None:
+                            row["gguf_mb"] = cand.meta.gguf_mb
+
+                from benchmark.costing import cost_breakdown_for_run, run_cost_usd
+
+                _extract_fee = float(
+                    getattr(
+                        load_confirmed_gold(effective_gold),
+                        "extraction_cost_usd",
+                        0.0,
+                    )
+                    or 0.0
+                ) if effective_gold else 0.0
+                total_cost = run_cost_usd(collected, judgments)
+                _run_cost_bd = cost_breakdown_for_run(
+                    collected, judgments, extraction_cost_usd=_extract_fee
                 )
-                try:
+                abort_multi = n_runs > 1 and systemic_judge_failure(judgments)
+                notes = ""
+                if abort_multi:
+                    notes = (
+                        f"Multi aborted after run {run_i}/{n_runs}: systemic judge failure "
+                        "(empty JSON / transport / majority zeros). Remaining runs skipped to save credits."
+                    )
+                    st.warning(notes)
+                _full_cohort = build_cohort_id(
+                    case_stem=case_stem,
+                    gold=load_confirmed_gold(effective_gold),
+                    prompt_version="gold-only-v1",
+                    model_config={
+                        "candidates": candidates_cfg,
+                        "judge": prep["cfg"].get("judge") or {},
+                    },
+                    benchmark_track=benchmark_track,
+                )
+                st.session_state["_active_cohort_id"] = _full_cohort
+                artifact = build_run_artifact(
+                    config_snapshot=prep["cfg"],
+                    judge_temperature=judge_temp,
+                    run_id=f"{case_id}-{uuid.uuid4().hex[:10]}",
+                    case_id=case_id,
+                    started_at=_iteration_started,
+                    finished_at=utc_now_iso(),
+                    n_index=run_i,
+                    batch_id=_batch_id,
+                    models_config={
+                        "profile": prep["cfg"].get("profile"),
+                        "candidates": candidates_cfg,
+                        "judge": prep["cfg"].get("judge"),
+                        "blind_map": blind_map,
+                        "gold_reference": effective_gold.strip() if effective_gold else "",
+                        "case_stem": case_stem.strip(),
+                        "owner_id": owner_id_for_current_key(
+                            st.session_state.get("or_key_session")
+                        ),
+                        "estimated_breakdown": bd if n_runs == 1 else bd_multi,
+                    },
+                    candidates=collected,
+                    judgments=judgments,
+                    ranking=ranking,
+                    total_cost_usd=round(total_cost, 6),
+                    cost_breakdown=_run_cost_bd,
+                    notes=notes,
+                    cohort_id=_full_cohort,
+                    scoring_version=SCORING_VERSION,
+                    prompt_version="gold-only-v1",
+                    benchmark_track=benchmark_track,
+                    run_status=(
+                        "cancelled"
+                        if any(j.status == "cancelled" for j in judgments)
+                        else (
+                            "complete"
+                            if all(j.status == "valid" for j in judgments)
+                            else "partial"
+                        )
+                    ),
+                    reproducibility={
+                        "benchmark_track": benchmark_track,
+                        "candidate_temperature": (
+                            0.2 if uses_controlled_sampling(benchmark_track) else None
+                        ),
+                        "judge_temperature": judge_temp,
+                        "blind_map": blind_map,
+                    },
+                )
+                WORKSPACE_DIR.mkdir(parents=True, exist_ok=True)
+                art_path = _persist_run_artifact(artifact, WORKSPACE_DIR)
+                _account = st.session_state.get("account_session")
+                if account_store_configured() and isinstance(_account, AccountSession):
+                    try:
+                        account_save_artifact(_account, artifact)
+                    except Exception as exc:
+                        st.warning(f"Encrypted cloud persistence failed: {exc}")
+                all_artifacts.append(artifact)
+                artifact_paths.append(str(art_path) if art_path else artifact.run_id)
+                last_ranking = ranking
+                last_judgments = judgments
+                last_collected = collected
+
+                if n_runs > 1:
+                    snap = snapshot_from_artifact(artifact)
+                    completed_snaps.append(snap)
+                    st.session_state["multi_progress"] = {
+                        "completed": list(completed_snaps),
+                        "n_total": n_runs,
+                        "batch_done": False,
+                        "paths": list(artifact_paths),
+                    }
                     _paint_multi_progress(
                         multi_progress_slot,
                         completed_snaps,
-                        n_total=n_local,
-                        batch_done=True,
-                        height=160,
+                        n_total=n_runs,
+                        batch_done=False,
+                        toast_html=client_toast_run_done(run_i, n_runs, ranking),
+                        height=320,
                     )
-                except Exception:
-                    pass
-            try:
-                cancel_run(st.session_state["_run_scope"])
-                abandon_all_pipelines(st.session_state["_run_scope"])
-            except Exception:
-                pass
+                    leader = "—"
+                    if ranking:
+                        best = min(ranking, key=lambda r: int(r.get("rank") or 99))
+                        leader = (
+                            f"{short_model(str(best.get('key')))} "
+                            f"{float(best.get('accuracy') or 0):.1f}%"
+                        )
+                    st.toast(
+                        f"Run {run_i}/{n_runs} complete · leader {leader}",
+                        icon="✅",
+                    )
+
+                if abort_multi:
+                    break
+
+            t_end = time.time()
+            total_s = int(round(t_end - t_run0))
+            collect_s = int(round(collect_s_acc))
+            judge_s = int(round(judge_s_acc))
+            last_this_s = int(per_run_timings[-1]["total_s"]) if per_run_timings else total_s
+            # Do NOT force collect+judge == total (pipelined overlap ⇒ sum ≥ wall).
+            timings = {
+                "collect_s": collect_s,
+                "judge_s": judge_s,
+                "total_s": total_s,
+                "last_run_s": last_this_s,
+                "per_run": per_run_timings,
+                "mode": "full",
+                "n": n_runs,
+            }
+            st.session_state["last_run_timings"] = timings
+            _paint_run_timer(
+                timer_slot,
+                _run_timer_stop(
+                    total_s,
+                    this_s=last_this_s,
+                    n_runs=n_runs,
+                    collect_s=collect_s,
+                    judge_s=judge_s,
+                    per_run=per_run_timings,
+                ),
+                height=220,
+                multi=n_runs > 1,
+                per_run_n=len(per_run_timings),
+            )
+            st.session_state["live_outputs"] = live_snap
+            if last_ranking:
+                last_ranking = _current_ranking(last_ranking)
+                for _r in last_ranking:
+                    _r.setdefault("n_runs", 1)
+            st.session_state["last_ranking"] = last_ranking
+            if last_judgments:
+                _lj0 = last_judgments[0]
+                _lj_key = (
+                    "candidate_key"
+                    if (hasattr(_lj0, "candidate_key") or isinstance(_lj0, dict))
+                    else "key"
+                )
+                last_judgments = filter_current_roster_rows(
+                    last_judgments, key_field=_lj_key
+                )
+            st.session_state["last_judgments"] = last_judgments
             _finish_scope_run()
             st.session_state["benchmark_running"] = False
-            st.error(
-                f"Local/QVAC multi-run failed: {type(exc).__name__}: {exc}"
-            )
-            st.stop()
+            st.session_state["last_cost_rows"] = None  # filled below
 
-        # ---- Batch wrap-up ----
-        _finish_scope_run()
-        st.session_state["benchmark_running"] = False
-        st.session_state["live_outputs"] = last_live_snap or live_snap
-        total_s = int(round(time.time() - t_run0))
-        collect_s = int(round(collect_s_acc))
-        judge_s = int(round(judge_s_acc))
-        last_this_s = int(per_run_timings[-1]["total_s"]) if per_run_timings else total_s
-        # Do NOT force collect+judge == total: pipelined overlap makes sum ≥ wall.
-        _paint_run_timer(
-            timer_slot,
-            _run_timer_stop(
-                total_s,
-                this_s=last_this_s if n_local > 1 else None,
-                n_runs=n_local,
-                collect_s=collect_s,
-                judge_s=judge_s,
-                per_run=per_run_timings,
-            ),
-            height=220,
-            multi=n_local > 1,
-            per_run_n=len(per_run_timings),
-        )
-        st.session_state["last_run_timings"] = {
-            "collect_s": collect_s,
-            "judge_s": judge_s,
-            "total_s": total_s,
-            "last_run_s": last_this_s,
-            "per_run": per_run_timings,
-            "mode": run_mode,
-            "n": n_local,
-        }
-        st.session_state["last_multi_n"] = n_local
+            _completion_label = (
+                f"Aborted early · {len(all_artifacts)}/{n_runs} completed"
+                if abort_multi
+                else f"Done · N={len(all_artifacts)}"
+            )
+            from benchmark.costing import batch_total_cost_usd
 
-        _done_label = "Only local" if _local_bakeoff else "QVAC-only"
-        if n_local > 1:
-            st.session_state["multi_progress"] = finished_multi_progress(
-                completed_snaps,
-                n_total=n_local,
-                paths=artifact_paths,
-                aborted_early=bool(abort_multi),
-            )
-            _paint_multi_progress(
-                multi_progress_slot,
-                completed_snaps,
-                n_total=n_local,
-                batch_done=True,
-                height=160,
-            )
-        if len(all_artifacts) > 1:
+            _batch_spend = batch_total_cost_usd(all_artifacts)
             phase_slot.markdown(
-                f'<div class="phase-banner">{_done_label} ×{len(all_artifacts)} done · '
-                f"mean ranking ready · judge wall {judge_s}s</div>",
+                f'<div class="phase-banner">{_completion_label} · '
+                f"actual spend ≈ ${_batch_spend:.4f} · "
+                f"wall {total_s}s</div>",
                 unsafe_allow_html=True,
             )
-            summary, _mean_warn = summarize_multi_batch(all_artifacts)
-            if _mean_warn:
-                st.warning(_mean_warn)
-            st.session_state["last_multi_paths"] = list(artifact_paths)
-            st.session_state["multi_progress"] = finished_multi_progress(
-                completed_snaps,
-                n_total=n_local,
-                paths=artifact_paths,
-                aborted_early=bool(abort_multi),
-            )
-            _paint_multi_progress(
-                multi_progress_slot,
-                completed_snaps,
-                n_total=n_local,
-                batch_done=True,
-                height=160,
-            )
 
-            if summary is not None:
-                _persist_summary(summary)
-                st.session_state["last_multi_summary"] = summary.model_dump()
-
-                st.markdown(
-                    '<div class="sec-label">Only local · official ranking · mean across runs</div>',
-                    unsafe_allow_html=True,
-                )
-                st.caption(reliability_caption(summary))
-                _lo_art = all_artifacts[-1] if all_artifacts else None
-                _lo_cohort = (
-                    str(getattr(_lo_art, "cohort_id", None) or "")
-                    if _lo_art is not None
-                    else ""
-                )
-                _lo_roster_n = len(
-                    filter_current_roster_rows(summary.ranking_mean or [])
-                ) or DEFAULT_ROSTER_VERSION
-                st.markdown(
-                    honesty_block_html(
-                        lang=_ui_lang(),
-                        roster_n=_lo_roster_n,
-                        scope="same_case",
-                        cohort_id=_lo_cohort,
-                    ),
-                    unsafe_allow_html=True,
-                )
-                _lo_eff = (
-                    ((_lo_art.reproducibility or {}).get("effective_judge") or "")
-                    if _lo_art is not None
-                    else ""
-                )
-                if _lo_eff:
-                    st.caption(f"Effective judge (last run) · `{_lo_eff}`")
-                st.markdown("##### Ranking table")
-                st.markdown(
-                    _reliability_table_html(summary.ranking_mean), unsafe_allow_html=True
-                )
-                st.markdown(
-                    screenshot_footer_html(
-                        lang=_ui_lang(),
-                        scope="same_case",
-                        roster_n=_lo_roster_n,
-                        cohort_id=_lo_cohort,
-                        n_label=f"N={summary.n} runs · successful scores",
-                    ),
-                    unsafe_allow_html=True,
-                )
-                st.markdown("##### Chart (mean %; whiskers = ±1 std)")
-                st.plotly_chart(
-                    fig_judge_mean_accuracy_bars(
-                        summary.ranking_mean,
-                        title="Only local · mean Clinical Composite Score",
-                        height=280,
-                    ),
-                    use_container_width=True,
-                    key="rank_chart_local_only_mean",
-                )
-                st.markdown(
-                    screenshot_footer_html(
-                        lang=_ui_lang(),
-                        scope="same_case",
-                        roster_n=_lo_roster_n,
-                        cohort_id=_lo_cohort,
-                        n_label=f"N={summary.n} runs · successful scores",
-                        extra="mean±std whiskers",
-                    ),
-                    unsafe_allow_html=True,
-                )
-                if summary.outliers:
-                    _exec_notes = [
-                        o
-                        for o in summary.outliers
-                        if "execution_cohort" in o.lower()
-                    ]
-                    _other_notes = [
-                        o for o in summary.outliers if o not in _exec_notes
-                    ]
-                    if _exec_notes:
-                        st.caption(
-                            "⚠️ "
-                            + " · ".join(_exec_notes)
-                            + " · mean same recipe; routes/N/A may differ."
-                        )
-                    if _other_notes:
-                        st.caption("Notes · " + " · ".join(_other_notes[:4]))
-                    _prior_bits = []
-                    for art in all_artifacts:
-                        for cand in art.candidates or []:
-                            pa = list(getattr(cand.meta, "prior_attempts", None) or [])
-                            if pa:
-                                _prior_bits.append(
-                                    f"{cand.candidate_key}×{len(pa)}"
-                                )
-                        for j in art.judgments or []:
-                            pa = list(getattr(j, "prior_attempts", None) or [])
-                            if pa:
-                                _prior_bits.append(
-                                    f"judge:{j.candidate_key}×{len(pa)}"
-                                )
-                    if _prior_bits:
-                        st.caption(
-                            "Retries kept prior attempts · "
-                            + ", ".join(_prior_bits[:8])
-                        )
-                import statistics as _stats_lo
-
-                _kpi_acc: dict[str, dict[str, list]] = {}
-                for art in all_artifacts:
-                    for c in art.candidates or []:
-                        k = c.candidate_key
-                        bucket = _kpi_acc.setdefault(
-                            k, {"ttft": [], "tps": [], "lat": [], "ram": [], "label": c.display_label or c.label}
-                        )
-                        if c.meta.ttft_s is not None:
-                            bucket["ttft"].append(float(c.meta.ttft_s))
-                        if c.meta.tps is not None:
-                            bucket["tps"].append(float(c.meta.tps))
-                        if c.meta.latency_s is not None:
-                            bucket["lat"].append(float(c.meta.latency_s))
-                        if c.meta.ram_mb is not None:
-                            bucket["ram"].append(float(c.meta.ram_mb))
-                _kpi_mean_rows = []
-                for k, b in _kpi_acc.items():
-                    nm, ver = _nv(k, label=b.get("label"))
-                    def _m(vals):
-                        return round(_stats_lo.fmean(vals), 2) if vals else None
-                    _kpi_mean_rows.append(
-                        {
-                            "Name": nm,
-                            "Version": ver,
-                            "TTFT mean": _m(b["ttft"]),
-                            "TPS mean": _m(b["tps"]),
-                            "Latency mean": _m(b["lat"]),
-                            "RAM mean": _fmt_ram_mb(_m(b["ram"])) if b["ram"] else "—",
-                            "n": len(all_artifacts),
-                        }
-                    )
-                if _kpi_mean_rows:
-                    st.markdown(
-                        '<div class="sec-label">Only local · mean on-device KPIs</div>',
-                        unsafe_allow_html=True,
-                    )
-                    st.dataframe(
-                        pd.DataFrame(_kpi_mean_rows),
-                        use_container_width=True,
-                        hide_index=True,
-                    )
-                    st.caption(
-                        f"$0 collect × {n_local} requested iterations · "
-                        f"judge spend ≈ ${summary.total_cost_usd:.4f}"
-                    )
-
-            st.markdown(
-                '<div class="sec-label">Per-run detail · open a tab</div>',
-                unsafe_allow_html=True,
-            )
-            tab_cols = st.columns(min(len(artifact_paths), 5) or 1)
-            for i, path in enumerate(artifact_paths):
-                snap = completed_snaps[i] if i < len(completed_snaps) else {}
-                ri = snap.get("n_index") or (i + 1)
-                top = "—"
-                ranking_snap = snap.get("ranking") or []
-                if ranking_snap:
-                    best = min(ranking_snap, key=lambda r: int(r.get("rank") or 99))
-                    top = (
-                        f"{short_model(str(best.get('key')))} "
-                        f"{float(best.get('accuracy') or 0):.0f}%"
-                    )
-                with tab_cols[i % len(tab_cols)]:
-                    if st.button(
-                        f"Run {ri}\n{top}",
-                        use_container_width=True,
-                        key=f"lo_mrun_tab_btn_{ri}_{Path(path).stem[-6:]}",
-                    ):
-                        _arm_kpi_dialog("multi_run", path=path)
-                        st.rerun()
-
-            if summary is not None:
-                st.session_state["last_ranking"] = _mean_rows_to_last_ranking(
-                    summary.ranking_mean
-                )
-            if last_judgments:
-                st.session_state["last_judgments"] = [
-                    j.model_dump() if hasattr(j, "model_dump") else j
-                    for j in filter_current_roster_rows(
-                        last_judgments, key_field="candidate_key"
-                    )
-                ]
-            if last_collected:
-                judge_model = (cfg.get("judge") or {}).get(
-                    "model", "deepseek/deepseek-r1"
-                )
-                judge_cost = sum(
-                    (j.judge_meta.cost_usd or 0) for j in last_judgments
-                ) if last_judgments else 0
-                st.session_state["last_cost_rows"] = [
-                    {
-                        "Key": c.candidate_key,
-                        "Model": c.meta.model,
-                        "$": 0.0,
-                        "TTFT": c.meta.ttft_s,
-                        "TPS": c.meta.tps,
-                        "RAM(RSS)": _fmt_ram_mb(c.meta.ram_mb) or "—",
-                        "GGUF": _fmt_gguf_mb(c.meta.gguf_mb) or "—",
-                    }
-                    for c in filter_current_roster_rows(
-                        last_collected, key_field="candidate_key"
-                    )
-                ] + [
-                    {
-                        "Key": "judge (last run)",
-                        "Model": judge_model,
-                        "$": round(judge_cost, 6),
-                        "TTFT": None,
-                        "TPS": None,
-                        "RAM(RSS)": "—",
-                        "GGUF": "—",
-                    }
-                ]
-                st.session_state["show_last_run_costs"] = True
-
-            if per_run_timings:
+            st.markdown('<div class="sec-label">Results</div>', unsafe_allow_html=True)
+            if n_runs > 1 and per_run_timings:
                 per_bits = " · ".join(
                     f"run{p['run']} {p['total_s']}s (c{p['collect_s']}+j{p['judge_s']})"
                     for p in per_run_timings
                 )
                 st.caption(
                     f"**Wall time** · collect {collect_s}s · judge {judge_s}s · "
-                    f"**total {total_s}s** · {per_bits}"
+                    f"**total {total_s}s** · last run {last_this_s}s"
                 )
-        else:
-            if abort_multi:
-                phase_slot.markdown(
-                    f'<div class="phase-banner">{_done_label} aborted early · '
-                    f"{len(all_artifacts)}/{n_local} run completed · "
-                    "judge infrastructure unavailable</div>",
-                    unsafe_allow_html=True,
-                )
-            elif ranking:
-                phase_slot.markdown(
-                    f'<div class="phase-banner">{_done_label} done · {len(ok_local)} local · '
-                    f"KPI + clinical ranking · judge {judge_s}s</div>",
-                    unsafe_allow_html=True,
-                )
+                st.caption(f"Per run · {per_bits}")
             else:
-                phase_slot.markdown(
-                    f'<div class="phase-banner">{_done_label} done · {len(ok_local)} local · '
-                    f"$0 collect · KPI {'compare' if len(ok_local) >= 2 else 'single'}</div>",
-                    unsafe_allow_html=True,
-                )
-            st.caption(
-                f"Wall time · collect {collect_s}s"
-                + (f" · judge {judge_s}s" if judge_s else "")
-                + " (matches sidebar Run clock)"
-            )
-        st.stop()
-
-    if not is_usable_openrouter_key(st.session_state.get("or_key_session")):
-        _abort_run(
-            "OpenRouter API key missing or invalid (truncated placeholder). "
-            "Paste the full key from https://openrouter.ai/keys in the sidebar."
-        )
-    if not case_stem.strip():
-        _abort_run("Clinical case is empty.")
-    if not effective_gold.strip():
-        _abort_run(
-            "Automatic reference setup is unavailable; retry the run."
-        )
-
-    try:
-        prep = prepare_run(
-            case_id,
-            skip_qvac=not _eff_medpsy,
-            require_qvac=False,
-            triple_qvac=_eff_triple,
-            include_local_peers=_eff_generic,
-            include_medical_peers=_eff_medical,
-            optional_legacy_keys=_optional_legacy_keys,
-        )
-    except RuntimeError as exc:
-        _abort_run(str(exc))
-
-    candidates_cfg = prep["candidates_cfg"]
-    blind_map = prep["blind_map"]
-    case_obj: Case = live_case
-    judge_model = (prep["cfg"].get("judge") or {}).get("model", "deepseek/deepseek-r1")
-    judge_label = (prep["cfg"].get("judge") or {}).get("display_label") or judge_model
-    judge_temp = float((prep["cfg"].get("judge") or {}).get("temperature", 0))
-    active_keys = {c["key"] for c in candidates_cfg}
-
-    phase_slot.markdown(
-        f'<div class="phase-banner">Calling {len(candidates_cfg)} models · '
-        f"Judge {judge_label} · N={n_runs}</div>",
-        unsafe_allow_html=True,
-    )
-
-    # Mark slots not in this run (e.g. QVAC offline) — same HTML box, no text_area
-    for c in roster:
-        if c["key"] not in active_keys:
-            status_boxes[c["key"]].markdown(
-                _status_pill("skip", "Skipped"), unsafe_allow_html=True
-            )
-            text_boxes[c["key"]].markdown(
-                _stream_body_html(
-                    "(start QVAC SDK sidecar to include MedPsy)",
-                    live=False,
-                    panel_id=c["key"],
-                ),
-                unsafe_allow_html=True,
-            )
-
-    all_artifacts = []
-    completed_snaps: list[dict] = []
-    artifact_paths: list[str] = []
-    last_ranking = None
-    last_judgments = []
-    last_collected = []
-    collect_s_acc = 0.0
-    judge_s_acc = 0.0
-    per_run_timings: list[dict] = []
-    abort_multi = False
-    live_snap: dict = {
-        c["key"]: {
-            "text": "(start QVAC SDK sidecar to include MedPsy)",
-            "status": "Skipped",
-            "error": False,
-            "kpi": "",
-        }
-        for c in roster
-        if c["key"] not in active_keys
-    }
-    if n_runs > 1:
-        st.session_state["multi_progress"] = {
-            "completed": [],
-            "n_total": n_runs,
-            "batch_done": False,
-        }
-        _paint_multi_progress(
-            multi_progress_slot, [], n_total=n_runs, batch_done=False, height=120
-        )
-
-    try:
-        for run_i in range(1, n_runs + 1):
-            if is_cancelled(st.session_state["_run_scope"]):
-                st.warning("Run cancelled before the next iteration.")
-                break
-            _iteration_started = utc_now_iso()
-            phase_slot.markdown(
-                f'<div class="phase-banner">Run {run_i}/{n_runs} · Collecting answers…</div>',
-                unsafe_allow_html=True,
-            )
-            t_run_i0 = time.time()
-            t_collect0 = time.time()
-            _paint_run_timer(
-                timer_slot,
-                _run_timer_live(
-                    f"Run {run_i}/{n_runs} · collecting",
-                    n_runs=n_runs,
-                    elapsed_total=t_collect0 - t_run0,
-                    elapsed_this=0,
-                    collect_base=int(round(collect_s_acc)),
-                    judge_base=int(round(judge_s_acc)),
-                    bucket="collect",
-                ),
-                height=210 if n_runs > 1 else 168,
-                multi=n_runs > 1,
-            )
-            collected = []
-            bufs = {c["key"]: "" for c in candidates_cfg}
-            tok_n = {c["key"]: 0 for c in candidates_cfg}
-            label_live = {
-                c["key"]: (c.get("display_label") or c.get("label") or c["key"])
-                for c in candidates_cfg
-            }
-            last_paint_at: dict[str, float] = {}
-            last_pipe_poll = 0.0
-            t_j0_full = None  # first DeepSeek submit (overlap start)
-            for c in candidates_cfg:
-                status_boxes[c["key"]].markdown(
-                    _status_pill("wait", "Streaming…"), unsafe_allow_html=True
-                )
-                kpi_boxes[c["key"]].markdown(
-                    '<div class="kpi-slot"></div>', unsafe_allow_html=True
-                )
-                # Shell already mounted once — only clear the fixed-height body
-                text_boxes[c["key"]].markdown(
-                    _stream_body_html("", live=True, panel_id=c["key"]),
-                    unsafe_allow_html=True,
+                st.caption(
+                    f"**Wall time** · collect {collect_s}s · judge {judge_s}s · "
+                    f"**total {total_s}s** (same as sidebar Run clock)"
                 )
 
-            # Start DeepSeek as each model finishes (esp. while QVAC GGUFs still load).
-            try:
-                _validate_judge_separation(
-                    prep["cfg"] if isinstance(prep.get("cfg"), dict) else {},
-                    candidates_cfg,
-                )
-            except ValueError as exc:
-                st.error(f"Judge separation check failed: {exc}")
-                st.stop()
-            full_pipe = PipelinedJudge(
-                case_obj,
-                judge_model,
-                temperature=judge_temp,
-                gold_reference=effective_gold,
-                expected_total=len(candidates_cfg),
-                max_workers=min(8, max(2, len(candidates_cfg))),
-                on_progress=None,  # wired below inside st.status
-                api_key=st.session_state.get("or_key_session"),
-                verifier_model=str(
-                    (prep["cfg"].get("judge") or {}).get("verifier_model") or ""
-                ),
-                run_scope=st.session_state["_run_scope"],
-                benchmark_track=benchmark_track,
-                judge_allowed_providers=list(
-                    (prep["cfg"].get("judge") or {}).get("allowed_providers") or []
-                ),
-            )
-            full_started: set[str] = set()
-            full_progress_slot = None
-            full_board_slot = None
-            full_judge_status = None
-            full_board: dict = {}
-            full_ui = {"highlight": None, "queue_i": 0}
-
-            def _paint_full_board() -> None:
-                if full_board_slot is None:
-                    return
-                full_board_slot.markdown(
-                    live_judging_board_html(
-                        full_board,
-                        highlight_key=full_ui["highlight"],
-                        title="Live judging · cloud + local + MedPsy",
-                    ),
-                    unsafe_allow_html=True,
-                )
-
-            def _on_full_progress(evt: dict) -> None:
-                if full_progress_slot is None:
-                    return
-                phase = evt.get("phase")
-                key = str(evt.get("key") or "")
-                name = label_live.get(key) or evt.get("label") or key
-                done_n = int(evt.get("done") or 0)
-                tot = int(evt.get("total") or max(1, done_n))
-                if phase == "queued" and key not in full_started:
-                    full_started.add(key)
-                    if key not in full_board or full_board[key].get("status") not in (
-                        "judging",
-                        "scored",
-                        "failed",
-                    ):
-                        full_ui["queue_i"] = int(full_ui["queue_i"]) + 1
-                        qi = full_ui["queue_i"]
-                    else:
-                        qi = (full_board.get(key) or {}).get("queue_i") or full_ui[
-                            "queue_i"
-                        ]
-                    full_board[key] = {
-                        "label": name,
-                        "status": "judging",
-                        "accuracy": None,
-                        "queue_i": qi,
-                        "progress_pct": int(evt.get("percent") or 10),
-                        "progress_label": str(evt.get("stage") or "queued"),
-                        "elapsed_s": float(evt.get("elapsed_s") or 0),
+            cost_rows = []
+            for c in filter_current_roster_rows(last_collected, key_field="candidate_key"):
+                cost_rows.append(
+                    {
+                        "Key": c.candidate_key,
+                        "Model": c.meta.model,
+                        "$": c.meta.cost_usd,
+                        "TTFT": c.meta.ttft_s,
+                        "TPS": c.meta.tps,
+                        "RAM(RSS)": _fmt_ram_mb(c.meta.ram_mb) or "—",
+                        "GGUF": _fmt_gguf_mb(c.meta.gguf_mb) or "—",
                     }
-                    _paint_full_board()
-                elif phase == "progress" and key:
-                    prev = full_board.get(key) or {}
-                    if prev.get("status") == "scored" or prev.get("status") == "failed" and not evt.get(
-                        "active_attempt"
-                    ):
-                        pass
-                    else:
-                        full_board[key] = {
-                            **prev,
-                            "label": name,
-                            "status": "judging",
-                            "accuracy": None,
-                            "progress_pct": int(evt.get("percent") or 10),
-                            "progress_label": str(evt.get("stage") or "judging"),
-                            "elapsed_s": float(evt.get("elapsed_s") or 0),
-                        }
-                        _paint_full_board()
-                elif phase == "retry" and key:
-                    prev = full_board.get(key) or {}
-                    if prev.get("status") == "scored" or prev.get("status") == "failed" and not evt.get(
-                        "active_attempt"
-                    ):
-                        pass
-                    else:
-                        full_board[key] = {
-                            **prev,
-                            "label": name,
-                            "status": "judging",
-                            "accuracy": None,
-                            "progress_pct": int(evt.get("percent") or 75),
-                            "progress_label": str(
-                                evt.get("stage") or "corrective retry"
-                            ),
-                            "elapsed_s": float(evt.get("elapsed_s") or 0),
-                        }
-                        _paint_full_board()
-                elif phase in ("done", "retry_done"):
-                    prev_q = (full_board.get(key) or {}).get("queue_i")
-                    if evt.get("failed"):
-                        reason = str(
-                            evt.get("failure_reason")
-                            or evt.get("note")
-                            or evt.get("status")
-                            or ""
-                        )
-                        status = str(evt.get("status") or "").lower()
-                        na_label = _na_failure_label(status, reason)
-                        full_board[key] = {
-                            "label": name,
-                            "status": "failed",
-                            "accuracy": None,
-                            "queue_i": prev_q,
-                            "progress_pct": 100,
-                            "progress_label": "complete",
-                            "elapsed_s": float(evt.get("elapsed_s") or 0),
-                        }
-                        if key in status_boxes:
-                            status_boxes[key].markdown(
-                                _status_pill("err", na_label),
-                                unsafe_allow_html=True,
-                            )
-                    else:
-                        acc = float(evt.get("accuracy") or 0)
-                        full_board[key] = {
-                            "label": name,
-                            "status": "scored",
-                            "accuracy": acc,
-                            "coverage": evt.get("coverage"),
-                            "quality": evt.get("quality"),
-                            "discipline": evt.get("discipline"),
-                            "queue_i": prev_q,
-                            "progress_pct": 100,
-                            "progress_label": "complete",
-                            "elapsed_s": float(evt.get("elapsed_s") or 0),
-                        }
-                        if key in status_boxes:
-                            status_boxes[key].markdown(
-                                _status_pill("done", f"Judged · {acc:.0f}%"),
-                                unsafe_allow_html=True,
-                            )
-                    full_ui["highlight"] = key
-                    _paint_full_board()
-                    if full_judge_status is not None:
-                        full_judge_status.update(
-                            label=f"DeepSeek R1 · {done_n}/{tot} scored · pipelined",
-                            state="running",
-                        )
-                full_progress_slot.progress(
-                    min(1.0, done_n / max(1, tot)),
-                    text=f"Judge · {done_n}/{tot} (overlap with collect)",
                 )
-
-            full_pipe.on_progress = _on_full_progress
-            full_status_ctx = st.status(
-                f"DeepSeek R1 · pipelined with collect · run {run_i}/{n_runs}",
-                expanded=True,
-            )
-            full_judge_status = full_status_ctx.__enter__()
-            full_progress_slot = st.empty()
-            full_board_slot = st.empty()
-            full_progress_slot.progress(0.0, text="Judge · waiting for first answer…")
-            _paint_full_board()
-
-            for evt in iter_collect_live(
-                case_obj,
-                candidates_cfg,
-                blind_map,
-                benchmark_track=benchmark_track,
-                api_key=st.session_state.get("or_key_session"),
-            ):
-                if evt.get("type") == "token":
-                    key = evt["key"]
-                    bufs[key] = bufs.get(key, "") + (evt.get("delta") or "")
-                    tok_n[key] = tok_n.get(key, 0) + 1
-                    now_paint = time.time()
-                    # Body-only remount; throttle ~8 tokens or ~250ms (no overlay remount)
-                    if (
-                        tok_n[key] == 1
-                        or tok_n[key] % 8 == 0
-                        or (now_paint - last_paint_at.get(key, 0.0)) >= 0.25
-                    ):
-                        last_paint_at[key] = now_paint
-                        text_boxes[key].markdown(
-                            _stream_body_html(
-                                bufs[key], live=True, panel_id=key
-                            ),
-                            unsafe_allow_html=True,
-                        )
-                        kpi_boxes[key].markdown(
-                            f'<div class="kpi-slot"><p class="kpi-row live">'
-                            f'{_kpi_live_line(evt.get("ttft_s"), evt.get("elapsed_s"), evt.get("tps_live"))}'
-                            f"</p></div>",
-                            unsafe_allow_html=True,
-                        )
-                    if (now_paint - last_pipe_poll) >= 0.45:
-                        last_pipe_poll = now_paint
-                        full_pipe.poll()
-                        if full_pipe.submitted:
-                            phase_slot.markdown(
-                                f'<div class="phase-banner">Run {run_i}/{n_runs} · '
-                                f"collect + judge {full_pipe.done_count}/{full_pipe.total}"
-                                + (
-                                    f" · {full_pipe.pending_count} in flight"
-                                    if full_pipe.pending_count
-                                    else ""
-                                )
-                                + "</div>",
-                                unsafe_allow_html=True,
-                            )
-                elif evt.get("type") == "retry":
-                    key = evt["key"]
-                    bufs[key] = ""
-                    tok_n[key] = 0
-                    status_boxes[key].markdown(
-                        _status_pill(
-                            "run",
-                            f"Retrying once · {evt.get('reason') or 'transport'}",
-                        ),
-                        unsafe_allow_html=True,
-                    )
-                    text_boxes[key].markdown(
-                        _stream_body_html("", live=True, panel_id=key),
-                        unsafe_allow_html=True,
-                    )
-                elif evt.get("type") == "done":
-                    cand = evt["candidate"]
-                    collected.append(cand)
-                    err = bool(cand.meta.error)
-                    status_msg = (
-                        "Done · judge queued"
-                        if not err
-                        else f"Error: {str(cand.meta.error)[:60]}"
-                    )
-                    status_boxes[cand.candidate_key].markdown(
-                        _status_pill("err" if err else "done", status_msg),
-                        unsafe_allow_html=True,
-                    )
-                    text = cand.raw_response or bufs.get(cand.candidate_key) or "(empty)"
-                    kpi = _kpi_line(cand.meta.model_dump(), text)
-                    kpi_boxes[cand.candidate_key].markdown(
-                        f'<div class="kpi-slot"><p class="kpi-row">{kpi}</p></div>',
-                        unsafe_allow_html=True,
-                    )
-                    text_boxes[cand.candidate_key].markdown(
-                        _stream_body_html(
-                            text, live=False, panel_id=cand.candidate_key
-                        ),
-                        unsafe_allow_html=True,
-                    )
-                    live_snap[cand.candidate_key] = {
-                        "text": text,
-                        "status": status_msg,
-                        "error": err,
-                        "kpi": kpi,
-                    }
-                    # Submit every fixed candidate. The pipeline terminalizes
-                    # collection errors/empty output as explicit N/A without a paid call.
-                    if cand.candidate_key:
-                        if (
-                            not err
-                            and (cand.raw_response or "").strip()
-                            and t_j0_full is None
-                        ):
-                            t_j0_full = time.time()
-                            _el_this = t_j0_full - t_run_i0
-                            _paint_run_timer(
-                                timer_slot,
-                                _run_timer_live(
-                                    f"Run {run_i}/{n_runs} · collect∥judge",
-                                    n_runs=n_runs,
-                                    elapsed_total=t_j0_full - t_run0,
-                                    elapsed_this=_el_this,
-                                    collect_base=int(
-                                        round(collect_s_acc + (t_j0_full - t_collect0))
-                                    ),
-                                    judge_base=int(round(judge_s_acc)),
-                                    bucket="both",
-                                ),
-                                height=230 if n_runs > 1 else 178,
-                                multi=n_runs > 1,
-                            )
-                        # Collect → judging: append to bottom of live board (FIFO)
-                        # before DeepSeek finishes (cloud + local + MedPsy).
-                        _ck = cand.candidate_key
-                        _clab = (
-                            label_live.get(_ck)
-                            or cand.display_label
-                            or cand.label
-                            or _ck
-                        )
-                        if _ck not in full_started:
-                            full_ui["queue_i"] = int(full_ui["queue_i"]) + 1
-                            full_board[_ck] = {
-                                "label": _clab,
-                                "status": "judging",
-                                "accuracy": None,
-                                "queue_i": full_ui["queue_i"],
-                            }
-                            _paint_full_board()
-                        full_pipe.submit(cand)
-                        full_pipe.poll()
-
-            by_key = {c.candidate_key: c for c in collected}
-            collected = [by_key[c["key"]] for c in candidates_cfg if c["key"] in by_key]
-            t_collect_end = time.time()
-            run_collect_s = t_collect_end - t_collect0
-            collect_s_acc += run_collect_s
-
-            phase_slot.markdown(
-                f'<div class="phase-banner">Run {run_i}/{n_runs} · Collect done · '
-                f"finishing judge {full_pipe.done_count}/{full_pipe.total}…</div>",
-                unsafe_allow_html=True,
-            )
-            if full_pipe.done_count < full_pipe.submitted:
-                _flash_collect_done(n_answers=len(collected))
-
-            _now_tail = time.time()
-            _judge_so_far = (
-                (_now_tail - t_j0_full) if t_j0_full is not None else 0.0
-            )
-            _paint_run_timer(
-                timer_slot,
-                _run_timer_live(
-                    f"Run {run_i}/{n_runs} · DeepSeek R1 tail",
-                    n_runs=n_runs,
-                    elapsed_total=_now_tail - t_run0,
-                    elapsed_this=_now_tail - t_run_i0,
-                    collect_base=int(round(collect_s_acc)),
-                    judge_base=int(round(judge_s_acc + _judge_so_far)),
-                    bucket="judge",
-                ),
-                height=230 if n_runs > 1 else 178,
-                multi=n_runs > 1,
-            )
-            try:
-                full_pipe.set_expected_total(full_pipe.submitted or len(collected))
-                judgments = full_pipe.finalize()
-                # Prefer cfg order for ranking join
-                by_j = {j.candidate_key: j for j in judgments}
-                judgments = [
-                    by_j[c["key"]] for c in candidates_cfg if c["key"] in by_j
-                ]
-                if full_judge_status is not None:
-                    full_judge_status.update(
-                        label=(
-                            f"DeepSeek R1 · {len(judgments)}/{len(collected)} done · "
-                            f"pipelined · run {run_i}"
-                        ),
-                        state="complete",
-                    )
-            finally:
-                try:
-                    full_pipe.close(cancel_pending=False)
-                except Exception:
-                    pass
-                try:
-                    full_status_ctx.__exit__(None, None, None)
-                except Exception:
-                    pass
-            _t_j_end = time.time()
-            if t_j0_full is not None:
-                run_judge_s = _t_j_end - t_j0_full
-            else:
-                run_judge_s = max(0.0, _t_j_end - t_collect_end)
-            judge_s_acc += run_judge_s
-            run_total_s = _t_j_end - t_run_i0
-            per_run_timings.append(
-                {
-                    "run": run_i,
-                    "collect_s": int(round(run_collect_s)),
-                    "judge_s": int(round(run_judge_s)),
-                    "total_s": int(round(run_total_s)),
-                }
-            )
-
-            ranking = build_ranking(judgments)
-            for row in ranking:
-                cand = by_key.get(row["key"])
-                if cand:
-                    row["label"] = cand.display_label or cand.label
-                    row["ttft_s"] = cand.meta.ttft_s
-                    row["tps"] = cand.meta.tps
-                    row["latency_s"] = cand.meta.latency_s
-                    row["cost_usd"] = cand.meta.cost_usd
-                    row["model"] = cand.meta.model
-                    if cand.meta.ram_mb is not None:
-                        row["ram_mb"] = cand.meta.ram_mb
-                    if cand.meta.gguf_mb is not None:
-                        row["gguf_mb"] = cand.meta.gguf_mb
-
-            from benchmark.costing import cost_breakdown_for_run, run_cost_usd
-
-            _extract_fee = float(
-                getattr(
-                    load_confirmed_gold(effective_gold),
-                    "extraction_cost_usd",
-                    0.0,
-                )
-                or 0.0
-            ) if effective_gold else 0.0
-            total_cost = run_cost_usd(collected, judgments)
-            _run_cost_bd = cost_breakdown_for_run(
-                collected, judgments, extraction_cost_usd=_extract_fee
-            )
-            abort_multi = n_runs > 1 and systemic_judge_failure(judgments)
-            notes = ""
-            if abort_multi:
-                notes = (
-                    f"Multi aborted after run {run_i}/{n_runs}: systemic judge failure "
-                    "(empty JSON / transport / majority zeros). Remaining runs skipped to save credits."
-                )
-                st.warning(notes)
-            _full_cohort = build_cohort_id(
-                case_stem=case_stem,
-                gold=load_confirmed_gold(effective_gold),
-                prompt_version="gold-only-v1",
-                model_config={
-                    "candidates": candidates_cfg,
-                    "judge": prep["cfg"].get("judge") or {},
-                },
-                benchmark_track=benchmark_track,
-            )
-            st.session_state["_active_cohort_id"] = _full_cohort
-            artifact = build_run_artifact(
-                config_snapshot=prep["cfg"],
-                judge_temperature=judge_temp,
-                run_id=f"{case_id}-{uuid.uuid4().hex[:10]}",
-                case_id=case_id,
-                started_at=_iteration_started,
-                finished_at=utc_now_iso(),
-                n_index=run_i,
-                batch_id=_batch_id,
-                models_config={
-                    "profile": prep["cfg"].get("profile"),
-                    "candidates": candidates_cfg,
-                    "judge": prep["cfg"].get("judge"),
-                    "blind_map": blind_map,
-                    "gold_reference": effective_gold.strip() if effective_gold else "",
-                    "case_stem": case_stem.strip(),
-                    "owner_id": owner_id_for_current_key(
-                        st.session_state.get("or_key_session")
-                    ),
-                    "estimated_breakdown": bd if n_runs == 1 else bd_multi,
-                },
-                candidates=collected,
-                judgments=judgments,
-                ranking=ranking,
-                total_cost_usd=round(total_cost, 6),
-                cost_breakdown=_run_cost_bd,
-                notes=notes,
-                cohort_id=_full_cohort,
-                scoring_version=SCORING_VERSION,
-                prompt_version="gold-only-v1",
-                benchmark_track=benchmark_track,
-                run_status=(
-                    "cancelled"
-                    if any(j.status == "cancelled" for j in judgments)
-                    else (
-                        "complete"
-                        if all(j.status == "valid" for j in judgments)
-                        else "partial"
-                    )
-                ),
-                reproducibility={
-                    "benchmark_track": benchmark_track,
-                    "candidate_temperature": (
-                        0.2 if uses_controlled_sampling(benchmark_track) else None
-                    ),
-                    "judge_temperature": judge_temp,
-                    "blind_map": blind_map,
-                },
-            )
-            WORKSPACE_DIR.mkdir(parents=True, exist_ok=True)
-            art_path = _persist_run_artifact(artifact, WORKSPACE_DIR)
-            _account = st.session_state.get("account_session")
-            if account_store_configured() and isinstance(_account, AccountSession):
-                try:
-                    account_save_artifact(_account, artifact)
-                except Exception as exc:
-                    st.warning(f"Encrypted cloud persistence failed: {exc}")
-            all_artifacts.append(artifact)
-            artifact_paths.append(str(art_path) if art_path else artifact.run_id)
-            last_ranking = ranking
-            last_judgments = judgments
-            last_collected = collected
-
-            if n_runs > 1:
-                snap = snapshot_from_artifact(artifact)
-                completed_snaps.append(snap)
-                st.session_state["multi_progress"] = {
-                    "completed": list(completed_snaps),
-                    "n_total": n_runs,
-                    "batch_done": False,
-                    "paths": list(artifact_paths),
-                }
-                _paint_multi_progress(
-                    multi_progress_slot,
-                    completed_snaps,
-                    n_total=n_runs,
-                    batch_done=False,
-                    toast_html=client_toast_run_done(run_i, n_runs, ranking),
-                    height=320,
-                )
-                leader = "—"
-                if ranking:
-                    best = min(ranking, key=lambda r: int(r.get("rank") or 99))
-                    leader = (
-                        f"{short_model(str(best.get('key')))} "
-                        f"{float(best.get('accuracy') or 0):.1f}%"
-                    )
-                st.toast(
-                    f"Run {run_i}/{n_runs} complete · leader {leader}",
-                    icon="✅",
-                )
-
-            if abort_multi:
-                break
-
-        t_end = time.time()
-        total_s = int(round(t_end - t_run0))
-        collect_s = int(round(collect_s_acc))
-        judge_s = int(round(judge_s_acc))
-        last_this_s = int(per_run_timings[-1]["total_s"]) if per_run_timings else total_s
-        # Do NOT force collect+judge == total (pipelined overlap ⇒ sum ≥ wall).
-        timings = {
-            "collect_s": collect_s,
-            "judge_s": judge_s,
-            "total_s": total_s,
-            "last_run_s": last_this_s,
-            "per_run": per_run_timings,
-            "mode": "full",
-            "n": n_runs,
-        }
-        st.session_state["last_run_timings"] = timings
-        _paint_run_timer(
-            timer_slot,
-            _run_timer_stop(
-                total_s,
-                this_s=last_this_s,
-                n_runs=n_runs,
-                collect_s=collect_s,
-                judge_s=judge_s,
-                per_run=per_run_timings,
-            ),
-            height=220,
-            multi=n_runs > 1,
-            per_run_n=len(per_run_timings),
-        )
-        st.session_state["live_outputs"] = live_snap
-        if last_ranking:
-            last_ranking = _current_ranking(last_ranking)
-            for _r in last_ranking:
-                _r.setdefault("n_runs", 1)
-        st.session_state["last_ranking"] = last_ranking
-        if last_judgments:
-            _lj0 = last_judgments[0]
-            _lj_key = (
-                "candidate_key"
-                if (hasattr(_lj0, "candidate_key") or isinstance(_lj0, dict))
-                else "key"
-            )
             last_judgments = filter_current_roster_rows(
-                last_judgments, key_field=_lj_key
+                last_judgments, key_field="candidate_key"
             )
-        st.session_state["last_judgments"] = last_judgments
-        _finish_scope_run()
-        st.session_state["benchmark_running"] = False
-        st.session_state["last_cost_rows"] = None  # filled below
-
-        _completion_label = (
-            f"Aborted early · {len(all_artifacts)}/{n_runs} completed"
-            if abort_multi
-            else f"Done · N={len(all_artifacts)}"
-        )
-        from benchmark.costing import batch_total_cost_usd
-
-        _batch_spend = batch_total_cost_usd(all_artifacts)
-        phase_slot.markdown(
-            f'<div class="phase-banner">{_completion_label} · '
-            f"actual spend ≈ ${_batch_spend:.4f} · "
-            f"wall {total_s}s</div>",
-            unsafe_allow_html=True,
-        )
-
-        st.markdown('<div class="sec-label">Results</div>', unsafe_allow_html=True)
-        if n_runs > 1 and per_run_timings:
-            per_bits = " · ".join(
-                f"run{p['run']} {p['total_s']}s (c{p['collect_s']}+j{p['judge_s']})"
-                for p in per_run_timings
-            )
-            st.caption(
-                f"**Wall time** · collect {collect_s}s · judge {judge_s}s · "
-                f"**total {total_s}s** · last run {last_this_s}s"
-            )
-            st.caption(f"Per run · {per_bits}")
-        else:
-            st.caption(
-                f"**Wall time** · collect {collect_s}s · judge {judge_s}s · "
-                f"**total {total_s}s** (same as sidebar Run clock)"
-            )
-
-        cost_rows = []
-        for c in filter_current_roster_rows(last_collected, key_field="candidate_key"):
+            judge_cost = sum((j.judge_meta.cost_usd or 0) for j in last_judgments)
             cost_rows.append(
                 {
-                    "Key": c.candidate_key,
-                    "Model": c.meta.model,
-                    "$": c.meta.cost_usd,
-                    "TTFT": c.meta.ttft_s,
-                    "TPS": c.meta.tps,
-                    "RAM(RSS)": _fmt_ram_mb(c.meta.ram_mb) or "—",
-                    "GGUF": _fmt_gguf_mb(c.meta.gguf_mb) or "—",
+                    "Key": "judge",
+                    "Model": judge_model,
+                    "$": round(judge_cost, 6),
+                    "TTFT": None,
+                    "TPS": None,
+                    "RAM(RSS)": "—",
+                    "GGUF": "—",
                 }
             )
-        last_judgments = filter_current_roster_rows(
-            last_judgments, key_field="candidate_key"
-        )
-        judge_cost = sum((j.judge_meta.cost_usd or 0) for j in last_judgments)
-        cost_rows.append(
-            {
-                "Key": "judge",
-                "Model": judge_model,
-                "$": round(judge_cost, 6),
-                "TTFT": None,
-                "TPS": None,
-                "RAM(RSS)": "—",
-                "GGUF": "—",
-            }
-        )
-        st.session_state["last_cost_rows"] = cost_rows
-        st.session_state["show_last_run_costs"] = True
-        st.session_state["last_multi_n"] = n_runs
+            st.session_state["last_cost_rows"] = cost_rows
+            st.session_state["show_last_run_costs"] = True
+            st.session_state["last_multi_n"] = n_runs
 
-        # Always close the progressive strip when Multi ends — including early
-        # abort/cancel with a single artifact (len>1 was leaving batch_done=false).
-        if n_runs > 1:
-            st.session_state["multi_progress"] = finished_multi_progress(
-                completed_snaps,
-                n_total=n_runs,
-                paths=artifact_paths,
-                aborted_early=bool(abort_multi),
-            )
-            _paint_multi_progress(
-                multi_progress_slot,
-                completed_snaps,
-                n_total=n_runs,
-                batch_done=True,
-                height=160,
-            )
-
-        # -------- Multi ×N: official = mean KPIs; per-run via tabs/popups --------
-        if len(all_artifacts) > 1:
-            summary, _mean_warn = summarize_multi_batch(all_artifacts)
-            if _mean_warn:
-                st.warning(_mean_warn)
-            st.session_state["last_multi_paths"] = list(artifact_paths)
-            st.session_state["multi_progress"] = finished_multi_progress(
-                completed_snaps,
-                n_total=n_runs,
-                paths=artifact_paths,
-                aborted_early=bool(abort_multi),
-            )
-            _paint_multi_progress(
-                multi_progress_slot,
-                completed_snaps,
-                n_total=n_runs,
-                batch_done=True,
-                height=160,
-            )
-
-            if summary is not None:
-                _persist_summary(summary)
-                st.session_state["last_multi_summary"] = summary.model_dump()
-
-                st.markdown(
-                    '<div class="sec-label">Official ranking · mean across runs</div>',
-                    unsafe_allow_html=True,
+            # Always close the progressive strip when Multi ends — including early
+            # abort/cancel with a single artifact (len>1 was leaving batch_done=false).
+            if n_runs > 1:
+                st.session_state["multi_progress"] = finished_multi_progress(
+                    completed_snaps,
+                    n_total=n_runs,
+                    paths=artifact_paths,
+                    aborted_early=bool(abort_multi),
                 )
-                st.caption(reliability_caption(summary))
-                _last_art = all_artifacts[-1] if all_artifacts else None
-                _multi_cohort = (
-                    str(getattr(_last_art, "cohort_id", None) or "")
-                    if _last_art is not None
-                    else ""
-                )
-                _multi_roster_n = len(
-                    filter_current_roster_rows(summary.ranking_mean or [])
-                ) or DEFAULT_ROSTER_VERSION
-                st.markdown(
-                    honesty_block_html(
-                        lang=_ui_lang(),
-                        roster_n=_multi_roster_n,
-                        scope="same_case",
-                        cohort_id=_multi_cohort,
-                    ),
-                    unsafe_allow_html=True,
-                )
-                _eff_multi = (
-                    ((_last_art.reproducibility or {}).get("effective_judge") or "")
-                    if _last_art is not None
-                    else ""
-                )
-                if _eff_multi:
-                    st.caption(
-                        f"Effective judge (last run) · `{_eff_multi}`"
-                        + (
-                            " · verifier may replace primary on systemic failure"
-                            if (_last_art.reproducibility or {}).get("verifier_activated")
-                            else ""
-                        )
-                    )
-                st.markdown("##### Ranking table")
-                st.markdown(
-                    _reliability_table_html(summary.ranking_mean), unsafe_allow_html=True
-                )
-                st.markdown(
-                    screenshot_footer_html(
-                        lang=_ui_lang(),
-                        scope="same_case",
-                        roster_n=_multi_roster_n,
-                        cohort_id=_multi_cohort,
-                        n_label=f"N={summary.n} runs · successful scores",
-                    ),
-                    unsafe_allow_html=True,
-                )
-                st.markdown("##### Chart (mean %; whiskers = ±1 std)")
-                st.plotly_chart(
-                    fig_judge_mean_accuracy_bars(
-                        summary.ranking_mean,
-                        title="Mean Clinical Composite Score",
-                        height=280,
-                    ),
-                    use_container_width=True,
-                    key="rank_chart_multi_mean",
-                )
-                st.markdown(
-                    screenshot_footer_html(
-                        lang=_ui_lang(),
-                        scope="same_case",
-                        roster_n=_multi_roster_n,
-                        cohort_id=_multi_cohort,
-                        n_label=f"N={summary.n} runs · successful scores",
-                        extra="mean±std whiskers",
-                    ),
-                    unsafe_allow_html=True,
-                )
-                st.markdown("##### Paired sensitivity ranking")
-                if summary.paired_ranking:
-                    st.dataframe(
-                        pd.DataFrame(
-                            [
-                                {
-                                    "Rank": row.get("rank"),
-                                    "Model": short_model(str(row.get("key"))),
-                                    "Paired mean %": row.get("accuracy_mean"),
-                                    "Coverage %": row.get("coverage_mean"),
-                                    "Quality %": row.get("quality_mean"),
-                                    "Discipline %": row.get("discipline_mean"),
-                                    "Paired N": summary.paired_n,
-                                }
-                                for row in summary.paired_ranking
-                            ]
-                        ),
-                        use_container_width=True,
-                        hide_index=True,
-                    )
-                else:
-                    st.caption(
-                        f"Paired N={summary.paired_n}; at least 5 complete iterations "
-                        "are required. Missing scores are never imputed."
-                    )
-                if summary.outliers:
-                    _exec_notes = [
-                        o
-                        for o in summary.outliers
-                        if "execution_cohort" in o.lower()
-                    ]
-                    _other_notes = [
-                        o for o in summary.outliers if o not in _exec_notes
-                    ]
-                    if _exec_notes:
-                        st.caption(
-                            "⚠️ "
-                            + " · ".join(_exec_notes)
-                            + " · mean same recipe; routes/N/A may differ."
-                        )
-                    if _other_notes:
-                        st.caption("Notes · " + " · ".join(_other_notes[:4]))
-                    _prior_bits = []
-                    for art in all_artifacts:
-                        for cand in art.candidates or []:
-                            pa = list(getattr(cand.meta, "prior_attempts", None) or [])
-                            if pa:
-                                _prior_bits.append(
-                                    f"{cand.candidate_key}×{len(pa)}"
-                                )
-                        for j in art.judgments or []:
-                            pa = list(getattr(j, "prior_attempts", None) or [])
-                            if pa:
-                                _prior_bits.append(
-                                    f"judge:{j.candidate_key}×{len(pa)}"
-                                )
-                    if _prior_bits:
-                        st.caption(
-                            "Retries kept prior attempts · "
-                            + ", ".join(sorted(set(_prior_bits))[:8])
-                        )
-
-            st.markdown(
-                '<div class="sec-label">Per-run detail · open a tab</div>',
-                unsafe_allow_html=True,
-            )
-            st.caption("Each finished run keeps its own KPIs — click to open in-page (no popup).")
-            tab_cols = st.columns(min(len(artifact_paths), 5) or 1)
-            for i, path in enumerate(artifact_paths):
-                snap = completed_snaps[i] if i < len(completed_snaps) else {}
-                ri = snap.get("n_index") or (i + 1)
-                top = "—"
-                ranking = snap.get("ranking") or []
-                if ranking:
-                    best = min(ranking, key=lambda r: int(r.get("rank") or 99))
-                    top = f"{short_model(str(best.get('key')))} {float(best.get('accuracy') or 0):.0f}%"
-                with tab_cols[i % len(tab_cols)]:
-                    if st.button(
-                        f"Run {ri}\n{top}",
-                        use_container_width=True,
-                        key=f"mrun_tab_btn_{ri}_{Path(path).stem[-6:]}",
-                    ):
-                        _arm_kpi_dialog("multi_run", path=path)
-                        st.rerun()
-
-            with st.expander("Last run only (for reference)", expanded=False):
-                if last_ranking:
-                    st.plotly_chart(
-                        fig_judge_accuracy_bars(
-                            last_ranking,
-                            height=220,
-                            title="Last run · Clinical Composite Score",
-                        ),
-                        use_container_width=True,
-                        key="rank_chart_last_ref",
-                    )
-                st.dataframe(pd.DataFrame(cost_rows), use_container_width=True, hide_index=True)
-
-            if summary is not None:
-                # Ranking for persist view = mean order mapped to accuracy_mean
-                st.session_state["last_ranking"] = _mean_rows_to_last_ranking(
-                    summary.ranking_mean
-                )
-        else:
-            # -------- Single run: classic results --------
-            if last_judgments:
-                explain = explain_run_scores(case_obj, last_judgments)
-                st.session_state["last_score_explain"] = explain
-                with st.expander("This run — why these scores", expanded=True):
-                    b1, b2 = st.columns([3, 1])
-                    with b1:
-                        st.caption(explain.get("note") or "")
-                        st.markdown(
-                            "**Weights** · "
-                            + " · ".join(
-                                f"`{k}` {v:.0%}"
-                                for k, v in explain["section_weights"].items()
-                            )
-                        )
-                        st.markdown(
-                            "**Heaviest** · "
-                            + ", ".join(explain.get("heaviest_sections") or [])
-                        )
-                    with b2:
-                        st.markdown(
-                            '<label class="guide-open-btn" for="guide_rank">'
-                            "Full guide</label>",
-                            unsafe_allow_html=True,
-                        )
-                    rows_ex = []
-                    for pm in filter_current_roster_rows(explain.get("per_model") or []):
-                        nm, ver = _nv(pm.get("key"))
-                        rows_ex.append(
-                            {
-                                "Name": nm,
-                                "Version": ver,
-                                "Clinical Composite %": pm["accuracy"],
-                                "Diagnosis": pm.get("diagnosis"),
-                                "Safety": pm.get("safety"),
-                                "Strongest": pm.get("strongest"),
-                                "Weakest": pm.get("weakest"),
-                                "Runs": 1,
-                            }
-                        )
-                    if rows_ex:
-                        st.dataframe(
-                            pd.DataFrame(rows_ex),
-                            use_container_width=True,
-                            hide_index=True,
-                        )
-                    st.caption(
-                        "**Quality** = clinical judgment (not style). "
-                        "Reference-relative Clinical Composite — not clinical ground truth. "
-                        "Exact ties keep the same rank; technical failures are N/A."
-                    )
-
-            if last_ranking:
-                last_ranking = _current_ranking(last_ranking)
-                for _r in last_ranking:
-                    _r.setdefault("n_runs", 1)
-                st.plotly_chart(
-                    fig_judge_accuracy_bars(last_ranking, height=260),
-                    use_container_width=True,
-                    key="rank_chart_live",
-                )
-            tab_l, tab_r = st.columns(2)
-            with tab_l:
-                _eff_from_j = sorted(
-                    {
-                        str(
-                            getattr(j, "judge_model", None)
-                            or (j.get("judge_model") if isinstance(j, dict) else "")
-                            or ""
-                        )
-                        for j in (last_judgments or [])
-                    }
-                    - {""}
-                )
-                _eff_label = (
-                    _eff_from_j[0]
-                    if len(_eff_from_j) == 1
-                    else ("mixed" if _eff_from_j else judge_model)
-                )
-                st.caption(
-                    "Clinical Composite Score (reference-relative) + KPI · "
-                    "uncalibrated LLM-as-judge · not clinical ground truth · "
-                    "technical errors remain N/A · "
-                    f"effective judge · `{_eff_label}`"
-                    + (
-                        " (verifier may replace primary on systemic failure)"
-                        if _eff_label
-                        else ""
-                    )
-                )
-                if last_ranking:
-                    rows = []
-                    _any_partial = False
-                    for r in last_ranking:
-                        nm, ver = _nv(
-                            r.get("key"),
-                            label=r.get("label"),
-                            model=r.get("model"),
-                        )
-                        st_raw = str(r.get("status") or "ok").lower()
-                        is_na = st_raw in {"n/a", "na", "failed", "error"} or (
-                            r.get("accuracy") is None and st_raw != "ok"
-                        )
-                        is_partial = bool(r.get("partial")) or st_raw == "partial" or is_na
-                        _any_partial = _any_partial or is_partial
-                        rank = r.get("rank")
-                        if is_na:
-                            rank_disp = "— · partial"
-                            score_disp = "N/A"
-                            status_disp = "partial"
-                        elif is_partial and rank is not None:
-                            rank_disp = f"#{rank} · partial"
-                            score_disp = r.get("accuracy")
-                            status_disp = "partial"
-                        else:
-                            rank_disp = rank
-                            score_disp = r.get("accuracy")
-                            status_disp = "ok"
-                        rows.append(
-                            {
-                                "#": rank_disp,
-                                "Name": nm,
-                                "Version": ver,
-                                "Clinical Composite %": score_disp,
-                                "Status": status_disp,
-                                "TTFT": r.get("ttft_s"),
-                                "TPS": r.get("tps"),
-                                "RAM(RSS)": _fmt_ram_mb(r.get("ram_mb")) or "—",
-                                "GGUF": _fmt_gguf_mb(r.get("gguf_mb")) or "—",
-                                "$": r.get("cost_usd"),
-                                "Runs": int(r.get("n_runs") or 1),
-                            }
-                        )
-                    if _any_partial:
-                        st.markdown(
-                            '<div style="margin:0.25rem 0 0.5rem;padding:0.45rem 0.7rem;'
-                            "border-radius:8px;border:1px solid #f59e0b;"
-                            'background:rgba(251,191,36,0.12);color:#fde68a;font-size:0.85rem">'
-                            "<b style='color:#fbbf24'>partial</b> · incomplete coverage "
-                            "stays ranked by mean of scored runs when available.</div>",
-                            unsafe_allow_html=True,
-                        )
-                    st.dataframe(
-                        pd.DataFrame(rows), use_container_width=True, hide_index=True
-                    )
-            with tab_r:
-                st.caption("Actual $")
-                st.dataframe(
-                    pd.DataFrame(cost_rows), use_container_width=True, hide_index=True
-                )
-
-            if last_judgments:
-                st.markdown(
-                    '<div class="sec-label">Scores by clinical dimension</div>',
-                    unsafe_allow_html=True,
-                )
-                q_ids = [q.id for q in case_obj.questions]
-                matrix_rows = []
-                for j in last_judgments:
-                    nm, ver = _nv(j.candidate_key)
-                    row = {"Name": nm, "Version": ver}
-                    by_q = {qs.question_id: qs.score for qs in j.question_scores}
-                    for qid in q_ids:
-                        row[qid] = by_q.get(qid)
-                    row["Clinical Composite %"] = j.weighted_accuracy
-                    row["Coverage %"] = j.coverage_score
-                    row["Quality %"] = j.quality_score
-                    row["Discipline %"] = j.discipline_score
-                    _nr = next(
-                        (
-                            int(r.get("n_runs") or r.get("n") or 1)
-                            for r in (last_ranking or [])
-                            if r.get("key") == j.candidate_key
-                        ),
-                        1,
-                    )
-                    row["Runs"] = _nr
-                    matrix_rows.append(row)
-                st.dataframe(
-                    pd.DataFrame(matrix_rows), use_container_width=True, hide_index=True
-                )
-                st.caption(
-                    "Per-question 0–100 from DeepSeek R1 (semantic / synonym-aware). "
-                    "The Clinical Composite Score uses case section weights."
-                )
-
-            with st.expander("Judge breakdown", expanded=False):
-                for j in last_judgments:
-                    name = short_model(j.candidate_key)
-                    st.markdown(f"**{name} · {j.weighted_accuracy}%**")
-                    for qs in j.question_scores:
-                        st.caption(f"{qs.question_id}: {qs.score}/100 — {qs.rationale}")
-
-            st.session_state.pop("last_multi_summary", None)
-            st.session_state.pop("last_multi_paths", None)
-            st.session_state.pop("multi_progress", None)
-
-        st.caption(
-            f"Saved in your private folder · {short_owner_label()} "
-            f"(not visible to other API keys)"
-        )
-        # No auto dialogs here — Run tabs / History open an in-page panel.
-        # Toast avoids the old bug: stale show_run_done reopening on case/gold blur.
-        try:
-            n_fin = int(st.session_state.get("last_multi_n") or 1)
-            if n_fin > 1:
-                st.toast(f"Multi-run ×{n_fin} finished — scroll to Results / Run tabs.", icon="✅")
-            else:
-                st.toast("Judge finished — scroll to Results.", icon="✅")
-        except Exception:
-            pass
-        st.session_state.pop("show_run_done", None)
-        st.session_state.pop("kpi_dialog_armed", None)
-        st.session_state.pop("confirmed_run", None)
-        st.session_state.pop("pending_run", None)
-        _finish_scope_run()
-        st.session_state["benchmark_running"] = False
-        st.rerun()
-
-
-    except Exception as exc:
-        try:
-            cancel_run(st.session_state["_run_scope"])
-            abandon_all_pipelines(st.session_state["_run_scope"])
-        except Exception:
-            pass
-        _finish_scope_run()
-        st.session_state["benchmark_running"] = False
-        if n_runs > 1:
-            # Keep finished run tabs; clear the forever "Waiting for all runs…" strip.
-            st.session_state["multi_progress"] = finished_multi_progress(
-                completed_snaps,
-                n_total=n_runs,
-                paths=artifact_paths,
-                aborted_early=True,
-            )
-            try:
                 _paint_multi_progress(
                     multi_progress_slot,
                     completed_snaps,
@@ -7015,273 +5786,1212 @@ if st.session_state.get("confirmed_run"):
                     batch_done=True,
                     height=160,
                 )
+
+            # -------- Multi ×N: official = mean KPIs; per-run via tabs/popups --------
+            if len(all_artifacts) > 1:
+                summary, _mean_warn = summarize_multi_batch(all_artifacts)
+                if _mean_warn:
+                    st.warning(_mean_warn)
+                st.session_state["last_multi_paths"] = list(artifact_paths)
+                st.session_state["multi_progress"] = finished_multi_progress(
+                    completed_snaps,
+                    n_total=n_runs,
+                    paths=artifact_paths,
+                    aborted_early=bool(abort_multi),
+                )
+                _paint_multi_progress(
+                    multi_progress_slot,
+                    completed_snaps,
+                    n_total=n_runs,
+                    batch_done=True,
+                    height=160,
+                )
+
+                if summary is not None:
+                    _persist_summary(summary)
+                    st.session_state["last_multi_summary"] = summary.model_dump()
+
+                    st.markdown(
+                        '<div class="sec-label">Official ranking · mean across runs</div>',
+                        unsafe_allow_html=True,
+                    )
+                    st.caption(reliability_caption(summary))
+                    _last_art = all_artifacts[-1] if all_artifacts else None
+                    _multi_cohort = (
+                        str(getattr(_last_art, "cohort_id", None) or "")
+                        if _last_art is not None
+                        else ""
+                    )
+                    _multi_roster_n = len(
+                        filter_current_roster_rows(summary.ranking_mean or [])
+                    ) or DEFAULT_ROSTER_VERSION
+                    st.markdown(
+                        honesty_block_html(
+                            lang=_ui_lang(),
+                            roster_n=_multi_roster_n,
+                            scope="same_case",
+                            cohort_id=_multi_cohort,
+                        ),
+                        unsafe_allow_html=True,
+                    )
+                    _eff_multi = (
+                        ((_last_art.reproducibility or {}).get("effective_judge") or "")
+                        if _last_art is not None
+                        else ""
+                    )
+                    if _eff_multi:
+                        st.caption(
+                            f"Effective judge (last run) · `{_eff_multi}`"
+                            + (
+                                " · verifier may replace primary on systemic failure"
+                                if (_last_art.reproducibility or {}).get("verifier_activated")
+                                else ""
+                            )
+                        )
+                    st.markdown("##### Ranking table")
+                    st.markdown(
+                        _reliability_table_html(summary.ranking_mean), unsafe_allow_html=True
+                    )
+                    st.markdown(
+                        screenshot_footer_html(
+                            lang=_ui_lang(),
+                            scope="same_case",
+                            roster_n=_multi_roster_n,
+                            cohort_id=_multi_cohort,
+                            n_label=f"N={summary.n} runs · successful scores",
+                        ),
+                        unsafe_allow_html=True,
+                    )
+                    st.markdown("##### Chart (mean %; whiskers = ±1 std)")
+                    st.plotly_chart(
+                        fig_judge_mean_accuracy_bars(
+                            summary.ranking_mean,
+                            title="Mean Clinical Composite Score",
+                            height=280,
+                        ),
+                        use_container_width=True,
+                        key="rank_chart_multi_mean",
+                    )
+                    st.markdown(
+                        screenshot_footer_html(
+                            lang=_ui_lang(),
+                            scope="same_case",
+                            roster_n=_multi_roster_n,
+                            cohort_id=_multi_cohort,
+                            n_label=f"N={summary.n} runs · successful scores",
+                            extra="mean±std whiskers",
+                        ),
+                        unsafe_allow_html=True,
+                    )
+                    st.markdown("##### Paired sensitivity ranking")
+                    if summary.paired_ranking:
+                        st.dataframe(
+                            pd.DataFrame(
+                                [
+                                    {
+                                        "Rank": row.get("rank"),
+                                        "Model": short_model(str(row.get("key"))),
+                                        "Paired mean %": row.get("accuracy_mean"),
+                                        "Coverage %": row.get("coverage_mean"),
+                                        "Quality %": row.get("quality_mean"),
+                                        "Discipline %": row.get("discipline_mean"),
+                                        "Paired N": summary.paired_n,
+                                    }
+                                    for row in summary.paired_ranking
+                                ]
+                            ),
+                            use_container_width=True,
+                            hide_index=True,
+                        )
+                    else:
+                        st.caption(
+                            f"Paired N={summary.paired_n}; at least 5 complete iterations "
+                            "are required. Missing scores are never imputed."
+                        )
+                    if summary.outliers:
+                        _exec_notes = [
+                            o
+                            for o in summary.outliers
+                            if "execution_cohort" in o.lower()
+                        ]
+                        _other_notes = [
+                            o for o in summary.outliers if o not in _exec_notes
+                        ]
+                        if _exec_notes:
+                            st.caption(
+                                "⚠️ "
+                                + " · ".join(_exec_notes)
+                                + " · mean same recipe; routes/N/A may differ."
+                            )
+                        if _other_notes:
+                            st.caption("Notes · " + " · ".join(_other_notes[:4]))
+                        _prior_bits = []
+                        for art in all_artifacts:
+                            for cand in art.candidates or []:
+                                pa = list(getattr(cand.meta, "prior_attempts", None) or [])
+                                if pa:
+                                    _prior_bits.append(
+                                        f"{cand.candidate_key}×{len(pa)}"
+                                    )
+                            for j in art.judgments or []:
+                                pa = list(getattr(j, "prior_attempts", None) or [])
+                                if pa:
+                                    _prior_bits.append(
+                                        f"judge:{j.candidate_key}×{len(pa)}"
+                                    )
+                        if _prior_bits:
+                            st.caption(
+                                "Retries kept prior attempts · "
+                                + ", ".join(sorted(set(_prior_bits))[:8])
+                            )
+
+                st.markdown(
+                    '<div class="sec-label">Per-run detail · open a tab</div>',
+                    unsafe_allow_html=True,
+                )
+                st.caption("Each finished run keeps its own KPIs — click to open in-page (no popup).")
+                tab_cols = st.columns(min(len(artifact_paths), 5) or 1)
+                for i, path in enumerate(artifact_paths):
+                    snap = completed_snaps[i] if i < len(completed_snaps) else {}
+                    ri = snap.get("n_index") or (i + 1)
+                    top = "—"
+                    ranking = snap.get("ranking") or []
+                    if ranking:
+                        best = min(ranking, key=lambda r: int(r.get("rank") or 99))
+                        top = f"{short_model(str(best.get('key')))} {float(best.get('accuracy') or 0):.0f}%"
+                    with tab_cols[i % len(tab_cols)]:
+                        if st.button(
+                            f"Run {ri}\n{top}",
+                            use_container_width=True,
+                            key=f"mrun_tab_btn_{ri}_{Path(path).stem[-6:]}",
+                        ):
+                            _arm_kpi_dialog("multi_run", path=path)
+                            st.rerun()
+
+                with st.expander("Last run only (for reference)", expanded=False):
+                    if last_ranking:
+                        st.plotly_chart(
+                            fig_judge_accuracy_bars(
+                                last_ranking,
+                                height=220,
+                                title="Last run · Clinical Composite Score",
+                            ),
+                            use_container_width=True,
+                            key="rank_chart_last_ref",
+                        )
+                    st.dataframe(pd.DataFrame(cost_rows), use_container_width=True, hide_index=True)
+
+                if summary is not None:
+                    # Ranking for persist view = mean order mapped to accuracy_mean
+                    st.session_state["last_ranking"] = _mean_rows_to_last_ranking(
+                        summary.ranking_mean
+                    )
+            else:
+                # -------- Single run: classic results --------
+                if last_judgments:
+                    explain = explain_run_scores(case_obj, last_judgments)
+                    st.session_state["last_score_explain"] = explain
+                    with st.expander("This run — why these scores", expanded=True):
+                        b1, b2 = st.columns([3, 1])
+                        with b1:
+                            st.caption(explain.get("note") or "")
+                            st.markdown(
+                                "**Weights** · "
+                                + " · ".join(
+                                    f"`{k}` {v:.0%}"
+                                    for k, v in explain["section_weights"].items()
+                                )
+                            )
+                            st.markdown(
+                                "**Heaviest** · "
+                                + ", ".join(explain.get("heaviest_sections") or [])
+                            )
+                        with b2:
+                            st.markdown(
+                                '<label class="guide-open-btn" for="guide_rank">'
+                                "Full guide</label>",
+                                unsafe_allow_html=True,
+                            )
+                        rows_ex = []
+                        for pm in filter_current_roster_rows(explain.get("per_model") or []):
+                            nm, ver = _nv(pm.get("key"))
+                            rows_ex.append(
+                                {
+                                    "Name": nm,
+                                    "Version": ver,
+                                    "Clinical Composite %": pm["accuracy"],
+                                    "Diagnosis": pm.get("diagnosis"),
+                                    "Safety": pm.get("safety"),
+                                    "Strongest": pm.get("strongest"),
+                                    "Weakest": pm.get("weakest"),
+                                    "Runs": 1,
+                                }
+                            )
+                        if rows_ex:
+                            st.dataframe(
+                                pd.DataFrame(rows_ex),
+                                use_container_width=True,
+                                hide_index=True,
+                            )
+                        st.caption(
+                            "**Quality** = clinical judgment (not style). "
+                            "Reference-relative Clinical Composite — not clinical ground truth. "
+                            "Exact ties keep the same rank; technical failures are N/A."
+                        )
+
+                if last_ranking:
+                    last_ranking = _current_ranking(last_ranking)
+                    for _r in last_ranking:
+                        _r.setdefault("n_runs", 1)
+                    st.plotly_chart(
+                        fig_judge_accuracy_bars(last_ranking, height=260),
+                        use_container_width=True,
+                        key="rank_chart_live",
+                    )
+                tab_l, tab_r = st.columns(2)
+                with tab_l:
+                    _eff_from_j = sorted(
+                        {
+                            str(
+                                getattr(j, "judge_model", None)
+                                or (j.get("judge_model") if isinstance(j, dict) else "")
+                                or ""
+                            )
+                            for j in (last_judgments or [])
+                        }
+                        - {""}
+                    )
+                    _eff_label = (
+                        _eff_from_j[0]
+                        if len(_eff_from_j) == 1
+                        else ("mixed" if _eff_from_j else judge_model)
+                    )
+                    st.caption(
+                        "Clinical Composite Score (reference-relative) + KPI · "
+                        "uncalibrated LLM-as-judge · not clinical ground truth · "
+                        "technical errors remain N/A · "
+                        f"effective judge · `{_eff_label}`"
+                        + (
+                            " (verifier may replace primary on systemic failure)"
+                            if _eff_label
+                            else ""
+                        )
+                    )
+                    if last_ranking:
+                        rows = []
+                        _any_partial = False
+                        for r in last_ranking:
+                            nm, ver = _nv(
+                                r.get("key"),
+                                label=r.get("label"),
+                                model=r.get("model"),
+                            )
+                            st_raw = str(r.get("status") or "ok").lower()
+                            is_na = st_raw in {"n/a", "na", "failed", "error"} or (
+                                r.get("accuracy") is None and st_raw != "ok"
+                            )
+                            is_partial = bool(r.get("partial")) or st_raw == "partial" or is_na
+                            _any_partial = _any_partial or is_partial
+                            rank = r.get("rank")
+                            if is_na:
+                                rank_disp = "— · partial"
+                                score_disp = "N/A"
+                                status_disp = "partial"
+                            elif is_partial and rank is not None:
+                                rank_disp = f"#{rank} · partial"
+                                score_disp = r.get("accuracy")
+                                status_disp = "partial"
+                            else:
+                                rank_disp = rank
+                                score_disp = r.get("accuracy")
+                                status_disp = "ok"
+                            rows.append(
+                                {
+                                    "#": rank_disp,
+                                    "Name": nm,
+                                    "Version": ver,
+                                    "Clinical Composite %": score_disp,
+                                    "Status": status_disp,
+                                    "TTFT": r.get("ttft_s"),
+                                    "TPS": r.get("tps"),
+                                    "RAM(RSS)": _fmt_ram_mb(r.get("ram_mb")) or "—",
+                                    "GGUF": _fmt_gguf_mb(r.get("gguf_mb")) or "—",
+                                    "$": r.get("cost_usd"),
+                                    "Runs": int(r.get("n_runs") or 1),
+                                }
+                            )
+                        if _any_partial:
+                            st.markdown(
+                                '<div style="margin:0.25rem 0 0.5rem;padding:0.45rem 0.7rem;'
+                                "border-radius:8px;border:1px solid #f59e0b;"
+                                'background:rgba(251,191,36,0.12);color:#fde68a;font-size:0.85rem">'
+                                "<b style='color:#fbbf24'>partial</b> · incomplete coverage "
+                                "stays ranked by mean of scored runs when available.</div>",
+                                unsafe_allow_html=True,
+                            )
+                        st.dataframe(
+                            pd.DataFrame(rows), use_container_width=True, hide_index=True
+                        )
+                with tab_r:
+                    st.caption("Actual $")
+                    st.dataframe(
+                        pd.DataFrame(cost_rows), use_container_width=True, hide_index=True
+                    )
+
+                if last_judgments:
+                    st.markdown(
+                        '<div class="sec-label">Scores by clinical dimension</div>',
+                        unsafe_allow_html=True,
+                    )
+                    q_ids = [q.id for q in case_obj.questions]
+                    matrix_rows = []
+                    for j in last_judgments:
+                        nm, ver = _nv(j.candidate_key)
+                        row = {"Name": nm, "Version": ver}
+                        by_q = {qs.question_id: qs.score for qs in j.question_scores}
+                        for qid in q_ids:
+                            row[qid] = by_q.get(qid)
+                        row["Clinical Composite %"] = j.weighted_accuracy
+                        row["Coverage %"] = j.coverage_score
+                        row["Quality %"] = j.quality_score
+                        row["Discipline %"] = j.discipline_score
+                        _nr = next(
+                            (
+                                int(r.get("n_runs") or r.get("n") or 1)
+                                for r in (last_ranking or [])
+                                if r.get("key") == j.candidate_key
+                            ),
+                            1,
+                        )
+                        row["Runs"] = _nr
+                        matrix_rows.append(row)
+                    st.dataframe(
+                        pd.DataFrame(matrix_rows), use_container_width=True, hide_index=True
+                    )
+                    st.caption(
+                        "Per-question 0–100 from DeepSeek R1 (semantic / synonym-aware). "
+                        "The Clinical Composite Score uses case section weights."
+                    )
+
+                with st.expander("Judge breakdown", expanded=False):
+                    for j in last_judgments:
+                        name = short_model(j.candidate_key)
+                        st.markdown(f"**{name} · {j.weighted_accuracy}%**")
+                        for qs in j.question_scores:
+                            st.caption(f"{qs.question_id}: {qs.score}/100 — {qs.rationale}")
+
+                st.session_state.pop("last_multi_summary", None)
+                st.session_state.pop("last_multi_paths", None)
+                st.session_state.pop("multi_progress", None)
+
+            st.caption(
+                f"Saved in your private folder · {short_owner_label()} "
+                f"(not visible to other API keys)"
+            )
+            # No auto dialogs here — Run tabs / History open an in-page panel.
+            # Toast avoids the old bug: stale show_run_done reopening on case/gold blur.
+            try:
+                n_fin = int(st.session_state.get("last_multi_n") or 1)
+                if n_fin > 1:
+                    st.toast(f"Multi-run ×{n_fin} finished — scroll to Results / Run tabs.", icon="✅")
+                else:
+                    st.toast("Judge finished — scroll to Results.", icon="✅")
             except Exception:
                 pass
-        elapsed = int(round(time.time() - t_run0))
-        _paint_run_timer(
-            timer_slot,
-            _run_timer_stop(
-                elapsed,
-                this_s=elapsed,
-                n_runs=n_runs,
-                collect_s=int(round(collect_s_acc)),
-                judge_s=int(round(judge_s_acc)),
-                title="Run clock · failed",
-                phase=f"Failed · {type(exc).__name__}",
-            ),
-            height=220,
-        )
-        st.session_state["last_run_timings"] = {
-            "collect_s": int(round(collect_s_acc)),
-            "judge_s": int(round(judge_s_acc)),
-            "total_s": elapsed,
-            "mode": "full",
-            "n": n_runs,
-            "error": f"{type(exc).__name__}: {exc}",
-        }
-        phase_slot.markdown(
-            f'<div class="phase-banner">Failed after {elapsed}s · timer stopped · '
-            f"{type(exc).__name__}</div>",
-            unsafe_allow_html=True,
-        )
-        _saved_n = len(artifact_paths) if artifact_paths else 0
-        if _saved_n:
-            _hint_paths = ", ".join(str(p) for p in artifact_paths[:3])
-            if _saved_n > 3:
-                _hint_paths += f", … (+{_saved_n - 3} more)"
-            st.warning(
-                f"**{_saved_n}** artifact(s) already saved before the failure — "
-                f"check History / private folder. Paths: `{_hint_paths}`"
-            )
-        st.error(
-            f"Run failed after {elapsed}s — the clock is stopped. "
-            f"**{type(exc).__name__}:** {exc}\n\n"
-            "Models that already finished may still have used OpenRouter credits."
-            + (
-                f"\n\n{_saved_n} run(s) were persisted before abort."
-                if _saved_n
-                else ""
-            )
-        )
-        st.stop()
-
-# --- Saved run (History / Run tab) — in-page panel, never a popup ---
-_inline_path = st.session_state.get("inline_run_path")
-if _inline_path and not st.session_state.get("benchmark_running"):
-    st.markdown(
-        '<div class="sec-label">Saved run · in page</div>',
-        unsafe_allow_html=True,
-    )
-    _c_close, _ = st.columns([1, 4])
-    with _c_close:
-        if st.button("Close panel", key="inline_run_close", use_container_width=True):
-            st.session_state.pop("inline_run_path", None)
-            st.session_state.pop("inline_run_kind", None)
+            st.session_state.pop("show_run_done", None)
+            st.session_state.pop("kpi_dialog_armed", None)
+            st.session_state.pop("confirmed_run", None)
+            st.session_state.pop("pending_run", None)
+            _finish_scope_run()
+            st.session_state["benchmark_running"] = False
             st.rerun()
-    _render_saved_run_panel(
-        str(_inline_path),
-        key_prefix=f"inline_{st.session_state.get('inline_run_kind') or 'run'}",
-    )
 
-# Persist ranking view after the run script finishes (next interactions)
-if (
-    st.session_state.get("last_ranking")
-    and not st.session_state.get("confirmed_run")
-    and not st.session_state.get("benchmark_running")
-):
-    _ms = st.session_state.get("last_multi_summary")
-    if _ms and int(_ms.get("n") or 0) > 1:
-        st.markdown(
-            '<div class="sec-label">Last multi-run · mean ranking</div>',
-            unsafe_allow_html=True,
-        )
-        from benchmark.schema import MultiRunSummary as _MRS
 
-        _sum = _MRS.model_validate(_ms)
-        st.caption(reliability_caption(_sum))
-        st.markdown(
-            _reliability_table_html(_sum.ranking_mean), unsafe_allow_html=True
-        )
-        st.plotly_chart(
-            fig_judge_mean_accuracy_bars(
-                _sum.ranking_mean,
-                    title="Mean Clinical Composite Score",
-                height=260,
-            ),
-            use_container_width=True,
-            key="rank_chart_saved_multi",
-        )
-        _paths = st.session_state.get("last_multi_paths") or []
-        if _paths:
-            st.caption("Open a finished run")
-            _cols = st.columns(min(len(_paths), 5) or 1)
-            for _i, _p in enumerate(_paths):
-                with _cols[_i % len(_cols)]:
-                    if st.button(
-                        f"Run {_i + 1}",
-                        use_container_width=True,
-                        key=f"saved_mrun_tab_{_i}",
-                    ):
-                        _arm_kpi_dialog("multi_run", path=_p)
-                        st.rerun()
-    else:
-        st.markdown('<div class="sec-label">Last ranking</div>', unsafe_allow_html=True)
-        _saved_rank = _current_ranking(st.session_state["last_ranking"] or [])
-        for _r in _saved_rank:
-            _r.setdefault("n_runs", 1)
-        st.plotly_chart(
-            fig_judge_accuracy_bars(_saved_rank, height=260),
-            use_container_width=True,
-            key="rank_chart_saved",
-        )
-        rows = []
-        _any_partial = False
-        for r in _saved_rank:
-            nm, ver = _nv(
-                r.get("key"), label=r.get("label"), model=r.get("model")
+        except Exception as exc:
+            try:
+                cancel_run(st.session_state["_run_scope"])
+                abandon_all_pipelines(st.session_state["_run_scope"])
+            except Exception:
+                pass
+            _finish_scope_run()
+            st.session_state["benchmark_running"] = False
+            if n_runs > 1:
+                # Keep finished run tabs; clear the forever "Waiting for all runs…" strip.
+                st.session_state["multi_progress"] = finished_multi_progress(
+                    completed_snaps,
+                    n_total=n_runs,
+                    paths=artifact_paths,
+                    aborted_early=True,
+                )
+                try:
+                    _paint_multi_progress(
+                        multi_progress_slot,
+                        completed_snaps,
+                        n_total=n_runs,
+                        batch_done=True,
+                        height=160,
+                    )
+                except Exception:
+                    pass
+            elapsed = int(round(time.time() - t_run0))
+            _paint_run_timer(
+                timer_slot,
+                _run_timer_stop(
+                    elapsed,
+                    this_s=elapsed,
+                    n_runs=n_runs,
+                    collect_s=int(round(collect_s_acc)),
+                    judge_s=int(round(judge_s_acc)),
+                    title="Run clock · failed",
+                    phase=f"Failed · {type(exc).__name__}",
+                ),
+                height=220,
             )
-            st_raw = str(r.get("status") or "ok").lower()
-            is_na = st_raw in {"n/a", "na", "failed", "error"} or (
-                r.get("accuracy") is None and st_raw != "ok"
-            )
-            is_partial = bool(r.get("partial")) or st_raw == "partial" or is_na
-            _any_partial = _any_partial or is_partial
-            rank = r.get("rank")
-            if is_na:
-                rank_disp = "— · partial"
-                score_disp = "N/A"
-                status_disp = "partial"
-            elif is_partial and rank is not None:
-                rank_disp = f"#{rank} · partial"
-                score_disp = r.get("accuracy")
-                status_disp = "partial"
-            else:
-                rank_disp = rank
-                score_disp = r.get("accuracy")
-                status_disp = "ok"
-            rows.append(
-                {
-                    "#": rank_disp,
-                    "Name": nm,
-                    "Version": ver,
-                    "Clinical Composite %": score_disp,
-                    "Status": status_disp,
-                    "TTFT": r.get("ttft_s"),
-                    "TPS": r.get("tps"),
-                    "RAM(RSS)": _fmt_ram_mb(r.get("ram_mb")) or "—",
-                    "GGUF": _fmt_gguf_mb(r.get("gguf_mb")) or "—",
-                    "$": r.get("cost_usd"),
-                    "Runs": int(r.get("n_runs") or r.get("n") or 1),
-                }
-            )
-        if _any_partial:
-            st.markdown(
-                '<div style="margin:0.25rem 0 0.5rem;padding:0.45rem 0.7rem;'
-                "border-radius:8px;border:1px solid #f59e0b;"
-                'background:rgba(251,191,36,0.12);color:#fde68a;font-size:0.85rem">'
-                "<b style='color:#fbbf24'>partial</b> · incomplete coverage "
-                "stays ranked by mean of scored runs when available.</div>",
+            st.session_state["last_run_timings"] = {
+                "collect_s": int(round(collect_s_acc)),
+                "judge_s": int(round(judge_s_acc)),
+                "total_s": elapsed,
+                "mode": "full",
+                "n": n_runs,
+                "error": f"{type(exc).__name__}: {exc}",
+            }
+            phase_slot.markdown(
+                f'<div class="phase-banner">Failed after {elapsed}s · timer stopped · '
+                f"{type(exc).__name__}</div>",
                 unsafe_allow_html=True,
             )
-        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
-
-    # Only show $ after a real Single/Multi this session (not after offline rebuild)
-    if st.session_state.get("show_last_run_costs") and st.session_state.get(
-        "last_cost_rows"
-    ):
-        with st.expander("Last live run · API cost", expanded=False):
-            st.dataframe(
-                pd.DataFrame(st.session_state["last_cost_rows"]),
-                use_container_width=True,
-                hide_index=True,
-            )
-    _tm = st.session_state.get("last_run_timings") or {}
-    if _tm.get("total_s") is not None:
-        n_tm = int(_tm.get("n") or 1)
-        line = (
-            f"Last wall time · collect {_tm.get('collect_s', '—')}s · "
-            f"judge {_tm.get('judge_s', '—')}s · **total {_tm.get('total_s')}s**"
-        )
-        if n_tm > 1 and _tm.get("last_run_s") is not None:
-            line += f" · last run {_tm.get('last_run_s')}s"
-        st.caption(line)
-        per = _tm.get("per_run") or []
-        if n_tm > 1 and per:
-            st.caption(
-                "Per run · "
-                + " · ".join(
-                    f"run{p['run']} {p['total_s']}s (c{p['collect_s']}+j{p['judge_s']})"
-                    for p in per
+            _saved_n = len(artifact_paths) if artifact_paths else 0
+            if _saved_n:
+                _hint_paths = ", ".join(str(p) for p in artifact_paths[:3])
+                if _saved_n > 3:
+                    _hint_paths += f", … (+{_saved_n - 3} more)"
+                st.warning(
+                    f"**{_saved_n}** artifact(s) already saved before the failure — "
+                    f"check History / private folder. Paths: `{_hint_paths}`"
+                )
+            st.error(
+                f"Run failed after {elapsed}s — the clock is stopped. "
+                f"**{type(exc).__name__}:** {exc}\n\n"
+                "Models that already finished may still have used OpenRouter credits."
+                + (
+                    f"\n\n{_saved_n} run(s) were persisted before abort."
+                    if _saved_n
+                    else ""
                 )
             )
-    _lj = filter_current_roster_rows(
-        st.session_state.get("last_judgments") or [],
-        key_field="candidate_key",
-    )
-    if _lj:
+            st.stop()
+
+    # --- Saved run (History / Run tab) — in-page panel, never a popup ---
+    _inline_path = st.session_state.get("inline_run_path")
+    if _inline_path and not st.session_state.get("benchmark_running"):
         st.markdown(
-            '<div class="sec-label">Scores by clinical dimension</div>',
+            '<div class="sec-label">Saved run · in page</div>',
             unsafe_allow_html=True,
         )
-        # Rebuild matrix from saved judgments (current 9 only)
-        def _j_key(j):
-            return getattr(j, "candidate_key", None) or (
-                j.get("candidate_key") if isinstance(j, dict) else None
+        _c_close, _ = st.columns([1, 4])
+        with _c_close:
+            if st.button("Close panel", key="inline_run_close", use_container_width=True):
+                st.session_state.pop("inline_run_path", None)
+                st.session_state.pop("inline_run_kind", None)
+                st.rerun()
+        _render_saved_run_panel(
+            str(_inline_path),
+            key_prefix=f"inline_{st.session_state.get('inline_run_kind') or 'run'}",
+        )
+
+    # Persist ranking view after the run script finishes (next interactions)
+    if (
+        st.session_state.get("last_ranking")
+        and not st.session_state.get("confirmed_run")
+        and not st.session_state.get("benchmark_running")
+    ):
+        _ms = st.session_state.get("last_multi_summary")
+        if _ms and int(_ms.get("n") or 0) > 1:
+            st.markdown(
+                '<div class="sec-label">Last multi-run · mean ranking</div>',
+                unsafe_allow_html=True,
             )
+            from benchmark.schema import MultiRunSummary as _MRS
 
-        def _j_scores(j):
-            if isinstance(j, dict):
-                return j.get("question_scores") or []
-            return getattr(j, "question_scores", None) or []
-
-        def _j_weighted(j):
-            if isinstance(j, dict):
-                return j.get("weighted_accuracy")
-            return getattr(j, "weighted_accuracy", None)
-
-        q_ids = []
-        for j in _lj:
-            for qs in _j_scores(j):
-                qid = qs.get("question_id") if isinstance(qs, dict) else qs.question_id
-                if qid not in q_ids:
-                    q_ids.append(qid)
-        q_ids = sorted(q_ids)
-        _rank_n = {
-            r.get("key"): int(r.get("n_runs") or r.get("n") or 1)
-            for r in _current_ranking(st.session_state.get("last_ranking") or [])
-        }
-        matrix_rows = []
-        for j in _lj:
-            ck = _j_key(j)
-            nm, ver = _nv(ck)
-            row = {"Name": nm, "Version": ver}
-            by_q = {}
-            for qs in _j_scores(j):
-                if isinstance(qs, dict):
-                    by_q[qs.get("question_id")] = qs.get("score")
+            _sum = _MRS.model_validate(_ms)
+            st.caption(reliability_caption(_sum))
+            st.markdown(
+                _reliability_table_html(_sum.ranking_mean), unsafe_allow_html=True
+            )
+            st.plotly_chart(
+                fig_judge_mean_accuracy_bars(
+                    _sum.ranking_mean,
+                        title="Mean Clinical Composite Score",
+                    height=260,
+                ),
+                use_container_width=True,
+                key="rank_chart_saved_multi",
+            )
+            _paths = st.session_state.get("last_multi_paths") or []
+            if _paths:
+                st.caption("Open a finished run")
+                _cols = st.columns(min(len(_paths), 5) or 1)
+                for _i, _p in enumerate(_paths):
+                    with _cols[_i % len(_cols)]:
+                        if st.button(
+                            f"Run {_i + 1}",
+                            use_container_width=True,
+                            key=f"saved_mrun_tab_{_i}",
+                        ):
+                            _arm_kpi_dialog("multi_run", path=_p)
+                            st.rerun()
+        else:
+            st.markdown('<div class="sec-label">Last ranking</div>', unsafe_allow_html=True)
+            _saved_rank = _current_ranking(st.session_state["last_ranking"] or [])
+            for _r in _saved_rank:
+                _r.setdefault("n_runs", 1)
+            st.plotly_chart(
+                fig_judge_accuracy_bars(_saved_rank, height=260),
+                use_container_width=True,
+                key="rank_chart_saved",
+            )
+            rows = []
+            _any_partial = False
+            for r in _saved_rank:
+                nm, ver = _nv(
+                    r.get("key"), label=r.get("label"), model=r.get("model")
+                )
+                st_raw = str(r.get("status") or "ok").lower()
+                is_na = st_raw in {"n/a", "na", "failed", "error"} or (
+                    r.get("accuracy") is None and st_raw != "ok"
+                )
+                is_partial = bool(r.get("partial")) or st_raw == "partial" or is_na
+                _any_partial = _any_partial or is_partial
+                rank = r.get("rank")
+                if is_na:
+                    rank_disp = "— · partial"
+                    score_disp = "N/A"
+                    status_disp = "partial"
+                elif is_partial and rank is not None:
+                    rank_disp = f"#{rank} · partial"
+                    score_disp = r.get("accuracy")
+                    status_disp = "partial"
                 else:
-                    by_q[qs.question_id] = qs.score
-            for qid in q_ids:
-                row[qid] = by_q.get(qid)
-            row["Clinical Composite %"] = _j_weighted(j)
-            row["Coverage %"] = (
-                j.get("coverage_score")
-                if isinstance(j, dict)
-                else getattr(j, "coverage_score", None)
+                    rank_disp = rank
+                    score_disp = r.get("accuracy")
+                    status_disp = "ok"
+                rows.append(
+                    {
+                        "#": rank_disp,
+                        "Name": nm,
+                        "Version": ver,
+                        "Clinical Composite %": score_disp,
+                        "Status": status_disp,
+                        "TTFT": r.get("ttft_s"),
+                        "TPS": r.get("tps"),
+                        "RAM(RSS)": _fmt_ram_mb(r.get("ram_mb")) or "—",
+                        "GGUF": _fmt_gguf_mb(r.get("gguf_mb")) or "—",
+                        "$": r.get("cost_usd"),
+                        "Runs": int(r.get("n_runs") or r.get("n") or 1),
+                    }
+                )
+            if _any_partial:
+                st.markdown(
+                    '<div style="margin:0.25rem 0 0.5rem;padding:0.45rem 0.7rem;'
+                    "border-radius:8px;border:1px solid #f59e0b;"
+                    'background:rgba(251,191,36,0.12);color:#fde68a;font-size:0.85rem">'
+                    "<b style='color:#fbbf24'>partial</b> · incomplete coverage "
+                    "stays ranked by mean of scored runs when available.</div>",
+                    unsafe_allow_html=True,
+                )
+            st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+
+        # Only show $ after a real Single/Multi this session (not after offline rebuild)
+        if st.session_state.get("show_last_run_costs") and st.session_state.get(
+            "last_cost_rows"
+        ):
+            with st.expander("Last live run · API cost", expanded=False):
+                st.dataframe(
+                    pd.DataFrame(st.session_state["last_cost_rows"]),
+                    use_container_width=True,
+                    hide_index=True,
+                )
+        _tm = st.session_state.get("last_run_timings") or {}
+        if _tm.get("total_s") is not None:
+            n_tm = int(_tm.get("n") or 1)
+            line = (
+                f"Last wall time · collect {_tm.get('collect_s', '—')}s · "
+                f"judge {_tm.get('judge_s', '—')}s · **total {_tm.get('total_s')}s**"
             )
-            row["Quality %"] = (
-                j.get("quality_score")
-                if isinstance(j, dict)
-                else getattr(j, "quality_score", None)
+            if n_tm > 1 and _tm.get("last_run_s") is not None:
+                line += f" · last run {_tm.get('last_run_s')}s"
+            st.caption(line)
+            per = _tm.get("per_run") or []
+            if n_tm > 1 and per:
+                st.caption(
+                    "Per run · "
+                    + " · ".join(
+                        f"run{p['run']} {p['total_s']}s (c{p['collect_s']}+j{p['judge_s']})"
+                        for p in per
+                    )
+                )
+        _lj = filter_current_roster_rows(
+            st.session_state.get("last_judgments") or [],
+            key_field="candidate_key",
+        )
+        if _lj:
+            st.markdown(
+                '<div class="sec-label">Scores by clinical dimension</div>',
+                unsafe_allow_html=True,
             )
-            row["Discipline %"] = (
-                j.get("discipline_score")
-                if isinstance(j, dict)
-                else getattr(j, "discipline_score", None)
+            # Rebuild matrix from saved judgments (current 9 only)
+            def _j_key(j):
+                return getattr(j, "candidate_key", None) or (
+                    j.get("candidate_key") if isinstance(j, dict) else None
+                )
+
+            def _j_scores(j):
+                if isinstance(j, dict):
+                    return j.get("question_scores") or []
+                return getattr(j, "question_scores", None) or []
+
+            def _j_weighted(j):
+                if isinstance(j, dict):
+                    return j.get("weighted_accuracy")
+                return getattr(j, "weighted_accuracy", None)
+
+            q_ids = []
+            for j in _lj:
+                for qs in _j_scores(j):
+                    qid = qs.get("question_id") if isinstance(qs, dict) else qs.question_id
+                    if qid not in q_ids:
+                        q_ids.append(qid)
+            q_ids = sorted(q_ids)
+            _rank_n = {
+                r.get("key"): int(r.get("n_runs") or r.get("n") or 1)
+                for r in _current_ranking(st.session_state.get("last_ranking") or [])
+            }
+            matrix_rows = []
+            for j in _lj:
+                ck = _j_key(j)
+                nm, ver = _nv(ck)
+                row = {"Name": nm, "Version": ver}
+                by_q = {}
+                for qs in _j_scores(j):
+                    if isinstance(qs, dict):
+                        by_q[qs.get("question_id")] = qs.get("score")
+                    else:
+                        by_q[qs.question_id] = qs.score
+                for qid in q_ids:
+                    row[qid] = by_q.get(qid)
+                row["Clinical Composite %"] = _j_weighted(j)
+                row["Coverage %"] = (
+                    j.get("coverage_score")
+                    if isinstance(j, dict)
+                    else getattr(j, "coverage_score", None)
+                )
+                row["Quality %"] = (
+                    j.get("quality_score")
+                    if isinstance(j, dict)
+                    else getattr(j, "quality_score", None)
+                )
+                row["Discipline %"] = (
+                    j.get("discipline_score")
+                    if isinstance(j, dict)
+                    else getattr(j, "discipline_score", None)
+                )
+                row["Runs"] = _rank_n.get(ck, 1)
+                matrix_rows.append(row)
+            st.dataframe(pd.DataFrame(matrix_rows), use_container_width=True, hide_index=True)
+
+with _rebuild_zone:
+    # --- Offline: Rebuild mean across homogeneous cohorts ($0 API) ---
+    st.markdown(
+        f'<div class="sec-label">{t("bench.rebuild_sec_label", _ui_lang())}</div>',
+        unsafe_allow_html=True,
+    )
+    # Rebuild viz follows the default 9-roster + optional/legacy session toggles
+    # (History still resolves all CURRENT_ROSTER_KEYS labels when toggled back on).
+    _rebuild_optional = [
+        k
+        for k in OPTIONAL_LEGACY_SLOT_KEYS
+        if st.session_state.get(
+            {
+                "local_gemma": "opt_legacy_local_gemma",
+                "local_llama": "opt_legacy_local_llama",
+                "qvac_4b_q8": "opt_legacy_qvac_4b_q8",
+            }[k]
+        )
+    ]
+    _rebuild_model_ids = rebuild_model_ids(_rebuild_optional)
+    _rebuild_roster_n = len(_rebuild_model_ids)
+    st.caption(
+        "Rebuild stays below Live responses / KPIs (sequential UX). "
+        f"Mean chart/table = **{len(_rebuild_model_ids)}-model roster** "
+        "(default 9"
+        + (
+            f" + {len(_rebuild_optional)} optional/legacy"
+            if _rebuild_optional
+            else "; optional Gemma/Llama/Q8 hidden until toggled"
+        )
+        + ") · last ≤N **successful** non-zero scored runs per model · "
+        "technical N/A and exact Clinical Composite == 0 treated like N/A "
+        "(a rare 0 would crush the mean; usually refusal) · "
+        "**No API calls** · scored-only mean."
+    )
+
+    _hist_for_case = artifacts_for_case(WORKSPACE_DIR, case_id)
+    # Scope "selected case only" to the active Case slot's stem cohort history.
+    _slot_scoped_arts = filter_artifacts_for_slot(
+        [a for _, a in _hist_for_case],
+        _active_slot,
+    )
+    if _active_slot.filled and _slot_scoped_arts:
+        _hist_for_case = [
+            (p, a)
+            for p, a in _hist_for_case
+            if a.run_id in {x.run_id for x in _slot_scoped_arts}
+        ]
+    elif _active_slot.filled and not _slot_scoped_arts:
+        # Slot has a stem binding but no runs yet in History for that stem.
+        _hist_for_case = []
+    _rebuild_cohort_id = st.session_state.get("_restored_cohort_id") or None
+    if not _rebuild_cohort_id and _active_slot.cohort_id:
+        _rebuild_cohort_id = _active_slot.cohort_id
+    if _rebuild_cohort_id and not any(
+        a.cohort_id == _rebuild_cohort_id for _, a in _hist_for_case
+    ):
+        _rebuild_cohort_id = None
+    # Resolve active cohort from confirmed gold on artifacts (models/track live there).
+    if not _rebuild_cohort_id and effective_gold:
+        try:
+            _want_gold = load_confirmed_gold(effective_gold).model_dump(
+                mode="json", exclude={"confirmed_at"}
             )
-            row["Runs"] = _rank_n.get(ck, 1)
-            matrix_rows.append(row)
-        st.dataframe(pd.DataFrame(matrix_rows), use_container_width=True, hide_index=True)
+        except Exception:
+            _want_gold = None
+        _gold_cohort_counts: dict = {}
+        if _want_gold is not None:
+            for _, _art in _hist_for_case:
+                if not _art.cohort_id:
+                    continue
+                _gref = str((_art.models_config or {}).get("gold_reference") or "")
+                if not _gref:
+                    continue
+                try:
+                    if load_confirmed_gold(_gref).model_dump(
+                        mode="json", exclude={"confirmed_at"}
+                    ) != _want_gold:
+                        continue
+                except Exception:
+                    continue
+                _gold_cohort_counts[_art.cohort_id] = (
+                    int(_gold_cohort_counts.get(_art.cohort_id) or 0) + 1
+                )
+            if _gold_cohort_counts:
+                _rebuild_cohort_id = max(
+                    _gold_cohort_counts.items(), key=lambda kv: kv[1]
+                )[0]
+    if not _rebuild_cohort_id and _hist_for_case and _hist_for_case[0][1].cohort_id:
+        _rebuild_cohort_id = _hist_for_case[0][1].cohort_id
+    if _rebuild_cohort_id:
+        _avail_same = sum(
+            1
+            for _, a in _hist_for_case
+            if a.cohort_id == _rebuild_cohort_id
+            and is_mean_poolable_run(a)
+        )
+    else:
+        _avail_same = sum(
+            1
+            for _, a in _hist_for_case
+            if is_mean_poolable_run(a)
+        )
+
+    # Portfolio eligibility: same track + v4; roster shapes may differ (per-model N).
+    # Filter to active rebuild roster (9 default + opted-in optional/legacy).
+    _portfolio_model_ids = list(_rebuild_model_ids)
+    # All eligible docs — Rebuild N is per-model obs, not a global last-N slice.
+    _portfolio_probe = list_portfolio_runs(
+        WORKSPACE_DIR,
+        n=None,
+        scoring_version=SCORING_VERSION,
+        track=str(benchmark_track or "controlled"),
+        model_ids=_portfolio_model_ids,
+    )
+    _avail_portfolio = len(_portfolio_probe)
+
+    # Scope control — highly visible, immediately next to N / Rebuild.
+    if "history_rebuild_scope" not in st.session_state:
+        st.session_state["history_rebuild_scope"] = "portfolio"
+    if st.session_state.get("history_rebuild_scope") not in {
+        "same_case",
+        "portfolio",
+        "balanced_cases",
+    }:
+        st.session_state["history_rebuild_scope"] = "portfolio"
+    _rebuild_scope = st.radio(
+        t("bench.rebuild_scope_label", _ui_lang()),
+        options=["same_case", "portfolio", "balanced_cases"],
+        format_func=lambda v: (
+            f"● {scope_label(v, _ui_lang())} — "
+            + (
+                t("bench.rebuild_scope_same", _ui_lang())
+                if v == "same_case"
+                else (
+                    t("bench.rebuild_scope_portfolio", _ui_lang())
+                    if v == "portfolio"
+                    else t("bench.rebuild_scope_balanced", _ui_lang())
+                )
+            )
+        ),
+        horizontal=True,
+        key="history_rebuild_scope",
+        on_change=_on_rebuild_n_pick_change,
+    )
+    st.markdown(
+        honesty_block_html(
+            lang=_ui_lang(),
+            roster_n=_rebuild_roster_n or DEFAULT_ROSTER_VERSION,
+            scope=_rebuild_scope,
+            cohort_id=_rebuild_cohort_id,
+        ),
+        unsafe_allow_html=True,
+    )
+    st.caption(
+        t(
+            "disclosure.rebuild_scope_loud",
+            _ui_lang(),
+            scope=scope_label(_rebuild_scope, _ui_lang()),
+        )
+    )
+
+    if _rebuild_scope == "portfolio":
+        st.caption(t("bench.rebuild_portfolio_intro", _ui_lang()))
+        _avail_n = _avail_portfolio
+    elif _rebuild_scope == "balanced_cases":
+        st.caption(t("bench.rebuild_balanced_intro", _ui_lang()))
+        _avail_n = _avail_portfolio
+    else:
+        st.caption(
+            f"**Case {_active_slot_idx}** · **Same-case** mean · one immutable cohort only"
+            + (
+                f" · cohort `{short_cohort(_rebuild_cohort_id)}`"
+                if _rebuild_cohort_id
+                else ""
+            )
+            + ". Cohort hash = normalized case + confirmed gold (excl. timestamp) + "
+            "models + track. Other Case slots are excluded. "
+            "**New Confirm = new cohort.** **No API calls.**"
+        )
+        _avail_n = _avail_same
+
+    # Other confirm versions in the same case family (never auto-merged).
+    _other_family_runs = 0
+    if _rebuild_scope == "same_case":
+        if _family_cohorts and _rebuild_cohort_id:
+            _other_family_runs = sum(
+                int(c.get("run_count") or 0)
+                for c in _family_cohorts
+                if c.get("cohort_id") != _rebuild_cohort_id
+            )
+        elif _family_cohorts and not effective_gold:
+            _other_family_runs = sum(
+                int(c.get("run_count") or 0) for c in _family_cohorts
+            )
+
+    if _other_family_runs > 0 and _avail_n < 5 and _rebuild_scope == "same_case":
+        st.caption(
+            t(
+                "bench.family_other_cohorts",
+                _ui_lang(),
+                n=_other_family_runs,
+            )
+        )
+
+    # Per-model valid N; N=5 remains exploratory.
+    _n_options = [5, 10, 20, 30, 50, 100]
+    _rb1, _rb2, _rb3 = st.columns([1, 1.6, 0.9])
+    with _rb1:
+        # Default once — value MUST stay inside options or Streamlit raises TypeError
+        # ("bad argument type for built-in operation") after a mid-run reload.
+        if "history_rebuild_n_pick" not in st.session_state:
+            st.session_state["history_rebuild_n_pick"] = 5
+        try:
+            _pick = int(st.session_state.get("history_rebuild_n_pick") or 5)
+        except (TypeError, ValueError):
+            _pick = 5
+        if _pick not in _n_options:
+            st.session_state["history_rebuild_n_pick"] = 5
+        _rebuild_n = st.selectbox(
+            t("bench.rebuild_n_label", _ui_lang()),
+            options=_n_options,
+            format_func=lambda n: (
+                f"≤{n} successful / model"
+                + (" · exploratory" if n == 5 else "")
+                + (" · better CV (suggested)" if n == 10 else "")
+                + (" · diminishing returns" if n in (20, 30, 50) else "")
+                + (" · max" if n == 100 else "")
+                + (f"  (only {_avail_n} eligible runs)" if _avail_n < n else "")
+            ),
+            key="history_rebuild_n_pick",
+            on_change=_on_rebuild_n_pick_change,
+            help="N = max successful non-zero scored observations per model (newest first); "
+            "technical N/A and exact-zero skipped, older successful History used — not a global "
+            "last-N run slice. Optional/legacy models appear only when toggled. "
+            "Tiers: 5 exploratory · ~10 better for CV · 20–50 diminishing returns "
+            "(100 max). Default stays 5. Selecting N alone does not open a popup — "
+            "use Rebuild mean.",
+        )
+    with _rb3:
+        _score_help_lang = _ui_lang()
+        with st.popover(
+            "Come funziona lo score?" if _score_help_lang == "it" else "How does scoring work?",
+            use_container_width=True,
+        ):
+            if _score_help_lang == "it":
+                st.markdown(
+                    """
+    **In parole semplici** — protocollo esplorativo amateur, **non** validazione medica.
+
+    **Composite (voto totale)**  
+    Cinque “capitoli”: diagnosi, esami, urgenza, safety, piano. Ogni capitolo pesa in genere circa **1/5** del totale (a volte safety un filo di più). Dentro ogni capitolo: *copertura* (hai detto le cose chiave?) ~50%, *qualità* ~35%, *disciplina* (pochissime aggiunte pericolose) ~15%. Il voto non è “a occhio”: è la media pesata di questi pezzi.
+
+    **Media (mean) — base della classifica**  
+    Con N rebuild validi: somma i punteggi e dividi per N. È il risultato “tipico”.  
+    Non entrano: fallimenti tecnici (N/A) e score **esattamente 0**.  
+    La classifica (#) e le bande CV usano la media (±std). Su N piccoli (5–10) è più stabile da interpretare della mediana.
+
+    **Mediana (◆ sul grafico) — controllo di robustezza**  
+    Ordina i N punteggi e prendi quello di mezzo. Su N alti (50–100) è utile se la distribuzione è storta: meno tirata dai picchi. Non sostituisce la classifica mean di default (altrimenti CV e ±std non allineano al ranking).
+
+    **Min–max (solo tabella)**  
+    Il peggiore e il migliore tra quei N run: quanto può oscillare il modello.
+
+    **Deviazione standard (±1 std sul grafico)**  
+    Quanto i punteggi si sparpagliano intorno alla media. Alta = run molto diversi tra loro.  
+    Sul grafico i baffi chiari (con alone scuro) mostrano **media ± 1 std**.
+
+    **Varianza**  
+    Stessa idea della dispersione; la std è quella misura riportata in punti di score (più leggibile).
+
+    **CV% (coefficiente di variazione)**  
+    Dispersione **in % rispetto alla media** — utile per confrontare modelli con medie diverse.  
+    Bande: Super High ≤5 · High ≤10 · Medium ≤15 · Low ≤20 · Very Low >20.  
+    **Banda CV ≠ qualità clinica** e ≠ validazione ufficiale.
+
+    **Perché i pesi**  
+    Le cinque sezioni esistono perché la vignetta chiede cose diverse; i pesi riflettono priorità del protocollo (safety importante). Non è un score da cartella clinica ufficiale.
+    """
+                )
+            else:
+                st.markdown(
+                    """
+    **In plain words** — exploratory amateur protocol, **not** medical validation.
+
+    **Composite (total score)**  
+    Five chapters: diagnosis, tests, urgency, safety, plan. Each usually about **1/5** of the total (safety sometimes a bit more). Inside each chapter: *coverage* ~50%, *quality* ~35%, *discipline* ~15%. Weighted average — not a vibe score.
+
+    **Mean — ranking basis**  
+    Average of up to N successful non-zero scored runs. Technical N/A and exact-zero skipped. Rank (#) and CV bands follow the mean (±std). At small N (5–10) mean is usually clearer than median.
+
+    **Median (◆) — robustness check**  
+    Middle of the N scores. Helpful at large N (50–100) if the distribution is skewed. Default ranking stays on mean so CV / ±std stay aligned.
+
+    **Min–max (table only)**  
+    Worst and best among those N runs.
+
+    **Standard deviation (±1 std whiskers)**  
+    How spread out scores are around the mean. Black whiskers with white outline on the chart = mean ± 1 std (readable on bars and past bar tips).
+
+    **Variance**  
+    Same “spread” idea; std is the readable score-unit version.
+
+    **CV%**  
+    Spread as a **% of the mean** — fairer when means differ. Bands: Super High ≤5 … Very Low >20. **CV band ≠ clinical quality.**
+
+    **Why weights**  
+    Five sections match five clinical asks in the vignette; weights are protocol priorities, not official chart review.
+    """
+                )
+    _ordered_case_stems = [
+        str(s.stem_key)
+        for s in sorted(_case_slots, key=lambda x: int(x.index))
+        if getattr(s, "stem_key", None)
+    ]
+    with _rb2:
+        if _rebuild_scope in {"portfolio", "balanced_cases"}:
+            _n_show = int(_rebuild_n) if _avail_portfolio else 0
+            _k_show = (
+                len(_ordered_case_stems)
+                if _rebuild_scope == "balanced_cases" and _ordered_case_stems
+                else (
+                    count_distinct_stem_keys(a for _, a in _portfolio_probe)
+                    if _avail_portfolio
+                    else 0
+                )
+            )
+            st.caption(
+                t(
+                    (
+                        "bench.rebuild_balanced_stats"
+                        if _rebuild_scope == "balanced_cases"
+                        else "bench.rebuild_portfolio_stats"
+                    ),
+                    _ui_lang(),
+                    n=_n_show,
+                    cases=_k_show,
+                    avail=_avail_portfolio,
+                    track=str(benchmark_track or "controlled"),
+                )
+            )
+        else:
+            st.caption(
+                f"Saved runs for Case {_active_slot_idx}"
+                + (
+                    f" · this cohort: **{_avail_n}**"
+                    if _rebuild_cohort_id
+                    else f": **{_avail_n}**"
+                )
+                + " · 5 exploratory · ~10 steadier CV · 20+ nicer but costly"
+            )
+        _can_rebuild = _avail_n >= 1
+        _do_rebuild = st.button(
+            t(
+                "bench.rebuild_btn",
+                _ui_lang(),
+                n=_rebuild_n,
+            ),
+            type="primary",
+            use_container_width=True,
+            disabled=not _can_rebuild,
+            key="history_rebuild_btn",
+            help=(
+                t("bench.rebuild_btn_help_portfolio", _ui_lang())
+                if _rebuild_scope == "portfolio"
+                else (
+                    t("bench.rebuild_btn_help_balanced", _ui_lang())
+                    if _rebuild_scope == "balanced_cases"
+                    else t("bench.rebuild_btn_help_same", _ui_lang())
+                )
+            ),
+        )
+
+    if _avail_n < 1:
+        if _rebuild_scope in {"portfolio", "balanced_cases"}:
+            st.info(t("bench.rebuild_need_portfolio", _ui_lang(), n=_avail_n))
+        else:
+            st.info(
+                f"Need at least **1** saved complete run for Case {_active_slot_idx} "
+                f"(found {_avail_n}). Run Single once, then rebuild the mean."
+            )
+    elif _do_rebuild:
+        # Pass requested per-model cap; rebuild loads all eligible history and trims.
+        _n_use = int(_rebuild_n)
+        if _avail_n < int(_rebuild_n):
+            st.toast(
+                f"Only {_avail_n} eligible runs saved — each model gets ≤{_avail_n} "
+                f"obs (requested ≤{_rebuild_n}/model).",
+                icon="ℹ️",
+            )
+        if _rebuild_scope == "portfolio":
+            _built = rebuild_portfolio_from_history(
+                WORKSPACE_DIR,
+                n=_n_use,
+                scoring_version=SCORING_VERSION,
+                track=str(benchmark_track or "controlled"),
+                model_ids=_portfolio_model_ids,
+                preloaded=_preloaded_artifacts() if _HOSTED_NO_PLAINTEXT else None,
+            )
+        elif _rebuild_scope == "balanced_cases":
+            _built = rebuild_balanced_cases_from_history(
+                WORKSPACE_DIR,
+                n=_n_use,
+                scoring_version=SCORING_VERSION,
+                track=str(benchmark_track or "controlled"),
+                model_ids=_portfolio_model_ids,
+                ordered_stem_keys=_ordered_case_stems,
+                preloaded=_preloaded_artifacts() if _HOSTED_NO_PLAINTEXT else None,
+            )
+        else:
+            # Selected-case only: preload slot-scoped artifacts so other Case stems
+            # cannot enter the mean even when case_id is shared (caseC).
+            _same_preloaded = [a for _, a in _hist_for_case]
+            _built = rebuild_multi_from_history(
+                WORKSPACE_DIR,
+                case_id,
+                n=_n_use,
+                cohort_id=_rebuild_cohort_id,
+                model_ids=_rebuild_model_ids,
+                preloaded=_same_preloaded,
+                scoring_version=SCORING_VERSION,
+            )
+        if not _built.get("ok"):
+            st.warning(_built.get("reason") or "Rebuild failed.")
+        else:
+            _sum_obj = _built["summary"]
+            _built["summary"] = (
+                _sum_obj.model_dump()
+                if hasattr(_sum_obj, "model_dump")
+                else _sum_obj
+            )
+            st.session_state["history_rebuild_result"] = _built
+            from benchmark.schema import MultiRunSummary as _MRS
+
+            _sum_persist = _MRS.model_validate(_built["summary"])
+            st.session_state["last_multi_summary"] = _sum_persist.model_dump()
+            st.session_state["last_multi_paths"] = [
+                pr["path"] for pr in (_built.get("per_run") or []) if pr.get("path")
+            ]
+            st.session_state["last_ranking"] = _mean_rows_to_last_ranking(
+                _sum_persist.ranking_mean
+            )
+            st.session_state["last_multi_n"] = _sum_persist.n
+            st.session_state["show_last_run_costs"] = False  # offline rebuild — no live $
+            _arm_kpi_dialog("rebuild")
+            st.rerun()
+
+    _prev = st.session_state.get("history_rebuild_result") or {}
+    _prev_scope = str(_prev.get("scope") or "same_case")
+    _prev_ok_for_ui = (
+        _prev.get("ok")
+        and isinstance(_prev.get("summary"), dict)
+        and (
+            _prev_scope in {"portfolio", "balanced_cases"}
+            or _prev["summary"].get("case_id") == case_id
+        )
+    )
+    if _prev_ok_for_ui:
+        _prev_n_docs = _prev.get("n_used")
+        if _prev_n_docs is None:
+            _prev_n_docs = (
+                _prev["summary"].get("n")
+                if isinstance(_prev.get("summary"), dict)
+                else getattr(_prev.get("summary"), "n", "?")
+            )
+        if _prev_scope == "portfolio":
+            _reopen_label = t(
+                "bench.rebuild_reopen_portfolio",
+                _ui_lang(),
+                n=_prev_n_docs,
+                cases=_prev.get("n_cases") or "?",
+            )
+        elif _prev_scope == "balanced_cases":
+            _reopen_label = t(
+                "bench.rebuild_reopen_balanced",
+                _ui_lang(),
+                n=_prev_n_docs,
+                cases=_prev.get("n_cases") or "?",
+            )
+        else:
+            _reopen_label = f"Re-open mean popup · N={_prev_n_docs} · $0"
+        if st.button(
+            _reopen_label,
+            use_container_width=False,
+            key="history_rebuild_reopen",
+        ):
+            _arm_kpi_dialog("rebuild")
+            st.rerun()
+    if _rebuild_scope == "portfolio":
+        st.caption(t("bench.rebuild_portfolio_quiet", _ui_lang()))
+    elif _rebuild_scope == "balanced_cases":
+        st.caption(t("bench.rebuild_balanced_quiet", _ui_lang()))
+
 st.markdown('<div class="sec-label">Run history</div>', unsafe_allow_html=True)
 st.caption(
     f"Private to your OpenRouter key ({short_owner_label()}). "

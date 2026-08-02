@@ -1,4 +1,4 @@
-"""Beta comprehension pack + protocol isolation from graded Rebuild."""
+"""Comprehension pack + protocol isolation from graded Rebuild."""
 
 from __future__ import annotations
 
@@ -11,6 +11,10 @@ from benchmark.beta_pack import (
     is_beta_artifact,
     list_beta_slots,
     load_beta_pack,
+    merge_beta_slots,
+    open_new_beta_case_slot,
+    resolve_beta_gold_raw,
+    synthetic_gold_raw_from_prose,
 )
 from benchmark.beta_prompts import (
     beta_candidate_system,
@@ -27,12 +31,17 @@ from lib.charts import fig_judge_mean_accuracy_bars
 def test_beta_pack_stems_and_prose():
     pack = load_beta_pack()
     assert pack.get("protocol_id") == PROTOCOL_ID
+    assert int(pack.get("revision") or 0) >= 3
     slots = list_beta_slots(pack)
-    assert len(slots) >= 7
+    assert len(slots) >= 10
     slot_ids = [int(s["slot"]) for s in slots]
     assert slot_ids[0] == 1
     assert slot_ids == list(range(1, len(slots) + 1))
     assert "AKI" in slots[0]["title"] or "hyperkalemia" in slots[0]["title"].lower()
+    by_slot = {int(s["slot"]): s for s in slots}
+    assert "septic" in by_slot[8]["title"].lower()
+    assert "pe" in by_slot[9]["title"].lower() or "embolism" in by_slot[9]["title"].lower()
+    assert "gi" in by_slot[10]["title"].lower() or "bleed" in by_slot[10]["title"].lower()
     for s in slots:
         assert s["stem"].strip()
         assert s["reference_prose"].strip()
@@ -52,7 +61,7 @@ def test_beta_prompts_are_free_form():
 
 
 def test_beta_scoring_version_differs_from_graded():
-    assert SCORING_VERSION == "beta-comprehension-v1"
+    assert SCORING_VERSION == "comprehension-v1"
     assert SCORING_VERSION != "graded-clinical-v4"
 
 
@@ -139,15 +148,18 @@ def test_comprehension_home_and_structured_page_exist():
     home = (root / "app.py").read_text(encoding="utf-8")
     assert "Comprehension" in home
     assert "structured_graded" in home
+    assert "Beta comprehension" not in home
     assert (root / "pages" / "structured_graded.py").is_file()
-    # Legacy URL kept for in-flight Multi sessions
-    assert (root / "pages" / "beta_comprehension.py").is_file()
+    # Legacy URL = thin redirect (kept for mid-flight Multi sessions).
+    legacy = (root / "pages" / "comprehension_redirect.py").read_text(encoding="utf-8")
+    assert "switch_page" in legacy
+    assert "app.py" in legacy
 
 
 def test_beta_rebuild_mean_wires_ops_reliability_panels():
-    """Beta Rebuild mean must show graded-style zeros/N/A table + chart."""
+    """Comprehension Rebuild mean must show graded-style zeros/N/A table + chart."""
     root = Path(__file__).resolve().parents[1]
-    src = (root / "pages" / "beta_comprehension.py").read_text(encoding="utf-8")
+    src = (root / "app.py").read_text(encoding="utf-8")
     assert "paint_rebuild_ops_reliability_panels" in src
     assert "ops_reliability" in src
     assert "_paint_beta_rebuild_mean_body" in src
@@ -155,30 +167,125 @@ def test_beta_rebuild_mean_wires_ops_reliability_panels():
 
 
 def test_beta_rebuild_mean_uses_shared_reliability_table_html():
-    """Beta mean ranking must reuse graded reliability_table_html (not st.dataframe)."""
+    """Comprehension mean ranking must reuse reliability_table_html (not st.dataframe)."""
     root = Path(__file__).resolve().parents[1]
-    src = (root / "pages" / "beta_comprehension.py").read_text(encoding="utf-8")
+    src = (root / "app.py").read_text(encoding="utf-8")
     assert "reliability_table_html" in src
     assert "successful_only=" in src
-    # Plain Streamlit dataframe was the divergent simpler table
     assert "st.dataframe(" not in src
 
 
 def test_beta_multi_finish_arms_mean_popup_like_graded():
-    """After Multi×all / Multi×N, Beta must auto-rebuild and open mean KPI dialog."""
+    """After Multi×all / Multi×N, Comprehension must auto-rebuild and open mean KPI dialog."""
     root = Path(__file__).resolve().parents[1]
-    src = (root / "pages" / "beta_comprehension.py").read_text(encoding="utf-8")
+    src = (root / "app.py").read_text(encoding="utf-8")
     assert "beta_mean_rebuild_dialog" in src
     assert "_arm_beta_mean_popup" in src
     assert "show_beta_mean_popup" in src
     assert "rebuild_balanced_cases_from_history" in src
     assert "mean KPI popup" in src or "Opening mean KPI popup" in src
+    # Cost OK gate before streams (parity with Structured).
+    assert "beta_pending_run" in src
+    assert "render_spend_confirm_card" in src
+    assert "Yes · start run" in (root / "lib" / "spend_confirm.py").read_text(
+        encoding="utf-8"
+    )
+    assert "open_new_beta_case_slot" in src
+    assert "run_boot_dialogs" in src
+    # Honest Freeze copy + pack revision + balanced default.
+    assert "gold_raw" in src and "narrative twin" in src
+    assert "pack_revision" in src or "pack_rev" in src
+    assert 'beta_rebuild_scope"] = "balanced_cases"' in src or (
+        '["beta_rebuild_scope"] = "balanced_cases"' in src
+    )
+
+
+def test_ux_parity_shared_shell_on_both_tracks():
+    """Boot, spend, tracks sidebar shared; Structured optional; wire ids renamed."""
+    root = Path(__file__).resolve().parents[1]
+    home = (root / "app.py").read_text(encoding="utf-8")
+    structured = (root / "pages" / "structured_graded.py").read_text(encoding="utf-8")
+    assert "from lib.track_sidebar import" in home
+    assert "from lib.track_sidebar import" in structured
+    assert "render_spend_confirm_card" in home
+    assert "render_spend_confirm_card" in structured
+    assert "run_boot_dialogs" in home
+    assert "run_boot_dialogs" in structured
+    assert "optional" in structured.lower() or "secondary" in structured.lower()
+    pack = (root / "benchmark" / "default_cases" / "comprehension.json").read_text(
+        encoding="utf-8"
+    )
+    assert '"title": "Comprehension' in pack
+    assert '"id": "comprehension"' in pack
+    assert '"protocol_id": "comprehension-v1"' in pack
+    assert "beta-comprehension" not in pack.lower()
+    from benchmark.beta_protocol import PROTOCOL_ID, SCORING_VERSION, CASE_ID
+
+    assert PROTOCOL_ID == "comprehension-v1"
+    assert SCORING_VERSION == "comprehension-v1"
+    assert CASE_ID == "comprehension"
+    from benchmark.report import case_ids_equivalent, scoring_versions_equivalent
+
+    assert scoring_versions_equivalent("beta-comprehension-v1", "comprehension-v1")
+    assert case_ids_equivalent("beta_comprehension", "comprehension")
+    assert not scoring_versions_equivalent("comprehension-v1", "graded-clinical-v4")
+
+
+def test_new_beta_case_slot_does_not_mutate_pack():
+    pack_slots = list_beta_slots()
+    n_pack = len(pack_slots)
+    new_idx, drafts = open_new_beta_case_slot(pack_slots, custom_drafts={})
+    assert new_idx == n_pack + 1
+    assert new_idx in drafts
+    merged = merge_beta_slots(pack_slots, drafts)
+    assert len(merged) == n_pack + 1
+    # Pack slots unchanged / not marked custom.
+    for s in merged:
+        if int(s["slot"]) <= n_pack:
+            assert not s.get("custom")
+        else:
+            assert s.get("custom")
+    # Never overwrite pack slot 1.
+    drafts[1] = {
+        "title": "evil",
+        "stem": "x",
+        "reference_prose": "y",
+        "gold_raw": "",
+    }
+    merged2 = merge_beta_slots(pack_slots, drafts)
+    assert merged2[0]["stem"] == pack_slots[0]["stem"]
+    assert not merged2[0].get("custom")
+
+
+def test_synthetic_gold_raw_from_prose_parses():
+    prose = "Severe anaphylaxis with airway compromise; give IM epinephrine first."
+    raw = synthetic_gold_raw_from_prose(prose)
+    assert "Q1 [" in raw and "A5:" in raw
+    resolved = resolve_beta_gold_raw(
+        {"gold_raw": "", "reference_prose": prose, "custom": True}
+    )
+    from benchmark.gold import try_extract_qna_sections
+
+    assert try_extract_qna_sections(resolved) is not None
+    frozen = auto_freeze_beta_slot(
+        {
+            "slot": 99,
+            "title": "Custom",
+            "stem": "Patient: test",
+            "reference_prose": prose,
+            "gold_raw": "",
+            "custom": True,
+        }
+    )
+    assert frozen.get("custom_case") is True
+    assert frozen.get("beta_reference_prose") == prose
 
 
 def test_auto_freeze_all_pack_slots_for_multi_case():
     slots = list_beta_slots()
-    assert len(slots) >= 7
+    assert len(slots) >= 10
     assert int(slots[0]["slot"]) == 1
+    assert {int(s["slot"]) for s in slots} >= {8, 9, 10}
     for s in slots:
         frozen = auto_freeze_beta_slot(s)
         assert frozen.get("auto_confirmed") is True
@@ -291,11 +398,11 @@ def test_cohort_id_differs_for_beta_scoring_version():
     b = cohort_id(
         case_stem="stem",
         gold=gold,
-        prompt_version="beta-comprehension-v1",
+        prompt_version="comprehension-v1",
         model_config=models,
         benchmark_track="controlled",
         scoring_version=SCORING_VERSION,
     )
     assert a != b
-    assert CASE_ID == "beta_comprehension"
+    assert CASE_ID == "comprehension"
     assert PROTOCOL_ID == SCORING_VERSION

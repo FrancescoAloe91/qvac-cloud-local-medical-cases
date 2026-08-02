@@ -39,6 +39,40 @@ CV_MEDIUM_MAX = 15.0
 CV_LOW_MAX = 20.0
 
 
+def scoring_versions_equivalent(stored: str, want: str) -> bool:
+    """Exact match, or both in Comprehension wire aliases (dual-read)."""
+    s = str(stored or "").strip()
+    w = str(want or "").strip()
+    if not w:
+        return True
+    if s == w:
+        return True
+    try:
+        from benchmark.beta_protocol import SCORING_VERSION_ALIASES
+        if s in SCORING_VERSION_ALIASES and w in SCORING_VERSION_ALIASES:
+            return True
+    except Exception:
+        pass
+    return False
+
+
+def case_ids_equivalent(stored: str, want: str) -> bool:
+    """Exact match, or both in Comprehension case_id aliases (dual-read)."""
+    s = str(stored or "").strip()
+    w = str(want or "").strip()
+    if not w:
+        return True
+    if s == w:
+        return True
+    try:
+        from benchmark.beta_protocol import CASE_ID_ALIASES
+        if s in CASE_ID_ALIASES and w in CASE_ID_ALIASES:
+            return True
+    except Exception:
+        pass
+    return False
+
+
 def reliability_from_cv(cv_pct: float) -> str:
     """Map coefficient of variation (%) → super_high / high / medium / low / very_low."""
     if cv_pct <= CV_SUPER_HIGH_MAX:
@@ -960,7 +994,7 @@ def artifacts_for_case(
     if preloaded is not None:
         # Newest-first assumption: caller passes newest-first or we reverse append order
         for art in preloaded:
-            if art.case_id != case_id:
+            if not case_ids_equivalent(art.case_id, case_id):
                 continue
             if not art.judgments and not art.ranking:
                 continue
@@ -973,7 +1007,7 @@ def artifacts_for_case(
             art = load_artifact(p)
         except Exception:
             continue
-        if art.case_id != case_id:
+        if not case_ids_equivalent(art.case_id, case_id):
             continue
         if not art.judgments and not art.ranking:
             continue
@@ -1133,7 +1167,7 @@ def list_portfolio_runs(
     for path, art in source:
         if not is_mean_poolable_run(art):
             continue
-        if str(art.scoring_version or "").strip() != want_sv:
+        if not scoring_versions_equivalent(art.scoring_version, want_sv):
             continue
         if str(art.benchmark_track or "").strip() != want_track:
             continue
@@ -1478,7 +1512,7 @@ def rebuild_multi_from_history(
     ``model_ids`` defaults to the active 9-roster (optional legacy only when
     passed in by the UI).
     When ``scoring_version`` is set, only artifacts with that stamp are pooled
-    (keeps Beta ``beta-comprehension-v1`` out of graded same-case Rebuild).
+    (keeps Comprehension ``comprehension-v1`` / legacy ``beta-*`` out of graded Rebuild).
     """
     n = max(1, min(int(n), 100))
     want_keys = list(model_ids) if model_ids is not None else rebuild_model_ids()
@@ -1490,7 +1524,7 @@ def rebuild_multi_from_history(
         all_pairs = [
             pair
             for pair in all_pairs
-            if str(pair[1].scoring_version or "").strip() == want_sv
+            if scoring_versions_equivalent(pair[1].scoring_version, want_sv)
         ]
     if not all_pairs:
         return {
@@ -1531,7 +1565,7 @@ def rebuild_multi_from_history(
         and is_mean_poolable_run(pair[1])
         and (
             want_sv is None
-            or str(pair[1].scoring_version or "").strip() == want_sv
+            or scoring_versions_equivalent(pair[1].scoring_version, want_sv)
         )
     ]
     if len(pairs) < 1:

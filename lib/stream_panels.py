@@ -65,13 +65,11 @@ def stream_body_html(
     *,
     panel_id: str = "ans",
 ) -> str:
-    caret = '<span class="caret">▍</span>' if live else ""
+    """Fixed-height answer box — relies on dashboard.css ``.stream-out`` (no inline fight)."""
+    caret = '<span class="caret"></span>' if live else ""
     body = html.escape(text or "")
     uid = stream_uid(panel_id)
     return (
-        f'<div class="stream-out" data-panel="{uid}" id="sout_{uid}" '
-        f'style="min-height:140px;max-height:280px;overflow:auto;white-space:pre-wrap;'
-        f'background:#0f172a;border:1px solid #334155;border-radius:10px;'
-        f'padding:0.65rem 0.75rem;font-size:0.85rem;color:#e2e8f0">'
+        f'<div class="stream-out" data-panel="{uid}" id="sout_{uid}">'
         f"{body}{caret}</div>"
     )

@@ -2,6 +2,9 @@
 
 API key: every fresh Streamlit session re-prompts (BYOK).
 QVAC SDK ack: remembered in ``.ui_prefs.json`` (never store API keys there).
+
+Structured may set ``st.session_state["boot_show_account"] = True`` before calling
+``run_boot_dialogs`` to show optional Supabase account UI in the key dialog.
 """
 
 from __future__ import annotations
@@ -28,6 +31,11 @@ def init_boot_state() -> None:
         st.session_state.boot_welcome_done = False
     if "boot_step" not in st.session_state:
         st.session_state.boot_step = "api"
+    # Legacy flags kept in sync for older Structured checks.
+    if "qvac_dialog_shown" not in st.session_state:
+        st.session_state.qvac_dialog_shown = False
+    if "key_dialog_shown" not in st.session_state:
+        st.session_state.key_dialog_shown = False
 
 
 def _mask_api_key(key: str) -> str:
@@ -43,6 +51,8 @@ def _advance_boot(to: str) -> None:
     st.session_state.boot_step = to
     if to == "done":
         st.session_state.boot_welcome_done = True
+        st.session_state.key_dialog_shown = True
+        st.session_state.qvac_dialog_shown = True
     st.rerun()
 
 
@@ -51,19 +61,85 @@ def _remember_openrouter_key(key: str) -> None:
     if not is_usable_openrouter_key(key):
         return
     st.session_state["or_key_session"] = key
+    # Optional Structured account vault (no-op if store not configured).
+    try:
+        from lib.deployment import is_streamlit_cloud
+        from lib.secure_account_store import AccountSession
+        from lib.secure_account_store import configured as account_store_configured
+        from lib.secure_account_store import save_openrouter_key as account_save_key
+
+        account = st.session_state.get("account_session")
+        if account_store_configured() and isinstance(account, AccountSession):
+            account_save_key(account, key)
+            st.session_state["_account_key_remembered"] = True
+        else:
+            st.session_state["_account_key_remembered"] = False
+        _ = is_streamlit_cloud  # silence unused when account path unused
+    except Exception:
+        st.session_state["_account_key_remembered"] = False
 
 
 def _advance_boot_after_key() -> None:
-    if st.session_state.get("qvac_sdk_ack"):
-        _advance_boot("done")
-    else:
-        _advance_boot("qvac")
+    """Always show QVAC SDK status after the API-key step (every fresh session)."""
+    _advance_boot("qvac")
 
 
 def _acknowledge_qvac_boot() -> None:
     st.session_state.qvac_sdk_ack = True
     save_qvac_sdk_ack(True)
     _advance_boot("done")
+
+
+def _render_account_block() -> None:
+    """Optional Supabase account UI (Structured). Fail soft if store unavailable."""
+    try:
+        from lib.deployment import is_streamlit_cloud
+        from lib.secure_account_store import AccountSession
+        from lib.secure_account_store import configured as account_store_configured
+        from lib.secure_account_store import sign_in as account_sign_in
+        from lib.secure_account_store import sign_up as account_sign_up
+    except Exception:
+        return
+
+    account = st.session_state.get("account_session")
+    if account_store_configured() and not isinstance(account, AccountSession):
+        st.markdown("**Private account storage**")
+        email = st.text_input("Email", key="account_email")
+        password = st.text_input("Password", type="password", key="account_password")
+        auth_in, auth_up = st.columns(2)
+        with auth_in:
+            if st.button("Sign in", use_container_width=True, key="account_sign_in"):
+                try:
+                    account = account_sign_in(email, password)
+                    st.session_state["account_session"] = account
+                    st.session_state.pop("_account_key_loaded", None)
+                    st.session_state.pop("_account_artifacts_synced", None)
+                    st.rerun()
+                except Exception as exc:
+                    st.error(f"Sign-in failed: {exc}")
+        with auth_up:
+            if st.button("Create account", use_container_width=True, key="account_sign_up"):
+                try:
+                    account = account_sign_up(email, password)
+                    if account is None:
+                        st.success("Check your email, confirm the account, then sign in.")
+                    else:
+                        st.session_state["account_session"] = account
+                        st.session_state.pop("_account_key_loaded", None)
+                        st.session_state.pop("_account_artifacts_synced", None)
+                        st.rerun()
+                except Exception as exc:
+                    st.error(f"Account creation failed: {exc}")
+        st.caption(
+            "API key and benchmark artifacts are encrypted before storage; "
+            "Supabase RLS restricts every row to the authenticated user."
+        )
+    elif isinstance(account, AccountSession):
+        st.success(f"Signed in · {account.email}")
+    elif is_streamlit_cloud():
+        st.caption(
+            "Hosted without Supabase · key and history stay session-only (not durable)."
+        )
 
 
 @st.dialog("OpenRouter API key", width="small")
@@ -78,6 +154,8 @@ def key_welcome_dialog() -> None:
         "Or continue without a key to rehearse **QVAC-only** collect (no paid ranking)."
     )
     st.caption("Keys stay in this Streamlit session only · never written to `.ui_prefs.json`.")
+    if st.session_state.get("boot_show_account"):
+        _render_account_block()
     if existing:
         st.info(f"Key available for this session (hidden): `{_mask_api_key(existing)}`")
     if "dialog_or_key" not in st.session_state:
@@ -149,10 +227,18 @@ def run_boot_dialogs(
     qvac_loaded: bool,
     pending_spend: bool = False,
     running: bool = False,
+    other_dialog_open: bool = False,
+    show_account: bool = False,
 ) -> None:
-    """Show API key → QVAC dialogs when idle. No-op mid-run / mid-spend confirm."""
+    """Show API key → QVAC dialogs when idle. No-op mid-run / mid-spend confirm.
+
+    Call once per script run from the active page (Comprehension home or Structured).
+    Fresh Streamlit sessions always re-ask for the API key; QVAC SDK ack is local.
+    """
     init_boot_state()
-    if pending_spend or running:
+    if show_account:
+        st.session_state["boot_show_account"] = True
+    if pending_spend or running or other_dialog_open:
         return
     if st.session_state.get("boot_welcome_done"):
         return
@@ -161,3 +247,7 @@ def run_boot_dialogs(
         key_welcome_dialog()
     elif step == "qvac":
         qvac_status_dialog(online=qvac_online, loaded=qvac_loaded)
+    elif step != "done":
+        # Recover unknown step (e.g. partial migration) → re-ask key.
+        st.session_state.boot_step = "api"
+        key_welcome_dialog()

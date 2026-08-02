@@ -1,8 +1,8 @@
 """Comprehension (discursive) — **main** Streamlit entry (home).
 
 Free-form clinical collect with isolated History / Rebuild.
-Internal protocol ids stay ``beta_comprehension`` / ``beta-comprehension-v1``
-so existing History / Multi artifacts keep pooling.
+Wire protocol ``comprehension-v1`` / ``case_id=comprehension`` (legacy
+``beta-*`` stamps still pool via dual-read aliases).
 
 Rigid A1–A5 live collect lives on ``pages/structured_graded.py``
 (**Structured · A1–A5**) — KPIs never pool across tracks.
@@ -10,6 +10,7 @@ Rigid A1–A5 live collect lives on ``pages/structured_graded.py``
 
 from __future__ import annotations
 
+import hashlib
 import time
 import uuid
 from pathlib import Path
@@ -19,10 +20,15 @@ import streamlit as st
 import streamlit.components.v1 as components
 
 from benchmark.beta_pack import (
+    SOFT_MAX_BETA_SLOTS,
     auto_freeze_beta_slot,
     count_beta_runs_by_slot,
+    is_beta_artifact,
     list_beta_slots,
     load_beta_pack,
+    merge_beta_slots,
+    open_new_beta_case_slot,
+    resolve_beta_gold_raw,
 )
 from benchmark.beta_prompts import (
     beta_candidate_messages,
@@ -52,7 +58,12 @@ from benchmark.report import (
     rebuild_multi_from_history,
     rebuild_portfolio_from_history,
 )
-from benchmark.runner import build_run_artifact, iter_collect_live, prepare_run
+from benchmark.runner import (
+    build_run_artifact,
+    estimate_cost_breakdown,
+    iter_collect_live,
+    prepare_run,
+)
 from benchmark.schema import ConfirmedGold, utc_now_iso
 from benchmark.workspace import scoped_artifacts_dir
 from benchmark.config import is_usable_openrouter_key
@@ -70,6 +81,8 @@ from lib.benchmark_multi_ui import (
 from lib.boot_welcome import run_boot_dialogs
 from lib.charts import fig_judge_accuracy_bars, fig_judge_mean_accuracy_bars
 from lib.disclosure import honesty_block_html, screenshot_footer_html
+from lib.guide_overlays import guides_always_available_html
+from lib.track_sidebar import render_guides_and_protocol, render_tracks_block
 from lib.run_store import LocalRunStore
 from lib.run_timer import (
     _flash_collect_done,
@@ -77,6 +90,11 @@ from lib.run_timer import (
     _run_timer_idle,
     _run_timer_live,
     _run_timer_stop,
+)
+from lib.spend_confirm import (
+    fmt_cost_multi,
+    fmt_cost_single,
+    render_spend_confirm_card,
 )
 from lib.stream_panels import (
     kpi_line,
@@ -133,19 +151,27 @@ font-size:0.75rem;font-weight:600}
 .status-pill.run{background:#1e3a5f;color:#93c5fd}
 .status-pill.done{background:#14532d;color:#86efac}
 .status-pill.err{background:#450a0a;color:#fca5a5}
+.status-pill.ready{background:#1e293b;color:#cbd5e1}
+.status-pill.skip{background:#334155;color:#94a3b8}
 .kpi-row{color:#94a3b8;font-size:0.78rem;margin:0.2rem 0 0.35rem}
 .phase-banner{padding:0.45rem 0.7rem;border-radius:8px;background:#1e293b;
 color:#e2e8f0;font-size:0.85rem;margin:0.4rem 0}
 /* Comprehension case pickers — button row (not toggles); selected = amber */
 div[class*="st-key-beta_case_btn_"] button[kind="primary"],
-div[class*="st-key-beta_case_btn_"] button[data-testid="baseButton-primary"] {
+div[class*="st-key-beta_case_btn_"] button[data-testid="baseButton-primary"],
+div[class*="st-key-beta_case_new_btn"] button[kind="primary"],
+div[class*="st-key-beta_case_new_btn"] button[data-testid="baseButton-primary"] {
   background:#fbbf24 !important;background-color:#fbbf24 !important;
   border:2px solid #d97706 !important;color:#78350f !important;font-weight:750 !important;
 }
 div[class*="st-key-beta_case_btn_"] button[kind="primary"] p,
 div[class*="st-key-beta_case_btn_"] button[kind="primary"] span,
 div[class*="st-key-beta_case_btn_"] button[data-testid="baseButton-primary"] p,
-div[class*="st-key-beta_case_btn_"] button[data-testid="baseButton-primary"] span {
+div[class*="st-key-beta_case_btn_"] button[data-testid="baseButton-primary"] span,
+div[class*="st-key-beta_case_new_btn"] button[kind="primary"] p,
+div[class*="st-key-beta_case_new_btn"] button[kind="primary"] span,
+div[class*="st-key-beta_case_new_btn"] button[data-testid="baseButton-primary"] p,
+div[class*="st-key-beta_case_new_btn"] button[data-testid="baseButton-primary"] span {
   color:#78350f !important;white-space:pre-line;line-height:1.25;font-size:0.82rem;
 }
 div[class*="st-key-beta_case_btn_"] button[kind="secondary"],
@@ -175,10 +201,10 @@ if _ASSETS.is_file():
           var doc;
           try {{ doc = window.parent && window.parent.document ? window.parent.document : document; }}
           catch (e) {{ doc = document; }}
-          var s = doc.getElementById('qvac-beta-dashboard-css');
+          var s = doc.getElementById('qvac-comprehension-dashboard-css');
           if (!s) {{
             s = doc.createElement('style');
-            s.id = 'qvac-beta-dashboard-css';
+            s.id = 'qvac-comprehension-dashboard-css';
             doc.head.appendChild(s);
           }}
           s.textContent = `{_css_js}`;
@@ -197,13 +223,22 @@ has_key = is_usable_openrouter_key(_session_key)
 WORKSPACE_DIR = scoped_artifacts_dir(_session_key)
 RUN_STORE = LocalRunStore(WORKSPACE_DIR)
 
-# Boot: API key every session · QVAC SDK OK remembered locally (not mid-run).
+# Boot: API key every session · QVAC SDK OK remembered locally (not mid-run / spend).
 _qvac_online = bool(qvac_bridge and qvac_bridge.reachable())
 _qvac_loaded = bool(qvac_bridge and qvac_bridge.available())
+_beta_busy = bool(
+    st.session_state.get("beta_running") or st.session_state.get("beta_confirmed_run")
+)
+_beta_pending_spend = bool(
+    st.session_state.get("beta_pending_run")
+    and not st.session_state.get("beta_confirmed_run")
+)
 run_boot_dialogs(
     qvac_online=_qvac_online,
     qvac_loaded=_qvac_loaded,
-    running=bool(st.session_state.get("beta_running")),
+    running=_beta_busy,
+    pending_spend=_beta_pending_spend,
+    other_dialog_open=bool(st.session_state.get("show_beta_mean_popup")),
 )
 
 
@@ -254,41 +289,6 @@ def _arm_beta_mean_popup(built: Dict[str, Any]) -> None:
             st.session_state["beta_last_multi_summary"] = summary
         except Exception:
             pass
-    # #region agent log
-    try:
-        import json as _json_arm
-        import time as _time_arm
-
-        with open(
-            "/Users/m1/QVAC vs Cloud LLMs - Health Test/.cursor/debug-a76cc5.log",
-            "a",
-            encoding="utf-8",
-        ) as _df_arm:
-            _df_arm.write(
-                _json_arm.dumps(
-                    {
-                        "sessionId": "a76cc5",
-                        "hypothesisId": "H6",
-                        "location": "pages/beta_comprehension.py:_arm_beta_mean_popup",
-                        "message": "armed Beta mean popup",
-                        "data": {
-                            "ok": bool(built.get("ok")),
-                            "scope": str(built.get("scope") or ""),
-                            "show_popup": bool(
-                                st.session_state.get("show_beta_mean_popup")
-                            ),
-                            "has_ops": bool(built.get("ops_reliability")),
-                            "n_cap": built.get("n_per_model_cap"),
-                        },
-                        "timestamp": int(_time_arm.time() * 1000),
-                    },
-                    ensure_ascii=True,
-                )
-                + "\n"
-            )
-    except Exception:
-        pass
-    # #endregion
 
 
 def _beta_rebuild_summary(payload: Dict[str, Any]):
@@ -357,48 +357,6 @@ def _paint_beta_rebuild_mean_body(
             successful_only=rb_clean,
             rank_by=rank_by,
         )
-        # #region agent log
-        try:
-            import json as _json_dbg
-            import time as _time_dbg
-
-            with open(
-                "/Users/m1/QVAC vs Cloud LLMs - Health Test/.cursor/debug-a76cc5.log",
-                "a",
-                encoding="utf-8",
-            ) as _df:
-                _df.write(
-                    _json_dbg.dumps(
-                        {
-                            "sessionId": "a76cc5",
-                            "hypothesisId": "H1",
-                            "location": "pages/beta_comprehension.py:_paint_beta_rebuild_mean_body",
-                            "message": "Beta Rebuild mean ranking paint",
-                            "data": {
-                                "path": key_prefix,
-                                "n_mean_rows": len(mean_rows),
-                                "successful_only": bool(rb_clean),
-                                "rank_by": str(rank_by),
-                                "render": "st.html" if hasattr(st, "html") else "st.markdown",
-                                "html_len": len(rb_html),
-                                "has_linear_gradient": "linear-gradient" in rb_html,
-                                "gradient_count": rb_html.count("linear-gradient"),
-                                "has_cv_band_bg": (
-                                    "background:#064e3b" in rb_html
-                                    or "background:#14532d" in rb_html
-                                    or "background:#713f12" in rb_html
-                                ),
-                                "keys": [str(r.get("key")) for r in mean_rows[:6]],
-                            },
-                            "timestamp": int(_time_dbg.time() * 1000),
-                        },
-                        ensure_ascii=True,
-                    )
-                    + "\n"
-                )
-        except Exception:
-            pass
-        # #endregion
         # st.html preserves nested bar/badge styles better than markdown on some pages.
         if hasattr(st, "html"):
             st.html(rb_html)
@@ -409,10 +367,19 @@ def _paint_beta_rebuild_mean_body(
                 scope=rb_scope,
                 cohort_id=rb_cohort,
                 n_label=rb_n_label,
+                protocol_id=PROTOCOL_ID,
+                pack_revision=int(
+                    (st.session_state.get("beta_confirmed_gold") or {}).get(
+                        "pack_revision"
+                    )
+                    or 0
+                )
+                or None,
                 extra=(
-                    "scored-only · exact Clinical Composite == 0 treated like N/A"
+                    "Comprehension · scored-only · exact Clinical Composite == 0 "
+                    "treated like N/A"
                     if rb_clean
-                    else "mean ranking"
+                    else "Comprehension · mean ranking"
                 ),
             ),
             unsafe_allow_html=True,
@@ -426,13 +393,15 @@ def _paint_beta_rebuild_mean_body(
             scope=rb_scope,
             cohort_id=rb_cohort,
             n_label=rb_n_label,
-            extra="failures/N/A % · scan window · not clinical mean",
+            protocol_id=PROTOCOL_ID,
+            extra="Comprehension · failures/N/A % · not clinical mean",
         ),
         chart_footer_html=screenshot_footer_html(
             scope=rb_scope,
             cohort_id=rb_cohort,
             n_label=rb_n_label,
-            extra="ops reliability · zeros+N/A · not clinical mean",
+            protocol_id=PROTOCOL_ID,
+            extra="Comprehension · ops reliability · zeros+N/A · not clinical mean",
         ),
     )
     st.caption(
@@ -495,7 +464,7 @@ st.markdown(
 <div class="demo-hero" style="margin:0 0 0.35rem 0">QVAC vs Cloud · Comprehension</div>
 <div style="display:flex;align-items:center;gap:0.75rem;flex-wrap:wrap;margin-bottom:0.5rem">
   <span style="font-size:0.7rem;font-weight:800;letter-spacing:0.08em;padding:0.25rem 0.55rem;
-  border-radius:999px;background:#fbbf24;color:#78350f;border:1px solid #f59e0b">COMPREHENSION</span>
+  border-radius:999px;background:#fbbf24;color:#78350f;border:1px solid #f59e0b">COMPREHENSION · DEFAULT</span>
   <span style="color:#94a3b8;font-size:0.95rem">Discursive free-form · main track · isolated KPIs</span>
 </div>
 <p class="demo-sub" style="margin:0 0 0.75rem 0">
@@ -510,40 +479,66 @@ st.markdown(
     unsafe_allow_html=True,
 )
 st.caption(
-    f"Protocol `{PROTOCOL_ID}` · case_id `{CASE_ID}` · "
-    "**never pooled** with Structured A1–A5 History / Rebuild. "
+    f"UI = **Comprehension** · wire protocol `{PROTOCOL_ID}` · case_id `{CASE_ID}` · "
+    "**never pooled** with optional Structured A1–A5 History / Rebuild. "
     "Same five Clinical Composite dimensions (C/Q/D → section → weighted mean)."
 )
+_qvac_guide_status = (
+    "ready — MedPsy will be included"
+    if _qvac_loaded
+    else (
+        "sidecar online · MedPsy not loaded"
+        if _qvac_online
+        else "sidecar offline — start it to include on-device"
+    )
+)
+if hasattr(st, "html"):
+    st.html(guides_always_available_html(qvac_status_line=_qvac_guide_status))
+else:
+    st.markdown(
+        guides_always_available_html(qvac_status_line=_qvac_guide_status),
+        unsafe_allow_html=True,
+    )
 
 with st.sidebar:
-    st.markdown("**Tracks**")
-    st.page_link("app.py", label="Comprehension · home", icon="🏠")
-    st.page_link(
-        "pages/structured_graded.py",
-        label="Structured · A1–A5",
-        icon="📋",
-        help="Rigid slot Q&A · separate History / Rebuild · never pool with Comprehension",
-    )
-    if Path("pages/beta_comprehension.py").is_file():
-        st.caption("Legacy URL `Beta` page kept for in-flight Multi — prefer Home.")
+    render_tracks_block(active="comprehension")
     st.markdown("**OpenRouter**")
     if has_key:
         st.success("Key OK · session")
         st.caption("Reload clears the key (BYOK).")
     else:
         st.warning("No key · use boot dialog or paste below")
-        key_in = st.text_input("OPENROUTER_API_KEY", type="password", key="beta_or_key")
-        if key_in and is_usable_openrouter_key(key_in):
-            st.session_state["or_key_session"] = key_in.strip()
-            st.rerun()
-    sidecar_up = bool(qvac_bridge and (qvac_bridge.reachable() or qvac_bridge.available()))
-    st.caption("QVAC sidecar · " + ("up" if sidecar_up else "offline"))
-    st.code(PROTOCOL_ID, language=None)
-    st.caption(
-        "MedPsy 4B often sits longer on judge **corrective retry** "
-        "(DeepSeek re-check, not QVAC hung)."
+    key_in = st.text_input(
+        "OPENROUTER_API_KEY",
+        type="password",
+        key="beta_or_key",
+        placeholder="sk-or-v1-…",
+        label_visibility="collapsed",
+        help="Full sk-or-v1-… from openrouter.ai/keys — session only",
     )
-    # LAST widget in left column = Run clock (same dock as graded home)
+    if key_in and is_usable_openrouter_key(key_in):
+        st.session_state["or_key_session"] = key_in.strip()
+        st.rerun()
+    elif key_in:
+        st.error("Key truncated / too short")
+    st.markdown("**QVAC · MedPsy**")
+    sidecar_up = bool(qvac_bridge and (qvac_bridge.reachable() or qvac_bridge.available()))
+    if _qvac_loaded:
+        st.success("Ready · on-device")
+    elif _qvac_online:
+        st.warning("Sidecar up · MedPsy not loaded")
+    else:
+        st.error("Offline")
+    st.caption("QVAC sidecar · " + ("up" if sidecar_up else "offline"))
+    render_guides_and_protocol(
+        protocol_id=PROTOCOL_ID,
+        extra_caption=(
+            "Rebuild below = Comprehension History for this track. "
+            "MedPsy 4B often sits longer on judge **corrective retry** "
+            "(DeepSeek re-check, not QVAC hung)."
+        ),
+    )
+    # LAST widget in left column = Run clock (same dock as Structured)
     st.markdown('<div class="sidebar-timer-spacer"></div>', unsafe_allow_html=True)
     timer_slot = st.empty()
     _beta_pending = st.session_state.get("beta_confirmed_run") or {}
@@ -577,16 +572,33 @@ with st.sidebar:
 
 try:
     pack = load_beta_pack()
-    slots = list_beta_slots(pack)
+    pack_slots = list_beta_slots(pack)
 except Exception as exc:
     st.error(f"Could not load Comprehension pack: {exc}")
     st.stop()
 
-if not slots:
+if not pack_slots:
     st.warning("Comprehension pack has no usable cases.")
     st.stop()
 
-# --- case pickers (buttons + run counts; NOT toggles — Single/Multi on selected) ---
+_pack_revision = int(pack.get("revision") or 0)
+_pack_title = str(pack.get("title") or "Comprehension pack")
+st.caption(
+    f"**{_pack_title}** · revision **{_pack_revision}** · "
+    f"{len(pack_slots)} curated cases · acute ED-biased suite · "
+    f"wire `{PROTOCOL_ID}` (UI name = Comprehension)."
+)
+
+# Session custom cases (NEW CASE) — never mutate pack JSON (cases 1–K curated).
+if "beta_custom_drafts" not in st.session_state:
+    st.session_state["beta_custom_drafts"] = {}
+slots = merge_beta_slots(pack_slots, st.session_state.get("beta_custom_drafts") or {})
+_pack_slot_ids = {int(s["slot"]) for s in pack_slots}
+_slots_locked = bool(
+    st.session_state.get("beta_running") or st.session_state.get("beta_confirmed_run")
+)
+
+# --- case pickers (NEW CASE + buttons + run counts; NOT toggles) ---
 _beta_arts = [a for _, a in RUN_STORE.list_artifacts()]
 _beta_run_counts = count_beta_runs_by_slot(_beta_arts)
 if "beta_active_case_slot" not in st.session_state:
@@ -601,9 +613,57 @@ st.markdown(
     "(Multi×all still runs every pack case)</div>",
     unsafe_allow_html=True,
 )
-_chunk = 4
-for _off in range(0, len(slots), _chunk):
-    _row = slots[_off : _off + _chunk]
+
+# NEW CASE (yellow) first, then Case 1…N in rows of 4.
+_base_row = [s for s in slots if int(s["slot"]) <= 4]
+_rest_slots = [s for s in slots if int(s["slot"]) > 4]
+_row1_cols = st.columns([1.25] + [1] * max(1, len(_base_row)), gap="small")
+with _row1_cols[0]:
+    if st.button(
+        "New case",
+        key="beta_case_new_btn",
+        use_container_width=True,
+        disabled=_slots_locked,
+        help=(
+            "Open an empty custom Comprehension case after the pack. "
+            "Paste stem + reference prose, then Freeze. Does not edit pack JSON."
+        ),
+        type="primary",
+    ):
+        if not _slots_locked:
+            try:
+                _new_idx, _new_drafts = open_new_beta_case_slot(
+                    slots,
+                    custom_drafts=st.session_state.get("beta_custom_drafts") or {},
+                )
+            except ValueError:
+                st.session_state["_beta_case_flash"] = "full"
+            else:
+                st.session_state["beta_custom_drafts"] = _new_drafts
+                st.session_state["beta_active_case_slot"] = int(_new_idx)
+                st.session_state["_beta_case_flash"] = "empty"
+            st.rerun()
+for _ci, _slot_entry in enumerate(_base_row):
+    _sid = int(_slot_entry["slot"])
+    _n_runs = int(_beta_run_counts.get(_sid, 0))
+    _title = str(_slot_entry.get("title") or f"Case {_sid}")
+    _short = _title if len(_title) <= 28 else (_title[:26].rstrip() + "…")
+    _runs_label = f"{_n_runs} run" if _n_runs == 1 else f"{_n_runs} runs"
+    _btn_label = f"Case {_sid} · {_short}\n({_runs_label})"
+    with _row1_cols[_ci + 1]:
+        if st.button(
+            _btn_label,
+            key=f"beta_case_btn_{_sid}",
+            use_container_width=True,
+            type="primary" if _sid == _active_slot else "secondary",
+            disabled=_slots_locked,
+            help=f"{_title} · {_runs_label} saved",
+        ):
+            if not _slots_locked:
+                st.session_state["beta_active_case_slot"] = _sid
+                st.rerun()
+for _off in range(0, len(_rest_slots), 4):
+    _row = _rest_slots[_off : _off + 4]
     _cols = st.columns(len(_row), gap="small")
     for _ci, _slot_entry in enumerate(_row):
         _sid = int(_slot_entry["slot"])
@@ -611,26 +671,37 @@ for _off in range(0, len(slots), _chunk):
         _title = str(_slot_entry.get("title") or f"Case {_sid}")
         _short = _title if len(_title) <= 36 else (_title[:34].rstrip() + "…")
         _runs_label = f"{_n_runs} run" if _n_runs == 1 else f"{_n_runs} runs"
-        _btn_label = f"Case {_sid} · {_short}\n({_runs_label})"
-        _is_sel = _sid == _active_slot
+        _custom_tag = " · custom" if _slot_entry.get("custom") else ""
+        _btn_label = f"Case {_sid} · {_short}\n({_runs_label}{_custom_tag})"
         with _cols[_ci]:
             if st.button(
                 _btn_label,
                 key=f"beta_case_btn_{_sid}",
                 use_container_width=True,
-                type="primary" if _is_sel else "secondary",
+                type="primary" if _sid == _active_slot else "secondary",
+                disabled=_slots_locked,
                 help=(
-                    f"{_title} · {_runs_label} saved "
-                    "(includes Multi×all rounds that hit this case)"
+                    f"{_title} · {_runs_label} saved"
+                    + (" · session custom (not pack)" if _slot_entry.get("custom") else "")
                 ),
             ):
-                st.session_state["beta_active_case_slot"] = _sid
-                st.rerun()
+                if not _slots_locked:
+                    st.session_state["beta_active_case_slot"] = _sid
+                    st.rerun()
+
+_flash = st.session_state.pop("_beta_case_flash", None)
+if _flash == "full":
+    st.warning(f"Reached soft limit of {SOFT_MAX_BETA_SLOTS} Comprehension cases.")
+elif _flash == "empty":
+    st.info(
+        f"**Case {_active_slot}** is empty — paste stem + reference prose, then Freeze."
+    )
 
 case_row = next(
     (s for s in slots if int(s["slot"]) == _active_slot),
     slots[0],
 )
+_is_custom_case = bool(case_row.get("custom"))
 
 c1, c2 = st.columns(2)
 with c1:
@@ -641,6 +712,7 @@ with c1:
         height=260,
         key=f"beta_stem_{case_row['slot']}",
         label_visibility="collapsed",
+        disabled=_slots_locked,
     )
 with c2:
     st.markdown("**Box 2 · Reference prose (confirm)**")
@@ -650,36 +722,91 @@ with c2:
         height=260,
         key=f"beta_prose_{case_row['slot']}",
         label_visibility="collapsed",
+        disabled=_slots_locked,
+    )
+
+# Persist custom draft edits in session (pack slots stay read-source of truth).
+if _is_custom_case and not _slots_locked:
+    _drafts = dict(st.session_state.get("beta_custom_drafts") or {})
+    _drafts[int(case_row["slot"])] = {
+        "title": str(case_row.get("title") or f"Custom case {case_row['slot']}"),
+        "stem": stem or "",
+        "reference_prose": prose or "",
+        "gold_raw": str(case_row.get("gold_raw") or ""),
+    }
+    st.session_state["beta_custom_drafts"] = _drafts
+    case_row = {**case_row, "stem": stem or "", "reference_prose": prose or ""}
+
+if _is_custom_case:
+    st.caption(
+        "Custom case · Freeze synthesizes a weak Q1–A5 scaffold from your reference "
+        "prose (exploratory · near-duplicate claims). Pack cases 1–K keep curated "
+        "`gold_raw`. Multi×all never includes custom slots."
+    )
+else:
+    st.caption(
+        "Scoring contract = curated **`gold_raw` Q1–A5** for this pack case. "
+        "Reference prose is the narrative twin shown above — not the claim list "
+        "the judge scores against."
     )
 
 confirm = st.checkbox(
-    "I confirm this undivided prose is the Comprehension scoring reference for this case.",
+    "I confirm stem + curated Q1–A5 gold_raw as the Comprehension scoring contract "
+    "(reference prose is the narrative twin, not the scored claims).",
     key=f"beta_confirm_box_{case_row['slot']}",
+    disabled=_slots_locked,
 )
-if st.button("Freeze Comprehension reference", type="primary", disabled=not confirm):
-    gold_raw = (case_row.get("gold_raw") or "").strip()
+if st.button(
+    "Freeze Comprehension reference",
+    type="primary",
+    disabled=not confirm or _slots_locked,
+):
+    try:
+        gold_raw = resolve_beta_gold_raw(
+            {**case_row, "stem": stem or "", "reference_prose": prose or ""}
+        )
+    except ValueError as exc:
+        st.error(str(exc))
+        gold_raw = ""
     sections = try_extract_qna_sections(gold_raw) if gold_raw else None
     if sections is None:
-        st.error("Pack gold_raw scaffold missing for this slot.")
+        st.error("Could not build gold QnA scaffold for this slot.")
     else:
         gold = confirmed_gold(
             raw_text=gold_raw,
             sections=sections,
-            extraction_model="beta-pack-local-qna-scaffold",
+            extraction_model=(
+                "comprehension-custom-prose-scaffold"
+                if _is_custom_case
+                else "comprehension-pack-local-qna-scaffold"
+            ),
         )
+        n_claims = sum(len(s.claims) for s in sections.values())
+        _fp = hashlib.sha256(
+            f"{stem.strip()}\n{gold_raw}\n{PROTOCOL_ID}".encode("utf-8")
+        ).hexdigest()[:12]
         payload = gold.model_dump()
         payload.update(
             {
+                "reference_prose": prose.strip(),
                 "beta_reference_prose": prose.strip(),
+                "stem": stem.strip(),
                 "beta_stem": stem.strip(),
                 "protocol_id": PROTOCOL_ID,
                 "scoring_version": BETA_SV,
                 "case_slot": case_row["slot"],
                 "case_title": case_row["title"],
+                "custom_case": _is_custom_case,
+                "pack_revision": _pack_revision,
+                "gold_claim_count": n_claims,
+                "gold_fingerprint": _fp,
             }
         )
         st.session_state["beta_confirmed_gold"] = payload
-        st.success(f"Frozen · Case {case_row['slot']} · `{PROTOCOL_ID}`")
+        st.success(
+            f"Frozen · Case {case_row['slot']} · `{PROTOCOL_ID}` · "
+            f"{n_claims} claims · fp `{payload['gold_fingerprint']}`"
+        )
 
 frozen = st.session_state.get("beta_confirmed_gold")
 frozen_ok = (
@@ -690,7 +817,10 @@ frozen_ok = (
 if frozen_ok:
     st.success(
         f"Active Comprehension contract · Case {case_row['slot']} · "
-        f"`{frozen.get('scoring_version')}`"
+        f"`{frozen.get('scoring_version')}` · "
+        f"{int(frozen.get('gold_claim_count') or 0)} claims · "
+        f"fp `{frozen.get('gold_fingerprint') or '—'}` · "
+        f"pack_rev={frozen.get('pack_revision') or _pack_revision}"
     )
 else:
     st.info("Freeze a Comprehension reference before Single / Multi.")
@@ -744,73 +874,168 @@ with st.expander("Candidate prompt (free-form)", expanded=False):
 _can_launch = bool(
     roster and (has_key or _eff_medpsy or _eff_generic or _eff_medical)
 )
-_n_pack_cases = len(slots)
+_n_pack_cases = len(pack_slots)
+# Credible OpenRouter forecast (same helpers as Structured) — gold already frozen.
+_live_case = load_case("caseC").model_copy(
+    update={"id": CASE_ID, "stem": (stem or "").strip(), "title": str(case_row.get("title") or CASE_ID)}
+)
+_gold_for_est = ""
+if frozen_ok and isinstance(frozen, dict):
+    try:
+        _gold_for_est = _frozen_to_gold(frozen).model_dump_json()
+    except Exception:
+        _gold_for_est = str(frozen.get("raw_text") or "")
+_hist_for_cost = [a for a in _beta_arts if is_beta_artifact(a)]
+_cost_kwargs = dict(
+    include_qvac=_eff_medpsy,
+    gold_reference=_gold_for_est,
+    triple_qvac=_eff_medpsy,
+    include_local_peers=_eff_generic,
+    include_medical_peers=_eff_medical,
+    include_extractor=False,
+    extraction_cost_usd=0.0,
+    history_artifacts=_hist_for_cost,
+    local_only=not bool(include_cloud),
+)
+_bd_single = estimate_cost_breakdown(cfg, _live_case, n=1, **_cost_kwargs)
+_bd_multi = estimate_cost_breakdown(cfg, _live_case, n=int(n_multi), **_cost_kwargs)
+_bd_all = estimate_cost_breakdown(
+    cfg, _live_case, n=max(1, _n_pack_cases * int(n_multi)), **_cost_kwargs
+)
+
 st.caption(
     f"**Multi ×N** = N repeats on the selected case (same progressive tabs as graded). "
-    f"**Multi×all cases** = round-robin Case 1→{_n_pack_cases}, then again "
-    f"(N passes) · e.g. N=2 → {_n_pack_cases * 2} rounds "
-    f"(R1=Case1 … R{_n_pack_cases}=Case{_n_pack_cases} · "
-    f"R{_n_pack_cases + 1}=Case1…) · auto-confirm pack gold · "
-    "finished rounds stay visible in the strip below."
+    f"**Multi×all cases** = round-robin pack Case 1→{_n_pack_cases}, then again "
+    f"(N passes) · e.g. N=2 → {_n_pack_cases * 2} rounds · auto-confirm pack gold · "
+    "finished rounds stay visible in the strip below. "
+    "**New launches** ask for cost OK before streams start."
 )
+show_cost_forecast = st.toggle(
+    "Show OpenRouter cost forecast",
+    value=bool(st.session_state.get("show_cost_forecast", True)),
+    key="beta_show_cost_forecast",
+    help="Pre-run forecast is a rough estimate (often over). "
+    "Billed truth = OpenRouter usage.",
+)
+# Keep Structured + Comprehension toggles aligned for the shared spend card copy.
+st.session_state["show_cost_forecast"] = bool(show_cost_forecast)
+
 r1, r2, r3, r4 = st.columns(4)
 with r1:
-    if st.button(
+    single_clicked = st.button(
         "Single run",
-        type="primary",
-        disabled=not (frozen_ok and _can_launch),
+        type="secondary",
+        disabled=not (frozen_ok and _can_launch) or _slots_locked,
         use_container_width=True,
-        help="Requires Freeze on the selected case.",
-    ):
-        st.session_state["beta_confirmed_run"] = {"n": 1, "multi_case": False}
-        st.rerun()
+        help="Requires Freeze · then cost OK / Yes before streams.",
+    )
+    if show_cost_forecast:
+        st.markdown(fmt_cost_single(_bd_single), unsafe_allow_html=True)
 with r2:
-    if st.button(
+    multi_clicked = st.button(
         f"Multi ×{int(n_multi)}",
-        disabled=not (frozen_ok and _can_launch),
-        use_container_width=True,
-        help="N repeats on the selected frozen case only.",
-    ):
-        st.session_state["beta_confirmed_run"] = {
-            "n": int(n_multi),
-            "multi_case": False,
-        }
-        st.rerun()
-with r3:
-    if st.button(
-        f"Multi×all cases · {_n_pack_cases}×{int(n_multi)}",
-        disabled=not _can_launch,
-        use_container_width=True,
         type="primary",
+        disabled=not (frozen_ok and _can_launch) or _slots_locked,
+        use_container_width=True,
+        help="N repeats on the selected frozen case · cost OK required.",
+    )
+    if show_cost_forecast:
+        st.markdown(fmt_cost_multi(_bd_multi, int(n_multi)), unsafe_allow_html=True)
+with r3:
+    multi_all_clicked = st.button(
+        f"Multi×all cases · {_n_pack_cases}×{int(n_multi)}",
+        disabled=not _can_launch or _slots_locked,
+        use_container_width=True,
+        type="secondary",
         help=(
-            f"Round-robin Case 1→{_n_pack_cases} for N={int(n_multi)} passes "
-            f"({_n_pack_cases * int(n_multi)} rounds). "
-            "Auto-confirms each pack reference. Progressive tabs under the live panels."
+            f"Round-robin curated pack Case 1→{_n_pack_cases} for N={int(n_multi)} "
+            f"passes ({_n_pack_cases * int(n_multi)} rounds). Custom slots excluded. "
+            "Cost OK required."
         ),
-    ):
-        st.session_state["beta_confirmed_run"] = {
-            "n": int(n_multi),
-            "multi_case": True,
-        }
-        st.rerun()
+    )
+    if show_cost_forecast:
+        st.markdown(
+            fmt_cost_multi(_bd_all, max(1, _n_pack_cases * int(n_multi))),
+            unsafe_allow_html=True,
+        )
 with r4:
     if st.button("Stop / clear pending", use_container_width=True):
-        st.session_state.pop("beta_confirmed_run", None)
-        st.session_state.pop("beta_running", None)
-        st.session_state.pop("beta_multi_progress", None)
+        for _k in (
+            "beta_confirmed_run",
+            "beta_pending_run",
+            "beta_running",
+            "beta_multi_progress",
+        ):
+            st.session_state.pop(_k, None)
         st.rerun()
 
-# --- execute ---
+# Arm spend gate (never start streams until Yes).
+if single_clicked:
+    st.session_state["beta_pending_run"] = {
+        "n": 1,
+        "rounds": 1,
+        "multi_case": False,
+        "mode": "full" if include_cloud else "local_only",
+        "est": float(_bd_single.get("total_usd") or 0),
+        "est_hi": float(
+            _bd_single.get("total_usd_upper") or _bd_single.get("total_usd") or 0
+        ),
+    }
+    st.rerun()
+if multi_clicked:
+    st.session_state["beta_pending_run"] = {
+        "n": int(n_multi),
+        "rounds": int(n_multi),
+        "multi_case": False,
+        "mode": "full" if include_cloud else "local_only",
+        "est": float(_bd_multi.get("total_usd_for_n") or 0),
+        "est_hi": float(
+            _bd_multi.get("total_usd_upper_for_n")
+            or _bd_multi.get("total_usd_for_n")
+            or 0
+        ),
+    }
+    st.rerun()
+if multi_all_clicked:
+    _rounds_all = max(1, _n_pack_cases * int(n_multi))
+    st.session_state["beta_pending_run"] = {
+        "n": int(n_multi),
+        "rounds": _rounds_all,
+        "multi_case": True,
+        "mode": "full" if include_cloud else "local_only",
+        "est": float(_bd_all.get("total_usd_for_n") or 0),
+        "est_hi": float(
+            _bd_all.get("total_usd_upper_for_n") or _bd_all.get("total_usd_for_n") or 0
+        ),
+    }
+    st.rerun()
+
+# Inline cost OK / Yes — same pattern as Structured (never st.dialog).
+if (
+    st.session_state.get("beta_pending_run")
+    and not st.session_state.get("beta_confirmed_run")
+    and not st.session_state.get("beta_running")
+):
+    render_spend_confirm_card(
+        pending_key="beta_pending_run",
+        confirmed_key="beta_confirmed_run",
+        has_key=has_key,
+        track_label="Comprehension",
+    )
+    st.stop()
+
+# --- execute (only after Yes · start run) ---
 run_cfg = st.session_state.pop("beta_confirmed_run", None)
 _multi_case = bool(run_cfg and run_cfg.get("multi_case"))
 _ready = bool(run_cfg and roster and (_multi_case or frozen_ok))
 if _ready:
     st.session_state["beta_running"] = True
+    st.session_state.pop("beta_pending_run", None)
     st.session_state.pop("beta_multi_progress", None)
     n_runs = int(run_cfg.get("n") or 1)
     cases_plan: List[Dict[str, Any]]
     if _multi_case:
-        cases_plan = list(slots)
+        cases_plan = list(pack_slots)
         st.info(
             f"**Multi×all cases** · round-robin Case 1→{len(cases_plan)} × "
             f"{n_runs} pass(es) = **{len(cases_plan) * n_runs}** rounds · "
@@ -866,12 +1091,14 @@ if _ready:
             rounds.append((run_i, run_i, cases_plan[0]))
     total_rounds = len(rounds)
 
-    # Progressive strip ABOVE live panels (like graded Multi).
-    multi_progress_slot = st.empty()
-    if total_rounds > 1:
-        _paint_beta_multi_progress(
-            multi_progress_slot, [], n_total=total_rounds, batch_done=False, height=140
-        )
+    st.markdown(
+        '<div class="sec-label">Live responses</div>',
+        unsafe_allow_html=True,
+    )
+    st.caption(
+        "Model streams first · Multi progress / KPI / totals / Rebuild stay below "
+        "these boxes (no overlay). Same order as Structured."
+    )
 
     phase = st.empty()
     phase.markdown(
@@ -880,32 +1107,54 @@ if _ready:
         unsafe_allow_html=True,
     )
 
-    # Stream panels once — reused every round (same as graded Multi).
+    # Stream panels once — panel-card stack avoids column overlap during Multi.
     status_boxes: Dict[str, Any] = {}
     kpi_boxes: Dict[str, Any] = {}
     text_boxes: Dict[str, Any] = {}
     for row in panel_rows_for_roster(candidates_cfg):
-        cols = st.columns(len(row))
+        cols = st.columns(len(row) or 1, gap="small")
         for col, cand in zip(cols, row):
             key = cand["key"]
+            color = cand.get("color") or "#64748b"
+            label = str(cand.get("label") or key)
+            model_bit = str(cand.get("model") or "")
             with col:
-                st.markdown(f"**{cand.get('label') or key}**")
+                st.markdown(
+                    f'<div class="panel-card" style="border-top-color:{color}">'
+                    f'<p class="live-head">{label}</p>'
+                    f'<p class="live-meta">{model_bit}</p></div>',
+                    unsafe_allow_html=True,
+                )
                 status_boxes[key] = st.empty()
                 status_boxes[key].markdown(
                     status_pill("run", "Waiting…"), unsafe_allow_html=True
                 )
                 kpi_boxes[key] = st.empty()
-                st.markdown(
-                    stream_shell_html(
-                        title=str(cand.get("label") or key), panel_id=key
-                    ),
-                    unsafe_allow_html=True,
+                kpi_boxes[key].markdown(
+                    '<div class="kpi-slot"></div>', unsafe_allow_html=True
                 )
+                shell_slot = st.empty()
+                if hasattr(shell_slot, "html"):
+                    shell_slot.html(
+                        stream_shell_html(title=label, panel_id=key)
+                    )
+                else:
+                    shell_slot.markdown(
+                        stream_shell_html(title=label, panel_id=key),
+                        unsafe_allow_html=True,
+                    )
                 text_boxes[key] = st.empty()
                 text_boxes[key].markdown(
                     stream_body_html("", live=False, panel_id=key),
                     unsafe_allow_html=True,
                 )
+
+    # Progressive Multi strip BELOW live panels (Live → Multi → KPI → Rebuild).
+    multi_progress_slot = st.empty()
+    if total_rounds > 1:
+        _paint_beta_multi_progress(
+            multi_progress_slot, [], n_total=total_rounds, batch_done=False, height=140
+        )
 
     live_host = st.empty()
     all_artifacts: List[Any] = []
@@ -1271,8 +1520,12 @@ if _ready:
             )
 
         artifact = build_run_artifact(
-            config_snapshot={"beta": True, "protocol": PROTOCOL_ID, **model_config},
-            run_id=f"beta-{uuid.uuid4().hex[:12]}",
+            config_snapshot={
+                "comprehension": True,
+                "protocol": PROTOCOL_ID,
+                **model_config,
+            },
+            run_id=f"comp-{uuid.uuid4().hex[:12]}",
             case_id=CASE_ID,
             started_at=datetime.fromtimestamp(t_run_i0, tz=timezone.utc).isoformat(),
             finished_at=utc_now_iso(),
@@ -1288,12 +1541,15 @@ if _ready:
                 **model_config,
                 "gold_reference": gold_json,
                 "case_stem": live_stem,
-                "beta_reference_prose": frozen_payload.get("beta_reference_prose"),
+                "reference_prose": frozen_payload.get("reference_prose")
+                or frozen_payload.get("beta_reference_prose"),
+                "comprehension_case_slot": case_slot,
+                # Dual-write so older slot counters still see History.
                 "beta_case_slot": case_slot,
-                "beta_pass_i": pass_i,
-                "beta_round_i": round_i,
-                "beta_rounds_total": total_rounds,
-                "beta_multi_case_batch": bool(_multi_case),
+                "comprehension_pass_i": pass_i,
+                "comprehension_round_i": round_i,
+                "comprehension_rounds_total": total_rounds,
+                "comprehension_multi_case_batch": bool(_multi_case),
             },
             run_status=(
                 "complete"
@@ -1396,6 +1652,7 @@ if _ready:
         _model_ids = [c["key"] for c in roster] if roster else None
         _n_cap = max(1, int(n_runs) if _multi_case else len(all_artifacts))
         if _multi_case:
+            st.session_state["beta_rebuild_scope"] = "balanced_cases"
             _built = rebuild_balanced_cases_from_history(
                 WORKSPACE_DIR,
                 n=_n_cap,
@@ -1412,39 +1669,6 @@ if _ready:
                 model_ids=_model_ids,
                 scoring_version=BETA_SV,
             )
-        # #region agent log
-        try:
-            import json as _json_fin
-            import time as _time_fin
-
-            with open(
-                "/Users/m1/QVAC vs Cloud LLMs - Health Test/.cursor/debug-a76cc5.log",
-                "a",
-                encoding="utf-8",
-            ) as _df_fin:
-                _df_fin.write(
-                    _json_fin.dumps(
-                        {
-                            "sessionId": "a76cc5",
-                            "hypothesisId": "H6",
-                            "location": "pages/beta_comprehension.py:multi_finish",
-                            "message": "Beta multi finish auto-rebuild",
-                            "data": {
-                                "multi_case": bool(_multi_case),
-                                "n_artifacts": len(all_artifacts),
-                                "n_cap": _n_cap,
-                                "built_ok": bool((_built or {}).get("ok")),
-                                "scope": str((_built or {}).get("scope") or ""),
-                            },
-                            "timestamp": int(_time_fin.time() * 1000),
-                        },
-                        ensure_ascii=True,
-                    )
-                    + "\n"
-                )
-        except Exception:
-            pass
-        # #endregion
         if (_built or {}).get("ok"):
             _arm_beta_mean_popup(_built)
             _open_mean_popup = True
@@ -1473,8 +1697,96 @@ if _ready:
             f"`{CASE_ID}` / `{BETA_SV}`</div>",
             unsafe_allow_html=True,
         )
+    # Persist last stream texts so idle layout keeps boxes ABOVE KPI / Rebuild.
+    try:
+        _snap: Dict[str, Any] = {}
+        for _ck, _cand in [(c["key"], c) for c in candidates_cfg]:
+            _snap[_ck] = {
+                "label": str(_cand.get("label") or _ck),
+                "model": str(_cand.get("model") or ""),
+                "color": _cand.get("color") or "#64748b",
+                "text": bufs.get(_ck, "") if "bufs" in dir() else "",
+                "status": "Done",
+            }
+        # Prefer final collected answers when available.
+        for _cand_obj in collected if "collected" in dir() else []:
+            _ck = getattr(_cand_obj, "candidate_key", None)
+            if not _ck:
+                continue
+            _snap.setdefault(_ck, {})
+            _snap[_ck]["text"] = str(getattr(_cand_obj, "raw_text", None) or _snap[_ck].get("text") or "")
+            _snap[_ck]["status"] = "Done"
+        if _snap:
+            st.session_state["beta_live_outputs"] = _snap
+    except Exception:
+        pass
+
     if _open_mean_popup:
         st.rerun()
+
+# --- Idle: keep LLM output boxes above KPI / Rebuild (sequential UX) ---
+if not st.session_state.get("beta_running") and not _ready:
+    _saved_out = st.session_state.get("beta_live_outputs") or {}
+    if _saved_out or roster:
+        st.markdown(
+            '<div class="sec-label">Live responses</div>',
+            unsafe_allow_html=True,
+        )
+        st.caption(
+            "Last streams stay here · KPI / totals / Rebuild are below "
+            "(same order as Structured)."
+        )
+        _idle_rows = panel_rows_for_roster(roster) if roster else []
+        if not _idle_rows and _saved_out:
+            # Fallback: one row from saved keys.
+            _idle_rows = [
+                [
+                    {
+                        "key": k,
+                        "label": v.get("label") or k,
+                        "model": v.get("model") or "",
+                        "color": v.get("color") or "#64748b",
+                    }
+                    for k, v in _saved_out.items()
+                ]
+            ]
+        for _row in _idle_rows:
+            _cols = st.columns(len(_row) or 1, gap="small")
+            for _col, _cand in zip(_cols, _row):
+                _key = _cand["key"]
+                _prev = _saved_out.get(_key) or {}
+                _label = str(_cand.get("label") or _prev.get("label") or _key)
+                _color = _cand.get("color") or _prev.get("color") or "#64748b"
+                _model_bit = str(_cand.get("model") or _prev.get("model") or "")
+                with _col:
+                    st.markdown(
+                        f'<div class="panel-card" style="border-top-color:{_color}">'
+                        f'<p class="live-head">{_label}</p>'
+                        f'<p class="live-meta">{_model_bit}</p></div>',
+                        unsafe_allow_html=True,
+                    )
+                    if _prev.get("text") is not None:
+                        st.markdown(
+                            status_pill("done", str(_prev.get("status") or "Done")),
+                            unsafe_allow_html=True,
+                        )
+                        st.markdown(
+                            stream_body_html(
+                                str(_prev.get("text") or ""),
+                                live=False,
+                                panel_id=_key,
+                            ),
+                            unsafe_allow_html=True,
+                        )
+                    else:
+                        st.markdown(
+                            status_pill("ready", "Ready"),
+                            unsafe_allow_html=True,
+                        )
+                        st.markdown(
+                            stream_body_html("", live=False, panel_id=_key),
+                            unsafe_allow_html=True,
+                        )
 
 # --- persist progressive Multi strip across reruns (like graded) ---
 _beta_prog = st.session_state.get("beta_multi_progress") or {}
@@ -1488,7 +1800,7 @@ if _beta_prog.get("completed") is not None and not st.session_state.get("beta_ru
         height=280 if _beta_prog.get("completed") else 140,
     )
 
-# --- last KPIs ---
+# --- last KPIs (always BELOW live response boxes) ---
 st.markdown("### Comprehension KPIs (this session)")
 _last_rank = st.session_state.get("beta_last_ranking")
 _last_sum = st.session_state.get("beta_last_multi_summary")
@@ -1496,41 +1808,7 @@ if _last_sum is not None:
     mean_rows = list(getattr(_last_sum, "ranking_mean", None) or [])
     if mean_rows:
         st.markdown("##### Ranking table")
-        # #region agent log
         _sess_html = reliability_table_html(mean_rows)
-        try:
-            import json as _json_dbg2
-            import time as _time_dbg2
-
-            with open(
-                "/Users/m1/QVAC vs Cloud LLMs - Health Test/.cursor/debug-a76cc5.log",
-                "a",
-                encoding="utf-8",
-            ) as _df2:
-                _df2.write(
-                    _json_dbg2.dumps(
-                        {
-                            "sessionId": "a76cc5",
-                            "hypothesisId": "H2",
-                            "location": "pages/beta_comprehension.py:session_kpi_paint",
-                            "message": "Beta session KPI ranking paint",
-                            "data": {
-                                "path": "session_kpi",
-                                "n_mean_rows": len(mean_rows),
-                                "render": "st.markdown",
-                                "html_len": len(_sess_html),
-                                "has_linear_gradient": "linear-gradient" in _sess_html,
-                                "gradient_count": _sess_html.count("linear-gradient"),
-                            },
-                            "timestamp": int(_time_dbg2.time() * 1000),
-                        },
-                        ensure_ascii=True,
-                    )
-                    + "\n"
-                )
-        except Exception:
-            pass
-        # #endregion
         if hasattr(st, "html"):
             st.html(_sess_html)
         else:
@@ -1550,7 +1828,10 @@ else:
 # --- Comprehension Rebuild (isolated from graded) ---
 st.markdown("### Rebuild mean · Comprehension only")
 st.caption(
-    f"Pools only `scoring_version={BETA_SV}` · case `{CASE_ID}` · $0 offline."
+    f"Pools only `scoring_version={BETA_SV}` · case `{CASE_ID}` · "
+    f"pack_rev={_pack_revision} · $0 offline. "
+    "After Multi×all prefer **Balanced cases** (honest suite mean). "
+    "Limitations: see the honesty block at the top of the page (once)."
 )
 _bn = st.selectbox(
     "N scored / model",
@@ -1558,6 +1839,8 @@ _bn = st.selectbox(
     index=0,
     key="beta_rebuild_n",
 )
+if "beta_rebuild_scope" not in st.session_state:
+    st.session_state["beta_rebuild_scope"] = "balanced_cases"
 _scope = st.radio(
     "Scope",
     options=["same_case", "portfolio", "balanced_cases"],
@@ -1584,7 +1867,7 @@ if st.button("Rebuild Comprehension mean", key="beta_rebuild_btn", type="primary
             model_ids=model_ids,
         )
     elif _scope == "balanced_cases":
-        # Beta pack slots are Case 1…7; rebuild helper discovers stem order.
+        # Comprehension pack slots are Case 1…K; rebuild helper discovers stem order.
         built = rebuild_balanced_cases_from_history(
             WORKSPACE_DIR,
             n=int(_bn),

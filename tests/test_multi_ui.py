@@ -464,7 +464,7 @@ def test_ops_reliability_table_html_shows_relative_percentages():
 
 
 def test_paint_rebuild_ops_reliability_panels_order_and_skip_empty():
-    """Shared graded/Beta helper paints table then chart when scan data exists."""
+    """Shared helper paints Failures/N/A table only (no ops chart KPI)."""
     from lib.benchmark_multi_ui import (
         ops_reliability_has_scan_data,
         paint_rebuild_ops_reliability_panels,
@@ -516,16 +516,8 @@ def test_paint_rebuild_ops_reliability_panels_order_and_skip_empty():
         is True
     )
     kinds = [c[0] for c in st_mod.calls]
-    assert kinds.count("markdown") >= 3  # headings + table + footers
-    assert "plotly_chart" in kinds
-    # Table heading before chart heading; chart before final footer.
+    assert "plotly_chart" not in kinds
     md_texts = [str(c[1][0]) for c in st_mod.calls if c[0] == "markdown"]
-    fail_idx = next(i for i, t in enumerate(md_texts) if "Failures / N/A" in t)
-    chart_idx = next(
-        i for i, t in enumerate(md_texts) if "Ops reliability chart" in t
-    )
-    assert fail_idx < chart_idx
+    assert any("Failures / N/A" in t for t in md_texts)
+    assert not any("Ops reliability chart" in t for t in md_texts)
     assert any("table-foot" in t for t in md_texts)
-    assert any("chart-foot" in t for t in md_texts)
-    chart_call = next(c for c in st_mod.calls if c[0] == "plotly_chart")
-    assert chart_call[2].get("key") == "beta_rebuild_ops_chart"

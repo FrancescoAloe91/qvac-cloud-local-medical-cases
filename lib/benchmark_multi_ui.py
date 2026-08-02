@@ -285,19 +285,18 @@ def paint_rebuild_ops_reliability_panels(
     table_footer_html: Optional[str] = None,
     chart_footer_html: Optional[str] = None,
 ) -> bool:
-    """Render Rebuild honesty panels 3–4: Failures/N/A table + stacked % chart.
+    """Render Rebuild Failures/N/A table only (no fourth ops chart KPI).
 
-    Shared by graded ``history_mean_rebuild_dialog`` and Beta rebuild mean.
+    Shared by Structured and Comprehension rebuild mean dialogs.
+    ``chart_key`` / ``chart_footer_html`` kept for call-site compat (unused).
     ``st_mod`` is the Streamlit module (or a test double). Returns True when
-    panels were painted.
+    the table was painted.
     """
     rows = list(ops_rows or [])
     if not ops_reliability_has_scan_data(rows):
         return False
 
-    from lib.charts import fig_rebuild_ops_reliability_bars
-
-    cap = n_per_model_cap if n_per_model_cap is not None else "?"
+    _ = (n_per_model_cap, chart_key, chart_footer_html)
     st_mod.markdown("##### Failures / N/A · relative % (like live Multi Failed %)")
     st_mod.caption(
         "Honesty view of the Rebuild fill-N scan window — same role as the "
@@ -311,21 +310,6 @@ def paint_rebuild_ops_reliability_panels(
     )
     if table_footer_html:
         st_mod.markdown(table_footer_html, unsafe_allow_html=True)
-    st_mod.markdown("##### Ops reliability chart · zeros + technical N/A")
-    st_mod.plotly_chart(
-        fig_rebuild_ops_reliability_bars(
-            rows,
-            title=(
-                "Ops reliability · zeros + technical N/A vs scored "
-                f"· ≤{cap} scored/model scan"
-            ),
-            height=220,
-        ),
-        use_container_width=True,
-        key=chart_key,
-    )
-    if chart_footer_html:
-        st_mod.markdown(chart_footer_html, unsafe_allow_html=True)
     return True
 
 
