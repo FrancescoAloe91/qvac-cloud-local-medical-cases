@@ -60,7 +60,8 @@ correctness. Treat stems + gold as **author-supplied exercise fixtures**.
 ## Known limitations / How to read results
 
 Transparent **amateur** comparison. Do not lead posts with “beat ChatGPT /
-Claude / Gemini.”
+Claude / Gemini” (those names mean **OpenRouter API** routes here, not
+consumer web apps).
 
 - **Reference-relative** Clinical Composite — agreement with the frozen gold on
   this bench, not clinical truth and not medical validity.
@@ -81,6 +82,18 @@ Claude / Gemini.”
   Confirm alone on the same content keeps the same set id.
 - Roster version **default 9** · MedPsy family · medical peers where relevant.
 - Local recovery is **capped** (not identical cloud repair/fill weapons).
+- Cost UI **estimate ≠ OpenRouter invoice** — billed truth is usage.
+- Comprehension free-form may be **photocopied** into five sections — not
+  independent Structured A1–A5 slots.
+- Pack cases are **teaching-style fixtures**, not EHR / medical validity.
+- Export JSON may still include the key `accuracy` for back-compat; prefer
+  `clinical_composite` / `clinical_composite_mean` when reading scores.
+
+**Accepted residuals (not product defects):** gold-relative ≠ clinical truth;
+OpenRouter API ≠ consumer ChatGPT/Claude/Gemini web; uncalibrated LLM-as-judge;
+teaching pack ≠ real charts; git history may still contain old internal audit
+blobs even though the current tree does not. Do not re-commit adversarial audit
+notes into this repo.
 
 Screenshot rule: track name · protocol · pack_rev · mean±std · N · scope ·
 roster · cohort. Template: [docs/x-post-template.md](docs/x-post-template.md).
@@ -194,9 +207,9 @@ The primary judge is `deepseek/deepseek-r1`. For each blinded candidate:
    Clinical quality is independent of coverage (`graded-clinical-v4`).
 3. **Section repair (not a doomed full redo)** — if some sections remain
    invalid after salvage, the host requests **only those sections**. When the
-   primary hit the length cap (common on long Claude/OpenAI answers) or more
-   than one section failed, repair runs **one section at a time** with a 4096-
-   token budget each, retaining already-accepted sections. There is no full
+   primary hit the length cap (common on long Claude API / OpenAI API answers)
+   or more than one section failed, repair runs **one section at a time** with a
+   4096-token budget each, retaining already-accepted sections. There is no full
    five-section corrective retry that would truncate again.
 4. **Whole-run verifier only when systemic** — if bounded primary recovery
    still leaves systemic judge failure (≥2 technical failures and ≥30% of the
@@ -205,7 +218,7 @@ The primary judge is `deepseek/deepseek-r1`. For each blinded candidate:
    family), that verifier re-judges the **entire** fixed candidate set and
    becomes the sole effective judge for that ranking. One anomaly never
    activates it. Primary and verifier scores are never mixed. There is no
-   Claude (or other candidate) verifier path.
+   Claude API (or other candidate) verifier path.
 
 ### 5. Clinical Composite Score
 
@@ -348,6 +361,11 @@ gold), not external clinical accuracy. Public screenshots should keep at least
 one honesty caption visible (OpenRouter API ≠ web · author-supplied gold ·
 uncalibrated judge · N=5 exploratory). Legacy Ollama i18n/`lib/medpsy` helpers
 are unused on the gold Automated Benchmark path (live path = QVAC sidecar).
+
+Hosted BYOK: both Comprehension (`app.py`) and Structured strip any process-wide
+`OPENROUTER_API_KEY` on Streamlit Cloud so a host secret cannot silently pay for
+visitors. Process git history may retain older scrubbed internal notes — treat
+that as an accepted residual; the working tree stays audit-doc clean.
 
 See [.env.example](.env.example) for deployment variables. Keep the encryption
 key in the hosting secret manager, never in git.

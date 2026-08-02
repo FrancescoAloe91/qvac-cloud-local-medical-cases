@@ -138,6 +138,8 @@ class JudgeResult(BaseModel):
     blind_id: str
     candidate_key: str
     question_scores: List[QuestionScore]
+    # Gold-relative Clinical Composite (0-100). Ranking/export rows mirror this as
+    # ``accuracy`` (back-compat) and ``clinical_composite`` (honest alias).
     weighted_accuracy: float  # 0-100
     coverage_score: Optional[float] = None
     quality_score: Optional[float] = None

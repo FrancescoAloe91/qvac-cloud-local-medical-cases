@@ -401,7 +401,9 @@ def test_reliability_table_html_rebuild_mean_has_bars_and_cv_bands():
     assert "83.0%" in html  # median bar label
     assert "80/85/78" in html
     assert "3.9%" in html
-    assert "SUPER HIGH" in html.upper() or "Super High" in html
+    assert "Stable mean" in html
+    assert "Super High" not in html
+    assert "≠ clinical validation" in html or "clinical validation" in html
     assert "17.1%" in html
     # CV cell tint uses band background
     assert "background:#064e3b" in html or "background:#9a3412" in html

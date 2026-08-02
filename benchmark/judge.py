@@ -2275,11 +2275,14 @@ def build_ranking(judgments: List[JudgeResult]) -> List[Dict[str, Any]]:
         flags = judgment_flags(j)
         # Ties use the stored unrounded composite when available; display is rounded.
         raw_accuracy = None if failed else float(j.weighted_accuracy)
+        acc_disp = None if failed else round(raw_accuracy, 2)
         rows.append(
             {
                 "key": j.candidate_key,
                 "blind_id": j.blind_id,
-                "accuracy": None if failed else round(raw_accuracy, 2),
+                # accuracy kept for back-compat; clinical_composite is the honest alias
+                "accuracy": acc_disp,
+                "clinical_composite": acc_disp,
                 "accuracy_raw": raw_accuracy,
                 "coverage": None if failed else j.coverage_score,
                 "quality": None if failed else j.quality_score,

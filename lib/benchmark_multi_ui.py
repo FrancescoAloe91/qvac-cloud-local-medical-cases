@@ -969,9 +969,10 @@ def client_toast_run_done(run_i: int, n_total: int, ranking: List[Dict[str, Any]
 
 
 # CV% band colors — same thresholds as benchmark.report.reliability_from_cv
-# Super High ≤5 · High ≤10 · Medium ≤15 · Low ≤20 · else Very Low
+# Stable mean ≤5 · High ≤10 · Medium ≤15 · Low ≤20 · else Very Low
+# (labels = mean stability only · CV band ≠ clinical validation)
 RELIABILITY_BAND_COLORS = {
-    "super_high": ("#064e3b", "#6ee7b7", "Super High"),
+    "super_high": ("#064e3b", "#6ee7b7", "Stable mean"),
     "high": ("#14532d", "#86efac", "High"),
     "medium": ("#713f12", "#fde047", "Medium"),
     "low": ("#9a3412", "#fdba74", "Low"),
@@ -1263,7 +1264,7 @@ def _reliability_table_html(
             "(technical N/A and exact-zero composites skipped; older successful "
             "History used) · Failed%/zeros live in the separate ops reliability "
             "chart below · models with only failures are omitted · "
-            "N=5 exploratory · ~10 better for CV eye-check · 20–70 diminishing · 100 max · "
+            "N=5 exploratory · ~10 steadier mean±std · 20–70 exploratory mean±std · 100 max · "
             "<b>C/Q/D</b> = coverage / quality / discipline "
             "(quality is independent of coverage; a high board % can still have low C)"
         )
@@ -1283,7 +1284,7 @@ def _reliability_table_html(
             "<b>partial</b> = ranked by mean of scored runs despite incomplete coverage · "
             "unranked rows (#—) have zero scored observations · "
             "≤N non-zero scored obs/model; N/A and exact-zero skipped, older scored used · "
-            "N=5 exploratory · ~10 better for CV eye-check · 20–70 diminishing · 100 max · "
+            "N=5 exploratory · ~10 steadier mean±std · 20–70 exploratory mean±std · 100 max · "
             "<b>C/Q/D</b> = coverage / quality / discipline "
             "(quality is independent of coverage; a high board % can still have low C)"
         )

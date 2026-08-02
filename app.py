@@ -11,6 +11,7 @@ Rigid A1–A5 live collect lives on ``pages/structured_graded.py``
 from __future__ import annotations
 
 import hashlib
+import os
 import time
 import uuid
 from pathlib import Path
@@ -69,6 +70,11 @@ from benchmark.schema import ConfirmedGold, utc_now_iso
 from benchmark.workspace import scoped_artifacts_dir
 from benchmark.config import is_usable_openrouter_key
 from datetime import datetime, timezone
+from lib.deployment import (
+    capture_and_strip_openrouter_env,
+    is_local_install,
+    is_streamlit_cloud,
+)
 from lib.benchmark_multi_ui import (
     LiveJudgingBoard,
     client_toast_run_done,
@@ -231,6 +237,35 @@ if _ASSETS.is_file():
         height=0,
         width=0,
     )
+
+# --- API key: Cloud strip parity with Structured (no silent host-key spend) ---
+# Load local .env only into missing env vars; never treat truncated placeholders
+# as real keys. On Streamlit Cloud, strip process-wide OPENROUTER_API_KEY so
+# openrouter_api_key() cannot fall back to a shared host secret.
+_ROOT = Path(__file__).resolve().parent
+_env_path = _ROOT / ".env"
+if _env_path.exists():
+    for _line in _env_path.read_text(encoding="utf-8").splitlines():
+        _line = _line.strip()
+        if not _line or _line.startswith("#") or "=" not in _line:
+            continue
+        _k, _, _v = _line.partition("=")
+        _k, _v = _k.strip(), _v.strip().strip('"').strip("'")
+        if not _k:
+            continue
+        if _k == "OPENROUTER_API_KEY" and not is_usable_openrouter_key(_v):
+            continue
+        if _k not in os.environ:
+            os.environ[_k] = _v
+
+_server_env_key = capture_and_strip_openrouter_env()
+if (
+    (not is_streamlit_cloud())
+    and is_local_install()
+    and is_usable_openrouter_key(_server_env_key)
+    and not st.session_state.get("or_key_session")
+):
+    st.session_state["or_key_session"] = _server_env_key
 
 # --- workspace (same owner scope when key is in session) ---
 _session_key = (st.session_state.get("or_key_session") or "").strip()
@@ -1907,16 +1942,21 @@ else:
 # --- Comprehension Rebuild (isolated from graded) ---
 st.markdown("### Rebuild average · Comprehension only")
 st.caption(
-    "Averages saved Comprehension runs only · offline · $0. "
-    "After Multi×all prefer **Balanced cases** (fairer suite average). "
-    "Limits are in the honesty box at the top of the page. "
-    f"· *Advanced · pack v{_pack_revision}*"
+    t("comp.rebuild_caption", _guide_lang)
+    + f" · *Advanced · pack v{_pack_revision}*"
 )
 _bn = st.selectbox(
-    "N scored / model",
+    t("bench.rebuild_n_label", _guide_lang),
     options=[5, 10, 20, 30, 50, 70, 100],
     index=0,
     key="beta_rebuild_n",
+    format_func=lambda n: (
+        f"≤{n}"
+        + (" · exploratory" if n == 5 else "")
+        + (" · steadier mean±std" if n == 10 else "")
+        + (" · exploratory mean±std" if n in (20, 30, 50, 70, 100) else "")
+    ),
+    help=t("bench.rebuild_n_help", _guide_lang),
 )
 if "beta_rebuild_scope" not in st.session_state:
     st.session_state["beta_rebuild_scope"] = "balanced_cases"

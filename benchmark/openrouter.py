@@ -16,6 +16,24 @@ OPENROUTER_URL = os.environ.get(
     "OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1/chat/completions"
 )
 
+
+def _resolve_api_key(api_key: Optional[str] = None) -> str:
+    """Prefer explicit session key; never fall back to host env on Cloud."""
+    key = (api_key or "").strip()
+    if key:
+        return key
+    try:
+        from lib.deployment import is_streamlit_cloud
+
+        if is_streamlit_cloud():
+            raise RuntimeError(
+                "OpenRouter API key required in this session (BYOK). "
+                "Host OPENROUTER_API_KEY is not used on Streamlit Cloud."
+            )
+    except ImportError:
+        pass
+    return openrouter_api_key()
+
 # Fallback $/1M when usage.cost is missing (catalog snapshot; billed truth = usage.cost)
 _FALLBACK_PRICES = {
     "openai/gpt-4o-mini": (0.15, 0.60),
@@ -282,7 +300,7 @@ def _chat_once(
     require_parameters: bool = False,
     allow_fallbacks: bool = True,
 ) -> Tuple[str, ModelCallMeta]:
-    key = (api_key or "").strip() or openrouter_api_key()
+    key = _resolve_api_key(api_key)
     payload: Dict[str, Any] = {
         "model": model,
         "messages": messages,
@@ -391,7 +409,7 @@ def chat_stream(
     allow_fallbacks: bool = True,
 ) -> Tuple[str, ModelCallMeta]:
     """Streaming chat — measures TTFT and TPS from first token."""
-    key = (api_key or "").strip() or openrouter_api_key()
+    key = _resolve_api_key(api_key)
     payload: Dict[str, Any] = {
         "model": model,
         "messages": messages,

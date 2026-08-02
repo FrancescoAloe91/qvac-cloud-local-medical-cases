@@ -531,6 +531,13 @@ _STRINGS = {
             "All cases balanced (Case1→K round-robin)"
         ),
         "bench.rebuild_n_label": "Average over ≤N successful / model",
+        "bench.rebuild_n_help": (
+            "N = max successful non-zero scored observations per model "
+            "(newest first); technical N/A and exact-zero skipped. "
+            "Larger N only stabilizes descriptive mean±std — still "
+            "exploratory. Default stays 5. Selecting N alone does not open "
+            "a popup — use Rebuild mean."
+        ),
         "bench.rebuild_btn": "Rebuild mean · ≤{n} successful / model · open KPI popup · $0",
         "bench.rebuild_btn_help_same": (
             "Offline mean for the selected Case slot's immutable cohort only "
@@ -727,6 +734,35 @@ _STRINGS = {
             "mix with the optional Structured track."
         ),
         "comp.need_lock": "Lock a reference for this case before Single / Multi.",
+        "comp.rebuild_caption": (
+            "Averages saved Comprehension runs only · offline · $0. "
+            "After Multi×all prefer **Balanced cases** (fairer suite average). "
+            "Rebuild shows exploratory mean±std only — not a clinical study. "
+            "Limits are in the honesty box at the top of the page."
+        ),
+        "struct.track_caption": (
+            "**Optional track** · results **never mix** with Comprehension home. "
+            "**Workflow:** anonymized case → Prepare reference → review/edit → "
+            "Confirm · models run only after Confirm. Cloud answers come from "
+            "the OpenRouter API (not ChatGPT/Claude/Gemini in a browser). "
+            "Scores compare to your reference — not medical truth."
+        ),
+        "struct.judge_caption": (
+            "Research/demo exercise — not a medical device or clinical advice. "
+            "Local models can answer on-device; prepare/judge still use OpenRouter "
+            "when needed. The AI judge is not human-calibrated (uncalibrated "
+            "LLM-as-judge); N=5 is exploratory."
+        ),
+        "struct.confirm_success": (
+            "Reference confirmed at {at} · extractor cost ${cost}"
+        ),
+        "struct.confirm_fail": "Confirm failed: {err}",
+        "struct.confirm_locked": (
+            "Reference confirmed and locked{at} · models unlocked."
+        ),
+        "struct.need_confirm": (
+            "Prepare + Confirm your reference before Single / Multi / Only-local runs."
+        ),
         "guide.setup_need_h": "What you need for on-device MedPsy",
         "guide.setup_need_1": "QVAC software running locally (the sidecar folder)",
         "guide.setup_need_2": "MedPsy model file in the models/ folder",
@@ -1331,6 +1367,13 @@ _STRINGS = {
             "Tutti i casi bilanciati (Case1→K a rotazione)"
         ),
         "bench.rebuild_n_label": "Media su ≤N successful / modello",
+        "bench.rebuild_n_help": (
+            "N = massimo di osservazioni scored successful non-zero per modello "
+            "(più recenti prima); N/A tecnici e zero esatti esclusi. "
+            "N più grande stabilizza solo mean±std descrittivo — resta "
+            "esplorativo. Default 5. Scegliere N da solo non apre il popup — "
+            "usa Ricostruisci media."
+        ),
         "bench.rebuild_btn": "Ricostruisci media · ≤{n} successful / modello · apri popup KPI · $0",
         "bench.rebuild_btn_help_same": (
             "Media offline solo per il cohort immutabile dello slot Case "
@@ -1529,6 +1572,36 @@ _STRINGS = {
         ),
         "comp.need_lock": (
             "Blocca un riferimento per questo caso prima di Single / Multi."
+        ),
+        "comp.rebuild_caption": (
+            "Media solo sulle run Comprehension salvate · offline · $0. "
+            "Dopo Multi×all preferisci **Casi bilanciati** (media suite più "
+            "equa). Rebuild mostra solo mean±std esplorativo — non uno studio "
+            "clinico. I limiti sono nel box di onestà in cima alla pagina."
+        ),
+        "struct.track_caption": (
+            "**Track opzionale** · i risultati **non si mescolano** con la home "
+            "Comprehension. **Flusso:** caso anonimizzato → Prepare riferimento → "
+            "revisiona/modifica → Confirm · i modelli partono solo dopo Confirm. "
+            "Le risposte cloud arrivano dall'API OpenRouter (non ChatGPT/Claude/"
+            "Gemini nel browser). I punteggi confrontano il tuo riferimento — "
+            "non la verità medica."
+        ),
+        "struct.judge_caption": (
+            "Esercizio research/demo — non un dispositivo medico né consiglio "
+            "clinico. I modelli locali possono rispondere on-device; prepare/"
+            "judge usano ancora OpenRouter quando serve. Il giudice AI non è "
+            "calibrato da umani (LLM-as-judge non calibrato); N=5 è esplorativo."
+        ),
+        "struct.confirm_success": (
+            "Riferimento confermato alle {at} · costo extractor ${cost}"
+        ),
+        "struct.confirm_fail": "Confirm non riuscito: {err}",
+        "struct.confirm_locked": (
+            "Riferimento confermato e bloccato{at} · modelli sbloccati."
+        ),
+        "struct.need_confirm": (
+            "Prepare + Confirm il riferimento prima di Single / Multi / Only-local."
         ),
         "guide.setup_need_h": "Cosa serve per MedPsy on-device",
         "guide.setup_need_1": "Software QVAC in locale (cartella sidecar)",

@@ -55,3 +55,34 @@ jobs:
       - name: Ensure private/runtime data is not tracked
         run: |
           test -z "$(git ls-files '.env' '.streamlit/secrets.toml' 'artifacts/**' 'models/*.gguf' '.ip_key_vault.json')"
+
+      - name: Disclosure fence greps (narrow)
+        run: |
+          # No adversarial-audit docs in the tracked tree
+          test -z "$(git ls-files | grep -i 'adversarial-audit' || true)"
+          # Rebuild N i18n must not claim powered study / p-value / significativ*
+          python - <<'PY'
+          import pathlib, re
+          text = pathlib.Path("lib/i18n.py").read_text(encoding="utf-8")
+          # Extract rebuild_n_help + rebuild_caption string values roughly
+          for key in ("bench.rebuild_n_help", "comp.rebuild_caption"):
+              assert key in text
+          banned = re.compile(r"powered\s+stud|p-value|significativ", re.I)
+          # Only scan the rebuild help/caption blocks (narrow)
+          for m in re.finditer(
+              r'"(?:bench\.rebuild_n_help|comp\.rebuild_caption)":\s*\((.*?)\)\s*,',
+              text,
+              re.S,
+          ):
+              block = m.group(1)
+              assert not banned.search(block), block
+          for rel in ("README.md", "DEPLOY.md"):
+              body = pathlib.Path(rel).read_text(encoding="utf-8")
+              for brand in ("ChatGPT", "Claude", "Gemini"):
+                  for hit in re.finditer(re.escape(brand), body):
+                      window = body[max(0, hit.start() - 120) : hit.end() + 120]
+                      assert re.search(r"API|OpenRouter", window), (
+                          f"{rel}: {brand} without API/OpenRouter nearby"
+                      )
+          print("fence greps ok")
+          PY

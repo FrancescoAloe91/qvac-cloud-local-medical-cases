@@ -32,7 +32,8 @@ from lib.model_labels import (
 )
 
 # Multi-run mean reliability from CV% = 100 × std / mean
-# Five bands (ceilings): Super High ≤5 · High ≤10 · Medium ≤15 · Low ≤20 · else Very Low
+# Five bands (ceilings): Stable mean ≤5 · High ≤10 · Medium ≤15 · Low ≤20 · else Very Low
+# Numeric cutoffs frozen — UI labels only; ≠ clinical validation.
 CV_SUPER_HIGH_MAX = 5.0
 CV_HIGH_MAX = 10.0
 CV_MEDIUM_MAX = 15.0
@@ -336,7 +337,9 @@ def summarize_runs(
         ranking_mean.append(
             {
                 "key": k,
+                # accuracy_mean kept for back-compat; clinical_composite_mean is the honest alias
                 "accuracy_mean": v["mean"],
+                "clinical_composite_mean": v["mean"],
                 "accuracy_mean_raw": mean_raw,
                 "median": v["median"],
                 "std": v["std"],
@@ -425,6 +428,7 @@ def summarize_runs(
                 {
                     "key": key,
                     "accuracy_mean": round(mean_raw, 2),
+                    "clinical_composite_mean": round(mean_raw, 2),
                     "accuracy_mean_raw": mean_raw,
                     "n_runs": paired_n,
                     **{

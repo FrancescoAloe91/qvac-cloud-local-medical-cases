@@ -4,6 +4,9 @@
 
 1. Deploy `app.py` from `main`.
 2. Do not configure a shared `OPENROUTER_API_KEY`. Visitors use BYOK.
+   Both Comprehension and Structured strip any process-wide
+   `OPENROUTER_API_KEY` on Streamlit Cloud and refuse env fallback when the
+   session key is empty (no silent host-key spend).
 3. Create a Supabase project and apply
    `supabase/migrations/202607270001_secure_benchmark.sql`.
 4. Generate a Fernet key:
@@ -36,6 +39,10 @@ Hosted behavior:
 If Supabase variables are absent, hosted keys are session-only and local disk
 history is not durable. The UI shows a quiet caption for this state (no durable
 account vault).
+
+Honesty fence (product copy, not scoring): cloud slots are OpenRouter API routes
+≠ consumer ChatGPT/Claude/Gemini web; scores are gold-relative / not medical
+validity; judge is uncalibrated; cost estimate ≠ invoice; teaching pack ≠ EHR.
 
 ## Local
 

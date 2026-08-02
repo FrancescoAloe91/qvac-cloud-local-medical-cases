@@ -143,7 +143,11 @@ from lib.charts import (
     fig_judge_accuracy_bars,
     fig_judge_mean_accuracy_bars,
 )
-from lib.deployment import is_local_install, is_streamlit_cloud
+from lib.deployment import (
+    capture_and_strip_openrouter_env,
+    is_local_install,
+    is_streamlit_cloud,
+)
 from lib.disclosure import (
     DEFAULT_ROSTER_VERSION,
     honesty_block_html,
@@ -265,10 +269,7 @@ if env_path.exists():
 # On Streamlit Cloud, strip any process-wide OPENROUTER_API_KEY so visitor B cannot
 # silently spend visitor A's credits. Prefill comes only from an authenticated
 # encrypted account vault (or this browser session). Local .env remains developer-only.
-_server_env_key = (os.environ.get("OPENROUTER_API_KEY") or "").strip()
-if is_streamlit_cloud():
-    os.environ.pop("OPENROUTER_API_KEY", None)
-    _server_env_key = ""
+_server_env_key = capture_and_strip_openrouter_env()
 
 # Streamlit 1.50 DOMPurify empties <style> from st.html (event container stays blank).
 # Inject CSS + portal into parent.document.head via components iframe instead.
@@ -1497,18 +1498,8 @@ st.markdown(
     ),
     unsafe_allow_html=True,
 )
-st.caption(
-    "**Optional track** · results **never mix** with Comprehension home. "
-    "**Workflow:** anonymized case → Prepare reference → review/edit → Confirm · "
-    "models run only after Confirm. Cloud answers come from the OpenRouter API "
-    "(not ChatGPT/Claude/Gemini in a browser). Scores compare to your reference — "
-    "not medical truth."
-)
-st.caption(
-    "Research/demo exercise — not a medical device or clinical advice. "
-    "Local models can answer on-device; prepare/judge still use OpenRouter when needed. "
-    "The AI judge is not human-calibrated; N=5 is exploratory."
-)
+st.caption(t("struct.track_caption", _ui_lang()))
+st.caption(t("struct.judge_caption", _ui_lang()))
 if is_streamlit_cloud() and not qvac_ok:
     st.caption(
         "Hosted demo · on-device QVAC/MedPsy needs a local sidecar — cloud roster only here."
@@ -2269,8 +2260,12 @@ if isinstance(_prepared, dict) and _prepared:
                 except Exception:
                     pass
                 st.success(
-                    f"Reference confirmed at {contract.confirmed_at} · "
-                    f"extractor cost ${extract_cost:.4f}"
+                    t(
+                        "struct.confirm_success",
+                        _ui_lang(),
+                        at=contract.confirmed_at,
+                        cost=f"{extract_cost:.4f}",
+                    )
                 )
                 st.warning(
                     t(
@@ -2281,17 +2276,19 @@ if isinstance(_prepared, dict) and _prepared:
                 )
                 st.rerun()
             except Exception as exc:
-                st.error(f"Confirm failed: {exc}")
+                st.error(t("struct.confirm_fail", _ui_lang(), err=str(exc)))
 
 if st.session_state.get("_confirmed_gold_json"):
     st.caption(
-        "Reference confirmed and locked"
-        + (
-            f" · {st.session_state.get('_gold_confirmed_at')}"
-            if st.session_state.get("_gold_confirmed_at")
-            else ""
+        t(
+            "struct.confirm_locked",
+            _ui_lang(),
+            at=(
+                f" · {st.session_state.get('_gold_confirmed_at')}"
+                if st.session_state.get("_gold_confirmed_at")
+                else ""
+            ),
         )
-        + " · models unlocked."
     )
     st.caption(
         t(
@@ -2305,9 +2302,7 @@ if st.session_state.get("_confirmed_gold_json"):
         )
     )
 else:
-    st.caption(
-        "Prepare + Confirm your reference before Single / Multi / Only-local runs."
-    )
+    st.caption(t("struct.need_confirm", _ui_lang()))
 
 live_case = preset.model_copy(update={"stem": (case_stem or "").strip()})
 effective_gold = st.session_state.get("_confirmed_gold_json", "")
@@ -6795,19 +6790,18 @@ with _rebuild_zone:
             format_func=lambda n: (
                 f"≤{n} successful / model"
                 + (" · exploratory" if n == 5 else "")
-                + (" · better CV (suggested)" if n == 10 else "")
-                + (" · diminishing returns" if n in (20, 30, 50, 70) else "")
-                + (" · max" if n == 100 else "")
+                + (" · steadier mean±std" if n == 10 else "")
+                + (
+                    " · exploratory mean±std"
+                    if n in (20, 30, 50, 70)
+                    else ""
+                )
+                + (" · max · exploratory mean±std" if n == 100 else "")
                 + (f"  (only {_avail_n} eligible runs)" if _avail_n < n else "")
             ),
             key="history_rebuild_n_pick",
             on_change=_on_rebuild_n_pick_change,
-            help="N = max successful non-zero scored observations per model (newest first); "
-            "technical N/A and exact-zero skipped, older successful History used — not a global "
-            "last-N run slice. Optional/legacy models appear only when toggled. "
-            "Tiers: 5 exploratory · ~10 better for CV · 20–70 diminishing returns "
-            "(100 max). Default stays 5. Selecting N alone does not open a popup — "
-            "use Rebuild mean.",
+            help=t("bench.rebuild_n_help", _ui_lang()),
         )
     with _rb3:
         _score_help_lang = _ui_lang()
@@ -6843,7 +6837,7 @@ with _rebuild_zone:
 
     **CV% (coefficiente di variazione)**  
     Dispersione **in % rispetto alla media** — utile per confrontare modelli con medie diverse.  
-    Bande: Super High ≤5 · High ≤10 · Medium ≤15 · Low ≤20 · Very Low >20.  
+    Bande: Stable mean ≤5 · High ≤10 · Medium ≤15 · Low ≤20 · Very Low >20.  
     **Banda CV ≠ qualità clinica** e ≠ validazione ufficiale.
 
     **Perché i pesi**  
@@ -6874,7 +6868,7 @@ with _rebuild_zone:
     Same “spread” idea; std is the readable score-unit version.
 
     **CV%**  
-    Spread as a **% of the mean** — fairer when means differ. Bands: Super High ≤5 … Very Low >20. **CV band ≠ clinical quality.**
+    Spread as a **% of the mean** — fairer when means differ. Bands: Stable mean ≤5 … Very Low >20. **CV band ≠ clinical quality / ≠ clinical validation.**
 
     **Why weights**  
     Five sections match five clinical asks in the vignette; weights are protocol priorities, not official chart review.
