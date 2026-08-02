@@ -83,7 +83,6 @@ Claude / Gemini.”
 
 Screenshot rule: track name · protocol · pack_rev · mean±std · N · scope ·
 roster · cohort. Template: [docs/x-post-template.md](docs/x-post-template.md).
-Adversarial notes: [docs/adversarial-audit-2026-08-02-parity.md](docs/adversarial-audit-2026-08-02-parity.md).
 
 ## How the system works (end-to-end)
 
