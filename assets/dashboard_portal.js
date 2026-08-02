@@ -8,9 +8,9 @@
   }
   var win = doc.defaultView || window.parent || window;
 
-  /* Bump when close/open / sidebar-force logic changes — must rebind after remount */
-  if (win.__qvacUiPortalV8) return;
-  win.__qvacUiPortalV8 = true;
+  /* Bump when close/open / sidebar-force / floating-reopen logic changes */
+  if (win.__qvacUiPortalV9) return;
+  win.__qvacUiPortalV9 = true;
 
   /*
    * Force-expand the left sidebar on every full page load.
@@ -19,6 +19,9 @@
    * which left users with a closed column and a hard-to-reach >> control.
    * Clear the preference, then click stExpandSidebarButton until open (or timeout).
    * Does not keep fighting if the user collapses later in the same session.
+   *
+   * ALSO: when the user collapses mid-session, keep a floating left-edge
+   * "≫ Tracks" control on the main canvas (outside the collapsed column).
    */
   function clearPersistedSidebarCollapse() {
     try {
@@ -85,12 +88,91 @@
     return sidebarIsCollapsed() === false;
   }
 
+  function ensureFloatingReopen() {
+    var id = "qvac-sidebar-reopen";
+    var btn = doc.getElementById(id);
+    var collapsed = sidebarIsCollapsed();
+    if (collapsed !== true) {
+      if (btn) {
+        btn.style.setProperty("display", "none", "important");
+        btn.setAttribute("aria-hidden", "true");
+      }
+      return;
+    }
+    if (!btn) {
+      btn = doc.createElement("button");
+      btn.id = id;
+      btn.type = "button";
+      btn.className = "qvac-sidebar-reopen";
+      btn.setAttribute("aria-label", "Open Tracks sidebar");
+      btn.setAttribute("title", "Open Tracks sidebar");
+      btn.innerHTML =
+        '<span class="qvac-sidebar-reopen-icon" aria-hidden="true">&gt;&gt;</span>' +
+        '<span class="qvac-sidebar-reopen-label">Tracks</span>';
+      btn.addEventListener(
+        "click",
+        function (e) {
+          e.preventDefault();
+          e.stopPropagation();
+          clearPersistedSidebarCollapse();
+          clickExpandSidebar();
+          /* Retry briefly — Streamlit sometimes needs a second tick */
+          var n = 0;
+          var t = win.setInterval(function () {
+            n += 1;
+            if (sidebarIsCollapsed() !== true || n >= 12) {
+              win.clearInterval(t);
+              ensureFloatingReopen();
+              return;
+            }
+            clickExpandSidebar();
+          }, 80);
+        },
+        true
+      );
+      (doc.body || doc.documentElement).appendChild(btn);
+    }
+    btn.style.setProperty("display", "flex", "important");
+    btn.setAttribute("aria-hidden", "false");
+  }
+
+  function syncTrackPills() {
+    var marker = doc.getElementById("qvac-track-active");
+    var active = marker
+      ? marker.getAttribute("data-active") || "comprehension"
+      : null;
+    var links = doc.querySelectorAll(
+      '[data-testid="stSidebar"] [data-testid="stPageLink"] a'
+    );
+    if (!links || !links.length) return;
+    for (var i = 0; i < links.length; i++) {
+      var a = links[i];
+      var href = a.getAttribute("href") || "";
+      var isStruct = href.indexOf("structured") >= 0;
+      a.classList.add("track-pill");
+      a.classList.toggle("track-pill--structured", isStruct);
+      a.classList.toggle("track-pill--comprehension", !isStruct);
+      var on =
+        active === "structured"
+          ? isStruct
+          : active === "comprehension"
+            ? !isStruct
+            : a.getAttribute("aria-current") === "page";
+      a.classList.toggle("track-pill--active", !!on);
+    }
+  }
+
   clearPersistedSidebarCollapse();
   forceSidebarOpenOnce();
+  ensureFloatingReopen();
+  syncTrackPills();
   var _forceAttempts = 0;
   var _forceTimer = win.setInterval(function () {
     _forceAttempts += 1;
-    if (forceSidebarOpenOnce() || _forceAttempts >= 48) {
+    var open = forceSidebarOpenOnce();
+    ensureFloatingReopen();
+    syncTrackPills();
+    if (open || _forceAttempts >= 48) {
       win.clearInterval(_forceTimer);
     }
   }, 125);
@@ -292,21 +374,37 @@
   }
 
   hideAllClosed();
+  ensureFloatingReopen();
+  syncTrackPills();
   try {
     new MutationObserver(function (muts) {
       var added = false;
+      var attr = false;
       for (var i = 0; i < muts.length; i++) {
         if (muts[i].addedNodes && muts[i].addedNodes.length) {
           added = true;
-          break;
         }
+        if (muts[i].type === "attributes") attr = true;
+        if (added && attr) break;
       }
       if (added) hideAllClosed();
+      if (added || attr) {
+        ensureFloatingReopen();
+        syncTrackPills();
+      }
       syncOpenFullscreenText();
-    }).observe(doc.body, { childList: true, subtree: true, characterData: true });
+    }).observe(doc.body, {
+      childList: true,
+      subtree: true,
+      characterData: true,
+      attributes: true,
+      attributeFilter: ["aria-expanded", "data-active"],
+    });
   } catch (err) {}
   setInterval(function () {
     hideAllClosed();
     syncOpenFullscreenText();
+    ensureFloatingReopen();
+    syncTrackPills();
   }, 800);
 })();

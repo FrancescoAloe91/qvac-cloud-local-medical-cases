@@ -283,27 +283,144 @@ section[data-testid="stSidebar"][aria-expanded="false"] iframe,
 .sidebar-guides-block .guide-open-btn {
   margin: 0.28rem 0 !important;
 }
-/* Structured A1–A5 (secondary track) — amber chip in sidebar */
-[data-testid="stSidebar"] a[href*="structured_graded"] {
-  display: block !important;
-  margin: 0.45rem 0 0.65rem 0 !important;
-  padding: 0.45rem 0.65rem !important;
+/* Track nav pills — Comprehension (yellow / primary) + Structured (orange).
+   Portal JS adds .track-pill / .track-pill--* / .track-pill--active. */
+:root {
+  --track-comp-bg: #facc15;
+  --track-comp-bg-hover: #fde047;
+  --track-comp-fg: #1c1917;
+  --track-comp-border: #ca8a04;
+  --track-struct-bg: #ea580c;
+  --track-struct-bg-hover: #f97316;
+  --track-struct-fg: #fff7ed;
+  --track-struct-border: #c2410c;
+  --track-active-ring: #f8fafc;
+}
+[data-testid="stSidebar"] [data-testid="stPageLink"] a,
+[data-testid="stSidebar"] a.track-pill {
+  display: flex !important;
+  align-items: center !important;
+  flex-wrap: nowrap !important;
+  gap: 0.3rem !important;
+  margin: 0.22rem 0 !important;
+  padding: 0.38rem 0.5rem !important;
   border-radius: 10px !important;
-  background: #fbbf24 !important;
-  color: #78350f !important;
-  font-weight: 700 !important;
-  border: 1px solid #f59e0b !important;
   text-decoration: none !important;
-  box-shadow: 0 1px 0 rgba(120, 53, 15, 0.15) !important;
+  white-space: nowrap !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  line-height: 1.15 !important;
+  font-weight: 750 !important;
+  font-size: 0.74rem !important;
+  max-width: 100% !important;
+  width: 100% !important;
+  box-sizing: border-box !important;
+  border: 1px solid transparent !important;
+  box-shadow: none !important;
 }
-[data-testid="stSidebar"] a[href*="structured_graded"]:hover {
-  background: #f59e0b !important;
-  color: #451a03 !important;
+[data-testid="stSidebar"] [data-testid="stPageLink"] a span,
+[data-testid="stSidebar"] [data-testid="stPageLink"] a p,
+[data-testid="stSidebar"] a.track-pill span,
+[data-testid="stSidebar"] a.track-pill p {
+  white-space: nowrap !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  font-weight: 750 !important;
+  line-height: 1.15 !important;
+  margin: 0 !important;
 }
-[data-testid="stSidebar"] a[href*="structured_graded"] span,
-[data-testid="stSidebar"] a[href*="structured_graded"] p {
-  color: #78350f !important;
-  font-weight: 700 !important;
+/* Comprehension = primary yellow (home / non-structured page link) */
+[data-testid="stSidebar"] [data-testid="stPageLink"] a:not([href*="structured"]),
+[data-testid="stSidebar"] a.track-pill--comprehension {
+  background: var(--track-comp-bg) !important;
+  color: var(--track-comp-fg) !important;
+  border-color: var(--track-comp-border) !important;
+}
+[data-testid="stSidebar"] [data-testid="stPageLink"] a:not([href*="structured"]) span,
+[data-testid="stSidebar"] [data-testid="stPageLink"] a:not([href*="structured"]) p,
+[data-testid="stSidebar"] a.track-pill--comprehension span,
+[data-testid="stSidebar"] a.track-pill--comprehension p {
+  color: var(--track-comp-fg) !important;
+}
+[data-testid="stSidebar"] [data-testid="stPageLink"] a:not([href*="structured"]):hover,
+[data-testid="stSidebar"] a.track-pill--comprehension:hover {
+  background: var(--track-comp-bg-hover) !important;
+  color: var(--track-comp-fg) !important;
+}
+/* Structured = orange, compact single row */
+[data-testid="stSidebar"] [data-testid="stPageLink"] a[href*="structured"],
+[data-testid="stSidebar"] a.track-pill--structured {
+  background: var(--track-struct-bg) !important;
+  color: var(--track-struct-fg) !important;
+  border-color: var(--track-struct-border) !important;
+}
+[data-testid="stSidebar"] [data-testid="stPageLink"] a[href*="structured"] span,
+[data-testid="stSidebar"] [data-testid="stPageLink"] a[href*="structured"] p,
+[data-testid="stSidebar"] a.track-pill--structured span,
+[data-testid="stSidebar"] a.track-pill--structured p {
+  color: var(--track-struct-fg) !important;
+}
+[data-testid="stSidebar"] [data-testid="stPageLink"] a[href*="structured"]:hover,
+[data-testid="stSidebar"] a.track-pill--structured:hover {
+  background: var(--track-struct-bg-hover) !important;
+  color: #fffbeb !important;
+}
+/* Active track = thick border (aria-current and/or portal .track-pill--active) */
+[data-testid="stSidebar"] [data-testid="stPageLink"] a[aria-current="page"],
+[data-testid="stSidebar"] a.track-pill--active {
+  border-width: 3px !important;
+  border-style: solid !important;
+  box-shadow: 0 0 0 1px var(--track-active-ring) !important;
+}
+[data-testid="stSidebar"] [data-testid="stPageLink"] a:not([aria-current="page"]):not(.track-pill--active) {
+  border-width: 1px !important;
+}
+/* Floating reopen when sidebar is collapsed — outside the collapsed column */
+button.qvac-sidebar-reopen {
+  position: fixed !important;
+  top: 50% !important;
+  left: 0 !important;
+  transform: translateY(-50%) !important;
+  z-index: 1000002 !important;
+  display: none;
+  flex-direction: column !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 0.15rem !important;
+  margin: 0 !important;
+  padding: 0.55rem 0.4rem !important;
+  min-width: 2.35rem !important;
+  border-radius: 0 10px 10px 0 !important;
+  border: 2px solid #ca8a04 !important;
+  border-left: none !important;
+  background: #facc15 !important;
+  color: #1c1917 !important;
+  font-family: "IBM Plex Sans", system-ui, sans-serif !important;
+  font-weight: 800 !important;
+  font-size: 0.62rem !important;
+  letter-spacing: 0.04em !important;
+  text-transform: uppercase !important;
+  line-height: 1.1 !important;
+  cursor: pointer !important;
+  box-shadow: 4px 0 16px rgba(0, 0, 0, 0.4) !important;
+  pointer-events: auto !important;
+}
+button.qvac-sidebar-reopen:hover {
+  background: #fde047 !important;
+  border-color: #a16207 !important;
+}
+button.qvac-sidebar-reopen .qvac-sidebar-reopen-icon {
+  font-size: 1.05rem !important;
+  font-weight: 800 !important;
+  line-height: 1 !important;
+  letter-spacing: 0 !important;
+  text-transform: none !important;
+}
+button.qvac-sidebar-reopen .qvac-sidebar-reopen-label {
+  writing-mode: vertical-rl !important;
+  transform: rotate(180deg) !important;
+  font-size: 0.68rem !important;
+  letter-spacing: 0.08em !important;
 }
 .sidebar-guides-block .guides-hint {
   display: block !important;

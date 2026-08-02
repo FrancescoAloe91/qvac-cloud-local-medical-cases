@@ -6,6 +6,7 @@ Structured may append History / STOP; both pin Run clock last.
 
 from __future__ import annotations
 
+import html
 from pathlib import Path
 from typing import Optional
 
@@ -15,16 +16,26 @@ from lib.guide_overlays import sidebar_guides_block_html
 
 
 def render_tracks_block(*, active: str = "comprehension") -> None:
-    """Track links — Comprehension = home/default; Structured = optional secondary."""
+    """Track links — Comprehension = home/default; Structured = optional secondary.
+
+    Compact single-row pills (yellow / orange) styled in ``dashboard.css``.
+    ``data-active`` drives the thick active border via portal JS.
+    """
     st.markdown("**Tracks**")
-    st.page_link("app.py", label="Comprehension · home", icon="🏠")
+    active_norm = "structured" if active == "structured" else "comprehension"
+    st.markdown(
+        f'<div id="qvac-track-active" data-active="{html.escape(active_norm)}" hidden></div>',
+        unsafe_allow_html=True,
+    )
+    # Short labels so pills stay one line in the ~220–280px sidebar.
+    st.page_link("app.py", label="Comprehension", icon="🏠")
     st.page_link(
         "pages/structured_graded.py",
-        label="Structured · A1–A5 (optional)",
+        label="Structured A1–A5",
         icon="📋",
         help="Secondary rigid slot Q&A track · separate History / Rebuild · never pool KPIs",
     )
-    if active == "comprehension":
+    if active_norm == "comprehension":
         st.caption(
             "Default track · discursive free-form. "
             "Structured is optional · KPIs never pool across tracks."

@@ -239,6 +239,7 @@ def test_comprehension_guide_portal_and_sidebar_reopen_control():
     css = (root / "assets" / "dashboard.css").read_text(encoding="utf-8")
     portal = (root / "assets" / "dashboard_portal.js").read_text(encoding="utf-8")
     guides = (root / "lib" / "guide_overlays.py").read_text(encoding="utf-8")
+    tracks = (root / "lib" / "track_sidebar.py").read_text(encoding="utf-8")
     assert "dashboard_portal.js" in home
     assert "dashboard_portal.js" in structured
     assert "guides_always_available_html" in home
@@ -258,6 +259,22 @@ def test_comprehension_guide_portal_and_sidebar_reopen_control():
     assert "stExpandSidebarButton" in portal
     assert "initial_sidebar_state=\"expanded\"" in home
     assert "initial_sidebar_state=\"expanded\"" in structured
+    # Persistent floating reopen outside the collapsed sidebar column.
+    assert "ensureFloatingReopen" in portal
+    assert "qvac-sidebar-reopen" in portal
+    assert "qvac-sidebar-reopen" in css
+    assert "syncTrackPills" in portal
+    # Compact track pills: yellow Comprehension, orange Structured, thick active.
+    assert 'label="Comprehension"' in tracks
+    assert 'label="Structured A1–A5"' in tracks
+    assert "Comprehension · home" not in tracks
+    assert "Structured · A1–A5 (optional)" not in tracks
+    assert "qvac-track-active" in tracks
+    assert "track-pill--comprehension" in css
+    assert "track-pill--structured" in css
+    assert "track-pill--active" in css
+    assert "--track-comp-bg" in css
+    assert "--track-struct-bg" in css
 
 
 def test_new_beta_case_slot_does_not_mutate_pack():
