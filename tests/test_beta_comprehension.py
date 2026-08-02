@@ -193,7 +193,7 @@ def test_beta_multi_finish_arms_mean_popup_like_graded():
     assert "open_new_beta_case_slot" in src
     assert "run_boot_dialogs" in src
     # Plain-language lock copy + pack revision + balanced default.
-    assert "Lock reference for scoring" in src
+    assert 't("comp.lock_btn"' in src or "comp.lock_btn" in src
     assert "readable story" in src or "reference checklist" in src
     assert "pack_revision" in src or "pack_rev" in src or "pack version" in src
     assert 'beta_rebuild_scope"] = "balanced_cases"' in src or (
