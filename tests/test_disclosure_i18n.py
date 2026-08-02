@@ -34,6 +34,7 @@ DISCLOSURE_KEYS = [
     "disclosure.footer_roster",
     "disclosure.footer_cohort",
     "disclosure.footer_exploratory",
+    "disclosure.footer_gloss",
     "disclosure.confirm_new_cohort",
     "disclosure.rebuild_scope_loud",
 ]
@@ -57,18 +58,22 @@ def test_honesty_block_includes_core_phrases():
         cohort_id="abcdef0123456789",
     )
     assert "honesty-block" in html
-    assert "Reference-relative" in html or "reference-relative" in html.lower()
+    assert "reference answers" in html.lower()
     assert "OpenRouter" in html
     assert "DeepSeek R1" in html
-    assert "scored-only" in html
-    assert "treated like N/A" in html
-    assert "crush the mean" in html
+    assert "only successful scores" in html
+    assert "crush the average" in html
     assert "refusal" in html.lower()
     assert "MedGemma" in html and "~2/109" in html
-    assert "ops reliability" in html.lower()
+    assert "reliability chart" in html.lower()
     assert "Same-case" in html
     assert "abcdef01" in html
     assert str(DEFAULT_ROSTER_VERSION) in html
+    # Comprehension extras stay plain-language.
+    comp = honesty_block_html(lang="en", scope="comprehension", roster_n=9)
+    assert "Exercise only" in comp
+    assert "gold_raw" not in comp
+    assert "reference checklist" in comp.lower()
 
 
 def test_screenshot_footer_is_plain_and_compact():
@@ -84,6 +89,8 @@ def test_screenshot_footer_is_plain_and_compact():
     assert "Portfolio" in foot
     assert "roster=v9" in foot
     assert "deadbeef" in foot
+    assert "screenshot-footer-gloss" in foot
+    assert "average ± spread" in foot
     assert "<script" not in foot.lower()
 
 

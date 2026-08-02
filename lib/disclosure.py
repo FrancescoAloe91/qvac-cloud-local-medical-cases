@@ -60,28 +60,29 @@ def honesty_block_html(
         scope_l = str(scope).strip().lower()
         if scope_l in {"comprehension", "discursive", "beta", "beta_comprehension"}:
             lines.append(
-                "<b>Exercise only</b> — not a medical device · not clinical "
-                "advice · not medical validity · not an official MedPsy blog eval."
+                "<b>Exercise only</b> — not a medical device, not clinical "
+                "advice, and not an official MedPsy evaluation."
             )
             lines.append(
-                "<b>Comprehension gold</b> — scored against curated Q1–A5 "
-                "<code>gold_raw</code> (reference prose is the narrative twin, "
-                "not the claim contract)."
+                "<b>How scoring works here</b> — models are scored against the "
+                "locked reference checklist for this case. The long text in the "
+                "right box is the readable story; the checklist is what the "
+                "judge compares against."
             )
             lines.append(
-                "<b>Photocopy caveat</b> — unmarked free-form notes may be "
-                "copied into all five sections; dimensions are not fully "
-                "independent answers."
+                "<b>Copying caveat</b> — if notes are not clearly split into "
+                "sections, the same text may land in all five parts, so those "
+                "parts are not fully independent."
             )
             lines.append(
-                "<b>Pack provenance</b> — Case 1–10 acute ED fixtures assembled "
-                "with Cursor and/or adapted from public internet teaching "
-                "material · not validated EHR charts · not general clinical IQ."
+                "<b>Where these cases come from</b> — emergency-style teaching "
+                "cases built or adapted from public material · not real patient "
+                "charts · not a general medical IQ test."
             )
         elif scope_l in {"structured", "graded", "a1a5", "structured_a1a5"}:
             lines.append(
-                "<b>Structured track</b> — optional secondary · rigid A1–A5 "
-                "slots · never pool with Comprehension History / Rebuild."
+                "<b>Structured track</b> — optional · fixed answer slots · "
+                "results never mix with the Comprehension track."
             )
     lines.extend(
         [
@@ -126,14 +127,16 @@ def screenshot_footer_html(
     if protocol_id:
         bits.append(f"protocol={str(protocol_id)}")
     if pack_revision_label:
-        bits.append(f"pack_rev={str(pack_revision_label)}")
+        bits.append(f"pack={str(pack_revision_label)}")
     elif pack_revision is not None:
-        bits.append(f"pack_rev={int(pack_revision)}")
+        bits.append(f"pack={int(pack_revision)}")
     if extra:
         bits.append(str(extra))
     line = " · ".join(bits)
+    gloss = html.escape(t("disclosure.footer_gloss", lang))
     return (
         '<div class="screenshot-footer">'
         f"{html.escape(line)}"
+        f'<div class="screenshot-footer-gloss">{gloss}</div>'
         "</div>"
     )

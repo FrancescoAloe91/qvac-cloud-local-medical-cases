@@ -33,19 +33,19 @@ def render_tracks_block(*, active: str = "comprehension") -> None:
         "pages/structured_graded.py",
         label="Structured A1–A5",
         icon="📋",
-        help="Secondary rigid slot Q&A track · separate History / Rebuild · never pool KPIs",
+        help="Optional fixed-slot Q&A track · separate History · scores never mix with Comprehension",
     )
     if active_norm == "comprehension":
         st.caption(
-            "Default track · discursive free-form. "
-            "Structured is optional · KPIs never pool across tracks."
+            "Default track · free-form answers. "
+            "Structured is optional · scores never mix across tracks."
         )
         legacy = Path("pages/comprehension_redirect.py")
         if legacy.is_file():
-            st.caption("Legacy redirect page kept for old bookmarks — prefer Home.")
+            st.caption("Old bookmark redirect kept — prefer this Home page.")
     else:
         st.caption(
-            "This page = optional Structured A1–A5 · rigid slots · graded History. "
+            "Optional Structured track · fixed answer slots. "
             "Prefer Comprehension home for free-form comparisons."
         )
 
@@ -58,6 +58,8 @@ def render_guides_and_protocol(
     st.markdown(sidebar_guides_block_html(), unsafe_allow_html=True)
     if protocol_id:
         st.code(str(protocol_id), language=None)
-        st.caption("Wire protocol id for this track (History / Rebuild isolation).")
+        st.caption(
+            "Technical track id (keeps History / Rebuild separate between tracks)."
+        )
     if extra_caption:
         st.caption(extra_caption)

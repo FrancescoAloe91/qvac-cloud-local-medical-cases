@@ -157,23 +157,29 @@ font-size:0.75rem;font-weight:600}
 .kpi-row{color:#94a3b8;font-size:0.78rem;margin:0.2rem 0 0.35rem}
 .phase-banner{padding:0.45rem 0.7rem;border-radius:8px;background:#1e293b;
 color:#e2e8f0;font-size:0.85rem;margin:0.4rem 0}
-/* Comprehension case pickers — button row (not toggles); selected = amber */
-div[class*="st-key-beta_case_btn_"] button[kind="primary"],
-div[class*="st-key-beta_case_btn_"] button[data-testid="baseButton-primary"],
+/* Comprehension case pickers — NEW CASE = green; selected case = yellow */
+div[class*="st-key-beta_case_new_btn"] button,
 div[class*="st-key-beta_case_new_btn"] button[kind="primary"],
-div[class*="st-key-beta_case_new_btn"] button[data-testid="baseButton-primary"] {
-  background:#fbbf24 !important;background-color:#fbbf24 !important;
-  border:2px solid #d97706 !important;color:#78350f !important;font-weight:750 !important;
+div[class*="st-key-beta_case_new_btn"] button[data-testid="baseButton-primary"],
+div[class*="st-key-beta_case_new_btn"] button[kind="secondary"],
+div[class*="st-key-beta_case_new_btn"] button[data-testid="baseButton-secondary"] {
+  background:#16a34a !important;background-color:#16a34a !important;
+  border:2px solid #15803d !important;color:#f0fdf4 !important;font-weight:750 !important;
+}
+div[class*="st-key-beta_case_new_btn"] button p,
+div[class*="st-key-beta_case_new_btn"] button span {
+  color:#f0fdf4 !important;
+}
+div[class*="st-key-beta_case_btn_"] button[kind="primary"],
+div[class*="st-key-beta_case_btn_"] button[data-testid="baseButton-primary"] {
+  background:#facc15 !important;background-color:#facc15 !important;
+  border:2px solid #ca8a04 !important;color:#1c1917 !important;font-weight:750 !important;
 }
 div[class*="st-key-beta_case_btn_"] button[kind="primary"] p,
 div[class*="st-key-beta_case_btn_"] button[kind="primary"] span,
 div[class*="st-key-beta_case_btn_"] button[data-testid="baseButton-primary"] p,
-div[class*="st-key-beta_case_btn_"] button[data-testid="baseButton-primary"] span,
-div[class*="st-key-beta_case_new_btn"] button[kind="primary"] p,
-div[class*="st-key-beta_case_new_btn"] button[kind="primary"] span,
-div[class*="st-key-beta_case_new_btn"] button[data-testid="baseButton-primary"] p,
-div[class*="st-key-beta_case_new_btn"] button[data-testid="baseButton-primary"] span {
-  color:#78350f !important;white-space:pre-line;line-height:1.25;font-size:0.82rem;
+div[class*="st-key-beta_case_btn_"] button[data-testid="baseButton-primary"] span {
+  color:#1c1917 !important;white-space:pre-line;line-height:1.25;font-size:0.82rem;
 }
 div[class*="st-key-beta_case_btn_"] button[kind="secondary"],
 div[class*="st-key-beta_case_btn_"] button[data-testid="baseButton-secondary"] {
@@ -474,8 +480,8 @@ st.markdown(
   <span style="color:#94a3b8;font-size:0.95rem">Discursive free-form · main track · isolated KPIs</span>
 </div>
 <p class="demo-sub" style="margin:0 0 0.75rem 0">
-Local MedPsy via QVAC SDK · BYOK OpenRouter · DeepSeek R1 blind judge ·
-reference-relative Clinical Composite · exploratory amateur bench — not a medical device.
+Local MedPsy on your machine · your own OpenRouter key · an AI judge scores answers ·
+hobby comparison — not medical advice and not a medical device.
 </p>
 """,
     unsafe_allow_html=True,
@@ -485,9 +491,8 @@ st.markdown(
     unsafe_allow_html=True,
 )
 st.caption(
-    f"UI = **Comprehension** · wire protocol `{PROTOCOL_ID}` · case_id `{CASE_ID}` · "
-    "**never pooled** with optional Structured A1–A5 History / Rebuild. "
-    "Same five Clinical Composite dimensions (C/Q/D → section → weighted mean)."
+    "**Comprehension** is the main free-form track. Results here never mix with the "
+    f"optional Structured track. · *Advanced: protocol `{PROTOCOL_ID}`*"
 )
 _qvac_guide_status = (
     "ready — MedPsy will be included"
@@ -539,9 +544,9 @@ with st.sidebar:
     render_guides_and_protocol(
         protocol_id=PROTOCOL_ID,
         extra_caption=(
-            "Rebuild below = Comprehension History for this track. "
-            "MedPsy 4B often sits longer on judge **corrective retry** "
-            "(DeepSeek re-check, not QVAC hung)."
+            "Rebuild below averages only this track’s saved runs. "
+            "MedPsy may look idle while the AI judge double-checks an answer — "
+            "that is normal, not a hung local model."
         ),
     )
     # LAST widget in left column = Run clock (same dock as Structured)
@@ -590,9 +595,9 @@ if not pack_slots:
 _pack_revision = int(pack.get("revision") or 0)
 _pack_title = str(pack.get("title") or "Comprehension pack")
 st.caption(
-    f"**{_pack_title}** · revision **{_pack_revision}** · "
-    f"{len(pack_slots)} curated cases · acute ED-biased suite · "
-    f"wire `{PROTOCOL_ID}` (UI name = Comprehension)."
+    f"**{_pack_title}** · pack version **{_pack_revision}** · "
+    f"{len(pack_slots)} ready-made emergency-style cases. "
+    f"· *Advanced: `{PROTOCOL_ID}`*"
 )
 
 # Session custom cases (NEW CASE) — never mutate pack JSON (cases 1–K curated).
@@ -615,12 +620,12 @@ if not any(int(s["slot"]) == _active_slot for s in slots):
     st.session_state["beta_active_case_slot"] = _active_slot
 
 st.markdown(
-    '<div class="sec-label">Comprehension cases · select one for Single / Multi ×N '
-    "(Multi×all still runs every pack case)</div>",
+    '<div class="sec-label">Cases · pick one for a single run or Multi ×N '
+    "(Multi×all still walks every pack case)</div>",
     unsafe_allow_html=True,
 )
 
-# NEW CASE (yellow) first, then Case 1…N in rows of 4.
+# NEW CASE (green) first, then Case 1…N in rows of 4.
 _base_row = [s for s in slots if int(s["slot"]) <= 4]
 _rest_slots = [s for s in slots if int(s["slot"]) > 4]
 _row1_cols = st.columns([1.25] + [1] * max(1, len(_base_row)), gap="small")
@@ -631,8 +636,9 @@ with _row1_cols[0]:
         use_container_width=True,
         disabled=_slots_locked,
         help=(
-            "Open an empty custom Comprehension case after the pack. "
-            "Paste stem + reference prose, then Freeze. Does not edit pack JSON."
+            "Open a blank custom case after the pack. "
+            "Paste the case story and your reference answer, then lock them. "
+            "Does not change the built-in pack."
         ),
         type="primary",
     ):
@@ -700,7 +706,8 @@ if _flash == "full":
     st.warning(f"Reached soft limit of {SOFT_MAX_BETA_SLOTS} Comprehension cases.")
 elif _flash == "empty":
     st.info(
-        f"**Case {_active_slot}** is empty — paste stem + reference prose, then Freeze."
+        f"**Case {_active_slot}** is empty — paste the case story and your "
+        "reference answer, then lock them for scoring."
     )
 
 case_row = next(
@@ -711,7 +718,7 @@ _is_custom_case = bool(case_row.get("custom"))
 
 c1, c2 = st.columns(2)
 with c1:
-    st.markdown("**Box 1 · Presentation**")
+    st.markdown("**Box 1 · Case story**")
     stem = st.text_area(
         "stem",
         value=case_row["stem"],
@@ -721,7 +728,7 @@ with c1:
         disabled=_slots_locked,
     )
 with c2:
-    st.markdown("**Box 2 · Reference prose (confirm)**")
+    st.markdown("**Box 2 · Your reference answer**")
     prose = st.text_area(
         "prose",
         value=case_row["reference_prose"],
@@ -745,25 +752,25 @@ if _is_custom_case and not _slots_locked:
 
 if _is_custom_case:
     st.caption(
-        "Custom case · Freeze synthesizes a weak Q1–A5 scaffold from your reference "
-        "prose (exploratory · near-duplicate claims). Pack cases 1–K keep curated "
-        "`gold_raw`. Multi×all never includes custom slots."
+        "Custom case · Lock builds a rough five-part checklist from your reference "
+        "text (exploratory — ideas may repeat). Built-in pack cases keep curated "
+        "checklists. Multi×all never includes custom slots."
     )
 else:
     st.caption(
-        "Scoring contract = curated **`gold_raw` Q1–A5** for this pack case. "
-        "Reference prose is the narrative twin shown above — not the claim list "
-        "the judge scores against."
+        "Scoring uses the curated reference checklist for this pack case. "
+        "The long text above is the readable story — the judge scores against "
+        "the checklist, not that story alone."
     )
 
 confirm = st.checkbox(
-    "I confirm stem + curated Q1–A5 gold_raw as the Comprehension scoring contract "
-    "(reference prose is the narrative twin, not the scored claims).",
+    "I confirm: lock this case story and its reference answers for scoring "
+    "(the long text is the readable story; scoring uses the reference checklist).",
     key=f"beta_confirm_box_{case_row['slot']}",
     disabled=_slots_locked,
 )
 if st.button(
-    "Freeze Comprehension reference",
+    "Lock reference for scoring",
     type="primary",
     disabled=not confirm or _slots_locked,
 ):
@@ -810,8 +817,8 @@ if st.button(
         )
         st.session_state["beta_confirmed_gold"] = payload
         st.success(
-            f"Frozen · Case {case_row['slot']} · `{PROTOCOL_ID}` · "
-            f"{n_claims} claims · fp `{payload['gold_fingerprint']}`"
+            f"Locked · Case {case_row['slot']} · "
+            f"{n_claims} checklist points ready for scoring."
         )
 
 frozen = st.session_state.get("beta_confirmed_gold")
@@ -824,14 +831,17 @@ frozen_ok = (
 )
 if frozen_ok:
     st.success(
-        f"Active Comprehension contract · Case {case_row['slot']} · "
-        f"`{frozen.get('scoring_version')}` · "
-        f"{int(frozen.get('gold_claim_count') or 0)} claims · "
-        f"fp `{frozen.get('gold_fingerprint') or '—'}` · "
-        f"pack_rev={frozen.get('pack_revision') or _pack_revision}"
+        f"Reference locked for Case {case_row['slot']} · "
+        f"{int(frozen.get('gold_claim_count') or 0)} checklist points · "
+        "ready for Single / Multi."
+    )
+    st.caption(
+        f"*Advanced · pack v{frozen.get('pack_revision') or _pack_revision} · "
+        f"id `{frozen.get('gold_fingerprint') or '—'}` · "
+        f"`{frozen.get('scoring_version')}`*"
     )
 else:
-    st.info("Freeze a Comprehension reference before Single / Multi.")
+    st.info("Lock a reference for this case before Single / Multi.")
 
 # --- roster (beta-prefixed keys) ---
 st.markdown("### Models")
@@ -912,11 +922,11 @@ _bd_all = estimate_cost_breakdown(
 )
 
 st.caption(
-    f"**Multi ×N** = N repeats on the selected case (same progressive tabs as graded). "
-    f"**Multi×all cases** = round-robin pack Case 1→{_n_pack_cases}, then again "
-    f"(N passes) · e.g. N=2 → {_n_pack_cases * 2} rounds · auto-confirm pack gold · "
-    "finished rounds stay visible in the strip below. "
-    "**New launches** ask for cost OK before streams start."
+    f"**Multi ×N** repeats the selected case N times. "
+    f"**Multi×all cases** walks pack Case 1→{_n_pack_cases}, then again "
+    f"(N passes) · e.g. N=2 → {_n_pack_cases * 2} rounds · pack references "
+    "lock automatically · finished rounds stay visible below. "
+    "**New launches** ask you to OK the estimated cost first."
 )
 show_cost_forecast = st.toggle(
     "Show OpenRouter cost forecast",
@@ -935,7 +945,7 @@ with r1:
         type="secondary",
         disabled=not (frozen_ok and _can_launch) or _slots_locked,
         use_container_width=True,
-        help="Requires Freeze · then cost OK / Yes before streams.",
+        help="Requires a locked reference · then cost OK / Yes before streams.",
     )
     if show_cost_forecast:
         st.markdown(fmt_cost_single(_bd_single), unsafe_allow_html=True)
@@ -945,7 +955,7 @@ with r2:
         type="primary",
         disabled=not (frozen_ok and _can_launch) or _slots_locked,
         use_container_width=True,
-        help="N repeats on the selected frozen case · cost OK required.",
+        help="N repeats on the selected locked case · cost OK required.",
     )
     if show_cost_forecast:
         st.markdown(fmt_cost_multi(_bd_multi, int(n_multi)), unsafe_allow_html=True)
@@ -1840,12 +1850,12 @@ else:
     st.caption("No Comprehension run in this session yet.")
 
 # --- Comprehension Rebuild (isolated from graded) ---
-st.markdown("### Rebuild mean · Comprehension only")
+st.markdown("### Rebuild average · Comprehension only")
 st.caption(
-    f"Pools only `scoring_version={BETA_SV}` · case `{CASE_ID}` · "
-    f"pack_rev={_pack_revision} · $0 offline. "
-    "After Multi×all prefer **Balanced cases** (honest suite mean). "
-    "Limitations: see the honesty block at the top of the page (once)."
+    "Averages saved Comprehension runs only · offline · $0. "
+    "After Multi×all prefer **Balanced cases** (fairer suite average). "
+    "Limits are in the honesty box at the top of the page. "
+    f"· *Advanced · pack v{_pack_revision}*"
 )
 _bn = st.selectbox(
     "N scored / model",
@@ -1936,6 +1946,6 @@ _beta_hist = [
     if scoring_versions_equivalent(str(a.scoring_version or ""), BETA_SV)
 ]
 st.caption(
-    f"Comprehension History for `{CASE_ID}` · wire `{BETA_SV}` (+ legacy dual-read): "
-    f"{len(_beta_hist)} recent artifact(s) in workspace."
+    f"Comprehension History · {len(_beta_hist)} recent saved run(s) in this workspace. "
+    f"· *Advanced · `{BETA_SV}`*"
 )

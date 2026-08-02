@@ -192,12 +192,19 @@ def test_beta_multi_finish_arms_mean_popup_like_graded():
     )
     assert "open_new_beta_case_slot" in src
     assert "run_boot_dialogs" in src
-    # Honest Freeze copy + pack revision + balanced default.
-    assert "gold_raw" in src and "narrative twin" in src
-    assert "pack_revision" in src or "pack_rev" in src
+    # Plain-language lock copy + pack revision + balanced default.
+    assert "Lock reference for scoring" in src
+    assert "readable story" in src or "reference checklist" in src
+    assert "pack_revision" in src or "pack_rev" in src or "pack version" in src
     assert 'beta_rebuild_scope"] = "balanced_cases"' in src or (
         '["beta_rebuild_scope"] = "balanced_cases"' in src
     )
+    # NEW CASE green / selected case yellow (inline + shared CSS).
+    assert "#16a34a" in src
+    css = (root / "assets" / "dashboard.css").read_text(encoding="utf-8")
+    assert "--case-new-bg" in css and "--case-selected-bg" in css
+    assert "st-key-beta_case_new_btn" in css
+    assert "st-key-case_slot_btn_" in css
 
 
 def test_ux_parity_shared_shell_on_both_tracks():

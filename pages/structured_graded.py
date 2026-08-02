@@ -581,28 +581,27 @@ def _guides_always_available_html(*, qvac_status_line: str = "") -> str:
 
 
 QVAC_SETUP_GUIDE = """
-### What this benchmark uses for MedPsy
+### What you need for on-device MedPsy
 
-- **QVAC SDK** (`@qvac/sdk`) via the local `sidecar/` server on this computer  
-- **MedPsy-4B GGUF** under `models/` — inference prefers **GPU/Metal** (`gpu_layers=99`)  
-- **Node.js ≥ 22** to run the sidecar  
+- **QVAC software** running locally (the `sidecar/` folder)  
+- **MedPsy model file** in `models/` (GPU/Metal preferred when available)  
+- **Node.js 22+** to run the sidecar  
 
-### Setup (any Mac/PC after cloning this repo)
+### Setup after cloning
 
-1. Install Node.js ≥ 22 from https://nodejs.org/  
-2. Place the MedPsy GGUF in `models/` (or set `QVAC_MODEL_PATH`)  
-3. From the **repository root**, in a second terminal:
+1. Install Node.js 22+ from https://nodejs.org/  
+2. Put the MedPsy model file in `models/`  
+3. From the **project folder**, in a second terminal:
 
 ```bash
 ./scripts/setup_qvac_sidecar.sh
 cd sidecar && npm start
 ```
 
-4. Leave that terminal open, then refresh this page.  
-   Check `curl -s http://127.0.0.1:8787/health` → should show `"device":"gpu"` (or `cpu` only after a Metal fallback).
+4. Leave that terminal open, then refresh this page.
 
-When the sidecar is running, MedPsy is included (on-device, $0 API).  
-If GPU load fails on some Macs, the sidecar retries on CPU automatically.
+When the sidecar is running, MedPsy is included (on your machine, $0 API).  
+If GPU load fails on some Macs, it retries on CPU automatically.
 """
 
 
@@ -1332,46 +1331,41 @@ def history_mean_rebuild_dialog():
         st.rerun()
 
 
-@st.dialog("How ranking is calculated", width="large")
+@st.dialog("How ranking works", width="large")
 def scoring_guide_dialog():
     """Wide, shallow popup: formula + parameters side-by-side (not a deep expander)."""
     st.caption(
-        "Blind DeepSeek R1 (uncalibrated LLM-as-judge unless fixtures checked) · "
-        "host recomputes scores · exact ties keep the same rank · technical failures are N/A · "
-        "requires a confirmed five-section reference · "
-        "quality independent of coverage (v4) · "
-        "artifact JSON may still label the field `accuracy` (Clinical Composite, reference-relative)"
+        "A blind AI judge (DeepSeek R1) scores answers against your locked reference. "
+        "Technical failures count as N/A, not clinical zeros. Exact ties stay ties. "
+        "You need a confirmed five-part reference first."
     )
     left, right = st.columns(2, gap="large")
     with left:
-        st.markdown("##### Per-section Clinical Composite Score")
+        st.markdown("##### Per-section score")
         st.code(
-            "section = 50% graded coverage + 35% clinical quality + 15% discipline",
+            "section ≈ 50% coverage + 35% clinical quality + 15% discipline",
             language=None,
         )
         st.markdown(
             """
-| Param | Wt | Meaning |
-|-------|----|---------|
-| **coverage** | 50% | Graded coverage of every frozen reference claim |
-| **quality** | 35% | Clinical judgment — coherence, prioritization, caution |
-| **discipline** | 15% | Verified unsupported / contradictory / dangerous only |
+| Part | Wt | Meaning |
+|------|----|---------|
+| **coverage** | 50% | How much of your reference checklist the answer covers |
+| **quality** | 35% | Coherence, priorities, usefulness, caution |
+| **discipline** | 15% | Penalties only for verified unsupported / contradictory / dangerous additions |
 """
         )
         st.markdown(
-            "Every nonzero coverage decision and every added claim needs evidence "
-            "present in the candidate answer (presentation-tolerant, text-strict). "
-            "Unverifiable harmful additions are **dropped** (audit marker), not fail-closed. "
-            "Parser salvage / section-repair / local format-repair never invent clinical content; "
-            "a missing section stays N/A. "
-            "Whole-run verifier ≠ human calibration."
+            "Matches need evidence from the model's answer. "
+            "Risky additions the judge cannot verify are dropped (not auto-failed). "
+            "Missing sections stay N/A. The judge is not human-calibrated."
         )
     with right:
         st.markdown("##### Final ranking %")
         st.code(
-            "Clinical Composite Score = Σ (section_weight × section_score)\n"
+            "Overall score = weighted mix of the five sections\n"
             "exact ties keep the same rank · technical failures are N/A\n"
-            "Multi ×N protocol mean rank = mean Clinical Composite ± std (CV% = reliability)",
+            "Multi ×N average = mean overall score ± spread",
             language=None,
         )
         st.markdown(
@@ -1379,10 +1373,10 @@ def scoring_guide_dialog():
 | Piece | Role |
 |-------|------|
 | **Section weights** | Diagnosis 30% · Safety 25% · Plan 20% · Tests 15% · Urgency 10% |
-| **Ties** | Same unrounded score → same rank (no forced tie-break) |
-| **Multi reliability** | CV% · Super High ≤5% · High ≤10% · Med ≤15% · Low ≤20% · else Very Low · N=5 exploratory · ~10 better for CV |
+| **Ties** | Same score → same rank |
+| **Multi reliability** | Spread band · N=5 exploratory · ~10 runs better for stability |
 
-**Flow:** same prompt → answers → blind graded judge → host formula → ranking.
+**Flow:** same prompt → answers → blind judge → ranking.
 """
         )
         cid = st.session_state.get("case_pick")
@@ -1456,20 +1450,20 @@ if st.session_state.get("or_key_session") and is_usable_openrouter_key(
 
 st.markdown(
     '<p class="demo-hero">QVAC vs Cloud · Structured A1–A5 '
-    '<span style="font-size:0.65em;opacity:.75">(optional secondary)</span></p>',
+    '<span style="font-size:0.65em;opacity:.75">(optional)</span></p>',
     unsafe_allow_html=True,
 )
 st.markdown(
-    '<p class="demo-sub">Local MedPsy generation via QVAC SDK · BYOK OpenRouter · DeepSeek R1 blind judge · '
-    "evidence-linked claim scoring · technical failures = N/A · live TTFT / TPS</p>",
+    '<p class="demo-sub">Local MedPsy on your machine · your own OpenRouter key · '
+    "an AI judge scores answers · hobby comparison — not medical advice.</p>",
     unsafe_allow_html=True,
 )
 st.markdown(
     """
 <div class="steps-bar">
   <div class="step-pill"><b>Step 1</b> Paste anonymized case</div>
-  <div class="step-pill"><b>Step 2</b> Extract + confirm five sections</div>
-  <div class="step-pill"><b>Step 3</b> Run one protocol cohort</div>
+  <div class="step-pill"><b>Step 2</b> Prepare + confirm your reference</div>
+  <div class="step-pill"><b>Step 3</b> Run the models</div>
 </div>
 """,
     unsafe_allow_html=True,
@@ -1485,17 +1479,16 @@ st.markdown(
     unsafe_allow_html=True,
 )
 st.caption(
-    "**Optional secondary track** · KPIs **never pool** with Comprehension home. "
+    "**Optional track** · results **never mix** with Comprehension home. "
     "**Workflow:** anonymized case → Prepare reference → review/edit → Confirm · "
-    "candidates run only after confirm · cloud cards = OpenRouter API routes "
-    "(not ChatGPT/Claude/Gemini consumer web). Scores are author-supplied-gold "
-    "reference-relative — not clinical truth."
+    "models run only after Confirm. Cloud answers come from the OpenRouter API "
+    "(not ChatGPT/Claude/Gemini in a browser). Scores compare to your reference — "
+    "not medical truth."
 )
 st.caption(
     "Research/demo exercise — not a medical device or clinical advice. "
-    "Collect can stay on-device; extract/judge still use OpenRouter when scoring. "
-    "Judge = uncalibrated LLM-as-judge; N=5 exploratory (not bit-identical). "
-    "TTFT/TPS = ops metrics · not hardware-normalized."
+    "Local models can answer on-device; prepare/judge still use OpenRouter when needed. "
+    "The AI judge is not human-calibrated; N=5 is exploratory."
 )
 if is_streamlit_cloud() and not qvac_ok:
     st.caption(
@@ -1712,7 +1705,7 @@ def _render_case_slot_button(slot, *, active_idx: int, locked: bool) -> None:
             st.rerun()
 
 
-# New case (yellow) first, then Case 1…N. Wrap after base row for readability.
+# New case (green) first, then Case 1…N. Wrap after base row for readability.
 _base_slots = [s for s in _case_slots if s.index <= BASE_CASE_SLOTS]
 _extra_slots = [s for s in _case_slots if s.index > BASE_CASE_SLOTS]
 _row1_cols = st.columns([1.25] + [1] * len(_base_slots), gap="small")
@@ -1783,13 +1776,14 @@ else:
     st.caption(
         f"**Case {_active_slot_idx}** selected · History stays private to this "
         f"API key ({short_owner_label()}). Base Case 1–{BASE_CASE_SLOTS}; "
-        f"New case adds Case {BASE_CASE_SLOTS + 1}+ when full."
+        f"New case adds Case {BASE_CASE_SLOTS + 1}+ when the base row is full."
     )
 
-st.markdown('<div class="sec-label">Gold-only clinical case</div>', unsafe_allow_html=True)
+st.markdown('<div class="sec-label">Case + your reference answer</div>', unsafe_allow_html=True)
 st.info(
     "Paste an anonymized case and your reference answer. The benchmark measures "
-    "agreement with your reference; incorrect or incomplete input invalidates the result."
+    "agreement with your reference; a wrong or incomplete reference makes the "
+    "scores misleading."
 )
 
 if "demo_case_stem" not in st.session_state:
@@ -1811,24 +1805,24 @@ with col_case:
     st.caption("No names, dates of birth, addresses, IDs or other identifying data.")
 with col_gold:
     st.markdown(
-        '<div class="sec-label">2 · Free-form reference (required)</div>',
+        '<div class="sec-label">2 · Your reference answer (required)</div>',
         unsafe_allow_html=True,
     )
     gold_reference = st.text_area(
         "gold",
         height=180,
         placeholder=(
-            "Write the confirmed/reference diagnosis, tests, urgency, safety traps "
-            "and initial plan in any order. Prepare extracts source-linked claims; "
-            "Confirm freezes them before any candidate runs."
+            "Write your reference diagnosis, tests, urgency, safety traps "
+            "and initial plan in any order. Prepare turns this into checklist "
+            "points; Confirm locks them before any model runs."
         ),
         key="demo_gold_ref",
         label_visibility="collapsed",
         on_change=_on_case_fields_edit,
     )
     st.caption(
-        "Author-supplied gold · user-confirmed reference for scoring — "
-        "not certified clinical ground truth."
+        "Your locked reference is what models are scored against — "
+        "not certified medical ground truth."
     )
 
 st.session_state["_persist_case_stem"] = case_stem or ""
@@ -1924,8 +1918,9 @@ with _prep_col:
         disabled=len(gold_reference) < 40
         or bool(st.session_state.get("benchmark_running")),
         help=(
-            "Q1–A5 references extract locally (no API). "
-            "Free-form prose uses the pinned OpenRouter extractor once."
+            "Turn your reference text into checklist points you can review. "
+            "Pre-formatted five-part answers extract locally (no API). "
+            "Free-form text uses OpenRouter once."
         ),
     )
 with _conf_col:
@@ -1936,8 +1931,9 @@ with _conf_col:
         disabled=not st.session_state.get("_prepared_gold_sections")
         or bool(st.session_state.get("benchmark_running")),
         help=(
-            "Freezes confirmed_at + gold JSON. Candidates unlock after this. "
-            "Scores are relative to this reference, not external clinical truth."
+            "Locks the case text and reference checklist for scoring. "
+            "Models unlock after this. Scores compare to this reference — "
+            "not external medical truth."
         ),
     )
 
@@ -1951,7 +1947,7 @@ if prepare_clicked:
         st.session_state["_prepare_error"] = format_prepare_error(
             ValueError(
                 "An OpenRouter key is required to prepare free-form references "
-                "(Q1[diagnosis]/A1 … Q5[plan]/A5 form can Prepare without a key)"
+                "(pre-formatted five-part answers can Prepare without a key)"
             )
         )
     else:
@@ -1993,11 +1989,13 @@ if prepare_clicked:
             st.session_state.pop("_prepare_error", None)
             if used_model == LOCAL_QNA_EXTRACTOR_MODEL:
                 st.success(
-                    "Reference prepared locally from Q1–A5 — review/edit claims, "
+                    "Reference prepared locally — review/edit the checklist points, "
                     "then Confirm."
                 )
             else:
-                st.success("Reference prepared — review/edit claims, then Confirm.")
+                st.success(
+                    "Reference prepared — review/edit the checklist points, then Confirm."
+                )
             st.rerun()
         except Exception as exc:
             st.session_state["_prepare_error"] = format_prepare_error(exc)
@@ -2012,24 +2010,23 @@ if _prepare_err:
             st.rerun()
     with _err_hint:
         st.caption(
-            "Retry Prepare reference after fixing the issue. "
-            "Seeded Case 6/7 and Q1–A5 New cases extract locally (no API). "
-            "Free-form gold needs a full OpenRouter key in the sidebar."
+            "Retry Prepare after fixing the issue. "
+            "Seeded Case 6/7 and pre-formatted New cases extract locally (no API). "
+            "Free-form text needs a full OpenRouter key in the sidebar."
         )
 
 # Editable prepared sections
 _prepared = st.session_state.get("_prepared_gold_sections")
 if isinstance(_prepared, dict) and _prepared:
     st.markdown(
-        '<div class="sec-label">Prepared claims (edit · source_quote must stay a substring of the raw reference)</div>',
+        '<div class="sec-label">Prepared checklist (edit · each quote must stay '
+        "a substring of your reference text)</div>",
         unsafe_allow_html=True,
     )
     st.caption(
-        "Add / split / delete / move claims between sections — Confirm locks scored claims. "
-        "Section summary is display-only (not scored, not in cohort identity). "
-        "Extractor may invent-then-repair segmentation. "
-        "`source_quote` = author-supplied verbatim substring (reference-relative). "
-        "`critical` ignored · equal claim weights."
+        "Add / split / delete / move points between sections — Confirm locks them "
+        "for scoring. Section summaries are display-only (not scored). "
+        "Each source quote must be copied from your reference text."
     )
     raw_norm_check = gold_reference or ""
 
@@ -2263,13 +2260,13 @@ if isinstance(_prepared, dict) and _prepared:
 
 if st.session_state.get("_confirmed_gold_json"):
     st.caption(
-        "Confirmed reference ready"
+        "Reference confirmed and locked"
         + (
             f" · {st.session_state.get('_gold_confirmed_at')}"
             if st.session_state.get("_gold_confirmed_at")
             else ""
         )
-        + " · candidates unlocked."
+        + " · models unlocked."
     )
     st.caption(
         t(
@@ -2284,7 +2281,7 @@ if st.session_state.get("_confirmed_gold_json"):
     )
 else:
     st.caption(
-        "Prepare + Confirm the reference before Single / Multi / Only-local runs."
+        "Prepare + Confirm your reference before Single / Multi / Only-local runs."
     )
 
 live_case = preset.model_copy(update={"stem": (case_stem or "").strip()})
@@ -3253,8 +3250,7 @@ with _results_zone:
             st.stop()
         if not effective_gold:
             st.error(
-                "Prepare and Confirm the reference before starting candidates. "
-                "CLI still requires a pre-confirmed gold JSON."
+                "Prepare and Confirm your reference before starting models."
             )
             st.stop()
         try:

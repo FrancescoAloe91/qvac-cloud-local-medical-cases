@@ -628,61 +628,63 @@ _STRINGS = {
         "bench.new_case_btn": "New case",
         "bench.new_case_help": (
             "Open the next empty Case slot, or create Case 6, 7, … when "
-            "Case 1–5 are filled. Paste stem + reference, then Prepare / Confirm."
+            "Case 1–5 are filled. Paste the case and your reference answer, "
+            "then Prepare / Confirm."
         ),
         "bench.new_case_full": (
             "Reached the soft limit of {n} Case slots for this key. Select an "
-            "existing slot to edit or rebuild means."
+            "existing slot to edit or rebuild averages."
         ),
         "bench.case_slot_loaded": (
-            "Loaded **Case {n}** stem + confirmed reference from History."
+            "Loaded **Case {n}** case text + confirmed reference from History."
         ),
         "bench.case_slot_ready_empty": (
-            "**Case {n}** is empty — paste an anonymized case and reference, "
-            "then Prepare / Confirm."
+            "**Case {n}** is empty — paste an anonymized case and your "
+            "reference answer, then Prepare / Confirm."
         ),
         # Loud disclosure package (dashboard honesty + screenshot footers)
-        "disclosure.title": "How to read these results (known limitations)",
+        "disclosure.title": "How to read these results (important limits)",
         "disclosure.bullet_ref": (
-            "<b>Reference-relative</b> Clinical Composite · not clinical truth · "
-            "not an official MedPsy blog evaluation"
+            "<b>Scores compare to your reference answers</b> — not medical "
+            "truth · not an official MedPsy blog review"
         ),
         "disclosure.bullet_api": (
-            "Cloud slots = <b>OpenRouter API routes</b> ≠ consumer ChatGPT / "
-            "Claude / Gemini web apps"
+            "Cloud models are reached through the <b>OpenRouter API</b> — not "
+            "the same as using ChatGPT / Claude / Gemini in a browser"
         ),
         "disclosure.bullet_judge": (
-            "Uncalibrated <b>single LLM-as-judge</b> (DeepSeek R1)"
+            "One <b>AI judge</b> (DeepSeek R1) scores answers — it is not "
+            "human-calibrated"
         ),
         "disclosure.bullet_exploratory": (
-            "<b>Exploratory / amateur</b> comparison — not a powered clinical study"
+            "<b>Hobby / exploratory</b> comparison — not a clinical study"
         ),
         "disclosure.bullet_rebuild": (
-            "Rebuild mean = <b>scored-only</b> · technical failures and exact "
-            "Clinical Composite == 0 are treated like N/A (excluded from N) · "
-            "rationale: a rare exact 0 would crush the mean, so it is equated "
-            "to a non-score for the clean comparison"
+            "Average ranking uses <b>only successful scores</b> · technical "
+            "failures and exact score 0 are left out (a rare 0 would crush "
+            "the average)"
         ),
         "disclosure.bullet_zero": (
-            "Exact composite 0 usually = candidate <b>refusal</b> or no usable "
-            "clinical content vs gold (valid judge score, not a transport crash) · "
-            "this History: MedGemma ~2/109 (~2%) refusal zeros on caseC · "
-            "rate varies by model — not a family ranking claim"
+            "A score of exactly 0 usually means the model <b>refused</b> or "
+            "gave no usable clinical content · example in this history: "
+            "MedGemma ~2/109 (~2%) refusal zeros · rate varies by model"
         ),
         "disclosure.bullet_ops": (
-            "Zeros + technical N/A appear in a <b>separate ops reliability</b> "
-            "chart (counts + %) — not on the scored-only mean ranking table"
+            "Zeros and technical failures appear in a <b>separate reliability "
+            "chart</b> — not in the main average ranking"
         ),
-        "disclosure.bullet_scope": "Mean scope",
+        "disclosure.bullet_scope": "Average scope",
         "disclosure.bullet_confirm": (
-            "<b>New Confirm = new cohort</b> (re-Prepare / claim-split edits too)"
+            "<b>Confirming again starts a new comparison set</b> (also after "
+            "re-preparing or editing claims)"
         ),
         "disclosure.bullet_roster": (
-            "Roster version <b>default {n}</b> · MedPsy family · MedGemma 1.5 "
-            "peer where relevant — do not pool cross-roster eras silently"
+            "Model list version <b>default {n}</b> · do not mix results from "
+            "different model-list eras silently"
         ),
         "disclosure.bullet_recovery": (
-            "Local recovery <b>capped</b> (≠ identical cloud repair/fill weapons)"
+            "Local repair of broken answers is <b>limited</b> (not the same "
+            "tools cloud APIs may use)"
         ),
         "disclosure.scope_same": "Same-case",
         "disclosure.scope_portfolio": "Portfolio",
@@ -691,17 +693,20 @@ _STRINGS = {
         "disclosure.footer_n_default": "N=successful scores",
         "disclosure.footer_scope": "scope",
         "disclosure.footer_roster": "roster",
-        "disclosure.footer_cohort": "cohort",
+        "disclosure.footer_cohort": "set",
         "disclosure.footer_exploratory": "exploratory",
+        "disclosure.footer_gloss": (
+            "mean±std = average ± spread · N = successful scores · "
+            "scope = which runs are averaged · set = comparison group id"
+        ),
         "disclosure.confirm_new_cohort": (
-            "**New Confirm = new cohort** — Rebuild pools only matching "
-            "`cohort_id`{hash}."
+            "**Confirming again starts a new comparison set** — Rebuild only "
+            "averages runs that share the same set{hash}."
         ),
         "disclosure.rebuild_scope_loud": (
-            "**Mean scope: {scope}** — Same-case = one immutable gold cohort; "
-            "Portfolio = newest ≤N successful/model across cases (can overweight "
-            "recent cases); Balanced = Case1→K round-robin for roughly equal "
-            "case weight."
+            "**Average scope: {scope}** — Same-case = one locked reference; "
+            "Portfolio = newest ≤N scores per model across cases (can overweight "
+            "recent cases); Balanced = rotate Case1→K for roughly equal case weight."
         ),
     },
     "it": {
@@ -1330,65 +1335,64 @@ _STRINGS = {
         "bench.new_case_btn": "Nuovo caso",
         "bench.new_case_help": (
             "Apre il prossimo slot Case vuoto, oppure crea Case 6, 7, … quando "
-            "Case 1–5 sono pieni. Incolla stem + riferimento, poi Prepare / Confirm."
+            "Case 1–5 sono pieni. Incolla il caso e la tua risposta di "
+            "riferimento, poi Prepare / Confirm."
         ),
         "bench.new_case_full": (
             "Raggiunto il limite soft di {n} slot Case per questa chiave. "
             "Seleziona uno slot esistente per modificare o ricalcolare le medie."
         ),
         "bench.case_slot_loaded": (
-            "Caricato **Case {n}**: stem + riferimento confermato dalla History."
+            "Caricato **Case {n}**: testo del caso + riferimento confermato "
+            "dalla History."
         ),
         "bench.case_slot_ready_empty": (
-            "**Case {n}** è vuoto — incolla un caso anonimizzato e il "
-            "riferimento, poi Prepare / Confirm."
+            "**Case {n}** è vuoto — incolla un caso anonimizzato e la tua "
+            "risposta di riferimento, poi Prepare / Confirm."
         ),
         # Loud disclosure package (dashboard honesty + screenshot footers)
-        "disclosure.title": "Come leggere questi risultati (limiti noti)",
+        "disclosure.title": "Come leggere questi risultati (limiti importanti)",
         "disclosure.bullet_ref": (
-            "Clinical Composite <b>relativo al riferimento</b> · non verità "
-            "clinica · non valutazione ufficiale del blog MedPsy"
+            "I punteggi <b>confrontano le risposte con il tuo riferimento</b> — "
+            "non verità medica · non una review ufficiale del blog MedPsy"
         ),
         "disclosure.bullet_api": (
-            "Slot cloud = <b>route API OpenRouter</b> ≠ app web consumer "
-            "ChatGPT / Claude / Gemini"
+            "I modelli cloud passano dall'<b>API OpenRouter</b> — non è lo "
+            "stesso che usare ChatGPT / Claude / Gemini nel browser"
         ),
         "disclosure.bullet_judge": (
-            "<b>Singolo LLM-as-judge</b> non calibrato (DeepSeek R1)"
+            "Un solo <b>giudice AI</b> (DeepSeek R1) assegna i punteggi — "
+            "non è calibrato da umani"
         ),
         "disclosure.bullet_exploratory": (
-            "Confronto <b>esplorativo / amatoriale</b> — non uno studio clinico "
-            "con potenza statistica"
+            "Confronto <b>amatoriale / esplorativo</b> — non uno studio clinico"
         ),
         "disclosure.bullet_rebuild": (
-            "Rebuild mean = <b>solo scored</b> · fallimenti tecnici e Clinical "
-            "Composite esatto == 0 trattati come N/A (esclusi da N) · "
-            "motivo: uno 0 esatto raro schiaccerebbe la media, quindi viene "
-            "equiparato a non-score per il confronto pulito"
+            "La media usa <b>solo i punteggi riusciti</b> · fallimenti tecnici "
+            "e punteggio esatto 0 restano fuori (uno 0 raro schiaccerebbe la media)"
         ),
         "disclosure.bullet_zero": (
-            "Composite esatto 0 di solito = <b>rifiuto</b> del candidato o "
-            "nessun contenuto clinico utilizzabile vs gold (score giudice "
-            "valido, non crash di trasporto) · in questa History: MedGemma "
-            "~2/109 (~2%) zeri per rifiuto su caseC · il tasso varia per "
-            "modello — non è una claim di ranking di famiglia"
+            "Un punteggio esatto 0 di solito significa che il modello ha "
+            "<b>rifiutato</b> o non ha dato contenuto clinico utilizzabile · "
+            "esempio in questa History: MedGemma ~2/109 (~2%) zeri per rifiuto · "
+            "il tasso varia per modello"
         ),
         "disclosure.bullet_ops": (
-            "Zeri + N/A tecnici compaiono in un grafico <b>ops reliability</b> "
-            "separato (conteggi + %) — non nella tabella ranking della media "
-            "solo-scored"
+            "Zeri e fallimenti tecnici compaiono in un <b>grafico di "
+            "affidabilità separato</b> — non nella classifica media principale"
         ),
-        "disclosure.bullet_scope": "Ambito media",
+        "disclosure.bullet_scope": "Ambito della media",
         "disclosure.bullet_confirm": (
-            "<b>Nuovo Confirm = nuovo cohort</b> (anche Re-Prepare / split claim)"
+            "<b>Confermare di nuovo apre un nuovo set di confronto</b> "
+            "(anche dopo un nuovo Prepare o modifiche alle claim)"
         ),
         "disclosure.bullet_roster": (
-            "Versione roster <b>default {n}</b> · famiglia MedPsy · peer "
-            "MedGemma 1.5 dove rilevante — non unire epoche di roster diverse "
-            "in silenzio"
+            "Versione elenco modelli <b>default {n}</b> — non mescolare "
+            "risultati di epoche di elenco diverse in silenzio"
         ),
         "disclosure.bullet_recovery": (
-            "Recovery locale <b>limitato</b> (≠ stesse armi repair/fill del cloud)"
+            "La riparazione locale delle risposte rotte è <b>limitata</b> "
+            "(non sono gli stessi strumenti delle API cloud)"
         ),
         "disclosure.scope_same": "Same-case",
         "disclosure.scope_portfolio": "Portfolio",
@@ -1397,15 +1401,19 @@ _STRINGS = {
         "disclosure.footer_n_default": "N=score riusciti",
         "disclosure.footer_scope": "ambito",
         "disclosure.footer_roster": "roster",
-        "disclosure.footer_cohort": "cohort",
+        "disclosure.footer_cohort": "set",
         "disclosure.footer_exploratory": "esplorativo",
+        "disclosure.footer_gloss": (
+            "media±std = media ± dispersione · N = punteggi riusciti · "
+            "ambito = quali run sono mediati · set = id del gruppo di confronto"
+        ),
         "disclosure.confirm_new_cohort": (
-            "**Nuovo Confirm = nuovo cohort** — Rebuild raggruppa solo "
-            "`cohort_id` corrispondenti{hash}."
+            "**Confermare di nuovo apre un nuovo set di confronto** — Rebuild "
+            "media solo le run dello stesso set{hash}."
         ),
         "disclosure.rebuild_scope_loud": (
-            "**Ambito media: {scope}** — Same-case = un gold cohort immutabile; "
-            "Portfolio = ultimi ≤N successful/modello tra casi (può "
+            "**Ambito media: {scope}** — Same-case = un riferimento bloccato; "
+            "Portfolio = ultimi ≤N punteggi/modello tra casi (può "
             "sovrappesare i casi recenti); Bilanciati = Case1→K a rotazione "
             "per peso circa uguale tra casi."
         ),

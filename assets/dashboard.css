@@ -532,6 +532,13 @@ span[data-testid="stIconMaterial"],
   line-height: 1.35 !important;
   word-break: break-word !important;
 }
+.screenshot-footer-gloss {
+  margin-top: 0.28rem !important;
+  font-family: "IBM Plex Sans", system-ui, sans-serif !important;
+  font-size: 0.68rem !important;
+  color: #94a3b8 !important;
+  line-height: 1.35 !important;
+}
 .steps-bar {
   display: flex !important;
   flex-direction: row !important;
@@ -819,42 +826,110 @@ div[data-testid="stButton"] button[data-testid="baseButton-secondary"] {
   background-color: #1e293b !important;
   border: 1px solid #64748b !important;
 }
-/* New case — simple yellow/amber, first control in the case-slot bar */
+/* New case — green (create/select empty slot); selected case chip = yellow below */
+:root {
+  --case-new-bg: #16a34a;
+  --case-new-bg-hover: #22c55e;
+  --case-new-fg: #f0fdf4;
+  --case-new-border: #15803d;
+  --case-selected-bg: #facc15;
+  --case-selected-bg-hover: #fde047;
+  --case-selected-fg: #1c1917;
+  --case-selected-border: #ca8a04;
+}
 div.st-key-case_slot_new_btn button,
 div[class*="st-key-case_slot_new_btn"] button,
 div[class*="st-key-case_slot_new_btn"] button[kind="secondary"],
 div[class*="st-key-case_slot_new_btn"] button[data-testid="baseButton-secondary"],
 div[class*="st-key-case_slot_new_btn"] button[kind="primary"],
-div[class*="st-key-case_slot_new_btn"] button[data-testid="baseButton-primary"] {
-  background: #facc15 !important;
-  background-color: #facc15 !important;
-  border: 2px solid #ca8a04 !important;
-  color: #1c1917 !important;
+div[class*="st-key-case_slot_new_btn"] button[data-testid="baseButton-primary"],
+div.st-key-beta_case_new_btn button,
+div[class*="st-key-beta_case_new_btn"] button,
+div[class*="st-key-beta_case_new_btn"] button[kind="secondary"],
+div[class*="st-key-beta_case_new_btn"] button[data-testid="baseButton-secondary"],
+div[class*="st-key-beta_case_new_btn"] button[kind="primary"],
+div[class*="st-key-beta_case_new_btn"] button[data-testid="baseButton-primary"] {
+  background: var(--case-new-bg) !important;
+  background-color: var(--case-new-bg) !important;
+  border: 2px solid var(--case-new-border) !important;
+  color: var(--case-new-fg) !important;
   font-weight: 750 !important;
 }
 div.st-key-case_slot_new_btn button p,
 div.st-key-case_slot_new_btn button span,
 div[class*="st-key-case_slot_new_btn"] button p,
-div[class*="st-key-case_slot_new_btn"] button span {
-  color: #1c1917 !important;
+div[class*="st-key-case_slot_new_btn"] button span,
+div.st-key-beta_case_new_btn button p,
+div.st-key-beta_case_new_btn button span,
+div[class*="st-key-beta_case_new_btn"] button p,
+div[class*="st-key-beta_case_new_btn"] button span {
+  color: var(--case-new-fg) !important;
 }
 div.st-key-case_slot_new_btn button:hover:not(:disabled),
-div[class*="st-key-case_slot_new_btn"] button:hover:not(:disabled) {
-  background: #fde047 !important;
-  background-color: #fde047 !important;
-  border-color: #a16207 !important;
+div[class*="st-key-case_slot_new_btn"] button:hover:not(:disabled),
+div.st-key-beta_case_new_btn button:hover:not(:disabled),
+div[class*="st-key-beta_case_new_btn"] button:hover:not(:disabled) {
+  background: var(--case-new-bg-hover) !important;
+  background-color: var(--case-new-bg-hover) !important;
+  border-color: #166534 !important;
+  color: #052e16 !important;
+}
+div.st-key-case_slot_new_btn button:hover:not(:disabled) p,
+div.st-key-case_slot_new_btn button:hover:not(:disabled) span,
+div[class*="st-key-case_slot_new_btn"] button:hover:not(:disabled) p,
+div[class*="st-key-case_slot_new_btn"] button:hover:not(:disabled) span,
+div.st-key-beta_case_new_btn button:hover:not(:disabled) p,
+div.st-key-beta_case_new_btn button:hover:not(:disabled) span,
+div[class*="st-key-beta_case_new_btn"] button:hover:not(:disabled) p,
+div[class*="st-key-beta_case_new_btn"] button:hover:not(:disabled) span {
+  color: #052e16 !important;
 }
 div.st-key-case_slot_new_btn button:disabled,
-div[class*="st-key-case_slot_new_btn"] button:disabled {
-  background: #a16207 !important;
-  border-color: #854d0e !important;
-  color: #fef9c3 !important;
+div[class*="st-key-case_slot_new_btn"] button:disabled,
+div.st-key-beta_case_new_btn button:disabled,
+div[class*="st-key-beta_case_new_btn"] button:disabled {
+  background: #166534 !important;
+  border-color: #14532d !important;
+  color: #bbf7d0 !important;
 }
 div.st-key-case_slot_new_btn button:disabled p,
 div.st-key-case_slot_new_btn button:disabled span,
 div[class*="st-key-case_slot_new_btn"] button:disabled p,
-div[class*="st-key-case_slot_new_btn"] button:disabled span {
-  color: #fef9c3 !important;
+div[class*="st-key-case_slot_new_btn"] button:disabled span,
+div.st-key-beta_case_new_btn button:disabled p,
+div.st-key-beta_case_new_btn button:disabled span,
+div[class*="st-key-beta_case_new_btn"] button:disabled p,
+div[class*="st-key-beta_case_new_btn"] button:disabled span {
+  color: #bbf7d0 !important;
+}
+/* Selected case chip (active Case 1…N) — yellow */
+div[class*="st-key-case_slot_btn_"] button[kind="primary"],
+div[class*="st-key-case_slot_btn_"] button[data-testid="baseButton-primary"],
+div[class*="st-key-beta_case_btn_"] button[kind="primary"],
+div[class*="st-key-beta_case_btn_"] button[data-testid="baseButton-primary"] {
+  background: var(--case-selected-bg) !important;
+  background-color: var(--case-selected-bg) !important;
+  border: 2px solid var(--case-selected-border) !important;
+  color: var(--case-selected-fg) !important;
+  font-weight: 750 !important;
+}
+div[class*="st-key-case_slot_btn_"] button[kind="primary"] p,
+div[class*="st-key-case_slot_btn_"] button[kind="primary"] span,
+div[class*="st-key-case_slot_btn_"] button[data-testid="baseButton-primary"] p,
+div[class*="st-key-case_slot_btn_"] button[data-testid="baseButton-primary"] span,
+div[class*="st-key-beta_case_btn_"] button[kind="primary"] p,
+div[class*="st-key-beta_case_btn_"] button[kind="primary"] span,
+div[class*="st-key-beta_case_btn_"] button[data-testid="baseButton-primary"] p,
+div[class*="st-key-beta_case_btn_"] button[data-testid="baseButton-primary"] span {
+  color: var(--case-selected-fg) !important;
+}
+div[class*="st-key-case_slot_btn_"] button[kind="primary"]:hover:not(:disabled),
+div[class*="st-key-case_slot_btn_"] button[data-testid="baseButton-primary"]:hover:not(:disabled),
+div[class*="st-key-beta_case_btn_"] button[kind="primary"]:hover:not(:disabled),
+div[class*="st-key-beta_case_btn_"] button[data-testid="baseButton-primary"]:hover:not(:disabled) {
+  background: var(--case-selected-bg-hover) !important;
+  background-color: var(--case-selected-bg-hover) !important;
+  border-color: #a16207 !important;
 }
 /* Run QVAC only — vivid amber (clearly not Single/Multi teal/slate) */
 div.st-key-qvac_only_btn button,

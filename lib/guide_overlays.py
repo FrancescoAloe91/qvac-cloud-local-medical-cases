@@ -31,60 +31,50 @@ def guides_always_available_html(*, qvac_status_line: str = "") -> str:
     """Inject Setup + Ranking guides once in main DOM (sidebar labels toggle these)."""
     setup_status = html.escape(qvac_status_line or "")
     setup_body = f"""
-<h3>What this benchmark uses for MedPsy</h3>
+<h3>What you need for on-device MedPsy</h3>
 <ul>
-  <li><b>QVAC SDK</b> (<code>@qvac/sdk</code>) via local <code>sidecar/</code></li>
-  <li><b>MedPsy-4B GGUF</b> under <code>models/</code> (GPU/Metal preferred)</li>
-  <li><b>Node.js ≥ 22</b> to run the sidecar</li>
+  <li><b>QVAC software</b> running locally (the sidecar folder)</li>
+  <li><b>MedPsy model file</b> in the <code>models/</code> folder</li>
+  <li><b>Node.js 22+</b> from nodejs.org</li>
 </ul>
 <h3>Setup after cloning</h3>
 <ol>
-  <li>Install Node.js ≥ 22 from nodejs.org</li>
-  <li>Place MedPsy GGUF in <code>models/</code> (or set <code>QVAC_MODEL_PATH</code>)</li>
-  <li>From repo root, in a second terminal:</li>
+  <li>Install Node.js 22+ from nodejs.org</li>
+  <li>Put the MedPsy model file in <code>models/</code></li>
+  <li>From the project folder, in a second terminal:</li>
 </ol>
 <pre>./scripts/setup_qvac_sidecar.sh
 cd sidecar &amp;&amp; npm start</pre>
-<p>Leave that terminal open, then refresh this page.
-Check <code>curl -s http://127.0.0.1:8787/health</code>.</p>
-<p>When the sidecar is running, MedPsy is included (on-device, $0 API).</p>
+<p>Leave that terminal open, then refresh this page.</p>
+<p>When the sidecar is running, MedPsy is included (on your machine, $0 API).</p>
 <p><b>Status on this machine:</b> {setup_status}</p>
-<p style="opacity:.8;font-size:0.8rem">This window is browser-only — opening it does <b>not</b> pause collect/judge.</p>
+<p style="opacity:.8;font-size:0.8rem">This window is browser-only — opening it does <b>not</b> pause a run.</p>
 """
     rank_body = """
 <h3>How ranking works</h3>
-<p>Blind DeepSeek R1 · strict evidence validation · whole-run independent verifier on anomalies ·
-technical failures are N/A and exact ties remain ties.</p>
-<pre>Section score = 50% graded coverage + 35% clinical quality + 15% discipline
-coverage = continuous 0..1 for every frozen reference claim
-helpful / neutral additions = no penalty
-verified unsupported / contradictory / dangerous = proportional discipline
-unverifiable harmful additions = dropped (audit marker; not fail-closed)
-Clinical Composite Score = 30% diagnosis + 25% safety + 20% plan + 15% tests + 10% urgency</pre>
-<table>
-  <tr><th>Signal</th><th>Role</th><th>Meaning</th></tr>
-  <tr><td>Graded coverage</td><td>50%</td><td>Partial and complete semantic coverage on a 0..1 continuum</td></tr>
-  <tr><td>Clinical quality</td><td>35%</td><td>Coherence, prioritization, usefulness and caution</td></tr>
-  <tr><td>Discipline</td><td>15%</td><td>Verified unsupported / contradictory / dangerous additions only; unverifiable harm is dropped, not auto-penalized</td></tr>
-  <tr><td>Failure status</td><td>N/A</td><td>Transport, timeout, malformed evidence or cancellation</td></tr>
-</table>
-<p>Synonyms and faithful paraphrases count. Every match/contradiction must cite candidate evidence.
-Judge is an uncalibrated LLM-as-judge unless human calibration fixtures have been checked.
-Quality is independent of coverage by design (v4). Verifier = systemic re-judge, not human calibration.
-UI shows <b>Clinical Composite</b>; artifact JSON may still use the field name <code>accuracy</code> for compatibility.</p>
-<p>Each model with ≥1 scored run enters the mean ranking (sorted by mean of scored runs),
-independently of other models' N/A results. Incomplete coverage (Failed% &gt; 0 or scored &lt; requested)
-keeps the rank and shows a <b>partial</b> badge — technical N/A are never clinical zeros.
-Every mean keeps its own N; missing scores are never imputed.
-N=5 remains exploratory (not bit-identical reruns) and measures repeatability on this reference, not general clinical validity.
-Local format-repair (same parser as cloud) only re-asks A# markers — it does not invent clinical content.
-Screenshots should keep at least one honesty caption (API≠web · reference-relative · N=5).
-<strong>Comprehension</strong> and <strong>Structured A1–A5</strong> History / Rebuild means are never pooled.</p>
-<p style="opacity:.8;font-size:0.8rem">This window is browser-only — opening it does <b>not</b> pause collect/judge.</p>
+<p>A blind AI judge (DeepSeek R1) scores each answer against your locked reference.
+Technical failures count as N/A (skipped), not as clinical zeros. Exact ties stay ties.</p>
+<p><b>In plain words, each section score mixes:</b></p>
+<ul>
+  <li><b>~50% coverage</b> — how much of the reference checklist the answer covers</li>
+  <li><b>~35% clinical quality</b> — coherence, priorities, usefulness, caution</li>
+  <li><b>~15% discipline</b> — penalties only when the judge can verify unsupported,
+  contradictory, or dangerous additions</li>
+</ul>
+<p>The overall <b>Clinical Composite</b> weights diagnosis, safety, plan, tests, and urgency.
+Synonyms and faithful paraphrases count. The judge is not human-calibrated unless
+calibration fixtures have been checked.</p>
+<p>Models with at least one scored run enter the average ranking. Incomplete runs keep
+their rank and show a <b>partial</b> badge. Missing scores are never invented.</p>
+<p>N=5 is exploratory — it measures repeatability on this reference, not general
+medical validity. Screenshots should keep at least one honesty note
+(API ≠ browser apps · scores vs your reference · N=5).</p>
+<p><strong>Comprehension</strong> and <strong>Structured</strong> averages are never mixed.</p>
+<p style="opacity:.8;font-size:0.8rem">This window is browser-only — opening it does <b>not</b> pause a run.</p>
 """
     return (
-        client_guide_overlay("guide_setup", "QVAC SDK + MedPsy setup guide", setup_body)
-        + client_guide_overlay("guide_rank", "How ranking is calculated", rank_body)
+        client_guide_overlay("guide_setup", "QVAC + MedPsy setup", setup_body)
+        + client_guide_overlay("guide_rank", "How ranking works", rank_body)
     )
 
 
