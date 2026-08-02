@@ -1120,7 +1120,12 @@ def history_mean_rebuild_dialog():
         or len(filter_current_roster_rows(summary.ranking_mean or []))
         or DEFAULT_ROSTER_VERSION
     )
-    _dlg_pack_rev = str(payload.get("pack_revision_label") or _pack_rev_meta or "")
+    _dlg_pack_rev = str(
+        payload.get("pack_revision_label")
+        or st.session_state.get("_ui_pack_revision")
+        or _pack_rev_meta
+        or ""
+    )
     st.markdown(
         honesty_block_html(
             lang=_ui_lang(),
@@ -6913,8 +6918,8 @@ with _rebuild_zone:
                 track=str(benchmark_track or "controlled"),
                 model_ids=_portfolio_model_ids,
                 preloaded=_preloaded_artifacts() if _HOSTED_NO_PLAINTEXT else None,
-                pack_revision=_pack_rev_meta,
-                current_pack_revision=_pack_rev_meta,
+                pack_revision=int(_pack_rev_now),
+                current_pack_revision=int(_pack_rev_now),
             )
         elif _rebuild_scope == "balanced_cases":
             _built = rebuild_balanced_cases_from_history(
@@ -6925,8 +6930,8 @@ with _rebuild_zone:
                 model_ids=_portfolio_model_ids,
                 ordered_stem_keys=_ordered_case_stems,
                 preloaded=_preloaded_artifacts() if _HOSTED_NO_PLAINTEXT else None,
-                pack_revision=_pack_rev_meta,
-                current_pack_revision=_pack_rev_meta,
+                pack_revision=int(_pack_rev_now),
+                current_pack_revision=int(_pack_rev_now),
             )
         else:
             # Selected-case only: preload slot-scoped artifacts so other Case stems
@@ -6940,8 +6945,8 @@ with _rebuild_zone:
                 model_ids=_rebuild_model_ids,
                 preloaded=_same_preloaded,
                 scoring_version=SCORING_VERSION,
-                pack_revision=_pack_rev_meta,
-                current_pack_revision=_pack_rev_meta,
+                pack_revision=int(_pack_rev_now),
+                current_pack_revision=int(_pack_rev_now),
             )
         if not _built.get("ok"):
             st.warning(_built.get("reason") or "Rebuild failed.")

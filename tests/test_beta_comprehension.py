@@ -420,6 +420,7 @@ def test_rebuild_cross_track_isolation(tmp_path: Path):
     from tests.test_portfolio_rebuild import ROSTER, _write
     from benchmark.report import (
         list_portfolio_runs,
+        rebuild_balanced_cases_from_history,
         rebuild_portfolio_from_history,
         scoring_versions_equivalent,
     )
@@ -445,6 +446,16 @@ def test_rebuild_cross_track_isolation(tmp_path: Path):
             acc=70.0 + i,
             scoring_version=COMP_SV,
         )
+    # Legacy wire stamp must still dual-read into Comprehension pools only.
+    _write(
+        tmp_path,
+        run_id="legacy-beta",
+        case_id="beta_comprehension",
+        finished_at="2026-08-02T20:00:00Z",
+        cohort_id="cohort-legacy-beta",
+        acc=66.0,
+        scoring_version="beta-comprehension-v1",
+    )
     graded = list_portfolio_runs(
         tmp_path, n=10, scoring_version="graded-clinical-v4", track="controlled"
     )
@@ -452,15 +463,17 @@ def test_rebuild_cross_track_isolation(tmp_path: Path):
         tmp_path, n=10, scoring_version=COMP_SV, track="controlled"
     )
     assert len(graded) == 3
-    assert len(comp) == 3
+    assert len(comp) == 4
     assert all(a.scoring_version == "graded-clinical-v4" for _, a in graded)
     assert all(
         scoring_versions_equivalent(a.scoring_version, COMP_SV) for _, a in comp
     )
+    assert all(a.case_id == "caseC" for _, a in graded)
     built = rebuild_portfolio_from_history(
         tmp_path, n=5, scoring_version=COMP_SV, track="controlled", model_ids=ROSTER
     )
     assert built.get("ok")
+    assert "caseC" not in (built.get("case_ids") or [])
     assert built.get("pack_revision_label") is not None
     graded_built = rebuild_portfolio_from_history(
         tmp_path,
@@ -470,9 +483,14 @@ def test_rebuild_cross_track_isolation(tmp_path: Path):
         model_ids=ROSTER,
     )
     assert graded_built.get("ok")
-    assert graded_built["summary"].case_id != built["summary"].case_id or (
-        graded_built["summary"].n != built["summary"].n
+    assert graded_built.get("case_ids") == ["caseC"]
+    assert CASE_ID not in (graded_built.get("case_ids") or [])
+    assert "beta_comprehension" not in (graded_built.get("case_ids") or [])
+    balanced = rebuild_balanced_cases_from_history(
+        tmp_path, n=5, scoring_version=COMP_SV, track="controlled", model_ids=ROSTER
     )
+    assert balanced.get("ok")
+    assert "caseC" not in (balanced.get("case_ids") or [])
 
 
 def test_pack_revision_missing_matches_current_on_rebuild(tmp_path: Path):
@@ -557,3 +575,39 @@ def test_history_dual_read_includes_legacy_beta_stamp(tmp_path: Path):
         if scoring_versions_equivalent(str(a.scoring_version or ""), SCORING_VERSION)
     ]
     assert len(hist) == 2
+
+
+def test_cohort_id_omits_current_pack_rev_preserves_means():
+    """pack_revision ≤3 must not change cohort_id vs pre-stamp History."""
+    from benchmark.gold import COHORT_HASH_PACK_REVISION_FROM, cohort_id
+
+    section = GoldSection(
+        summary="x",
+        claims=[GoldClaim(id="diagnosis-1", text="dx", source_quote="dx")],
+    )
+    gold = ConfirmedGold(
+        raw_text="dx",
+        sections={
+            "diagnosis": section,
+            "tests": section,
+            "urgency": section,
+            "safety": section,
+            "plan": section,
+        },
+        confirmed_at="2026-01-01T00:00:00Z",
+    )
+    kwargs = dict(
+        case_stem="stem",
+        gold=gold,
+        prompt_version="comprehension-v1",
+        model_config={"candidates": [{"key": "chatgpt"}]},
+        benchmark_track="controlled",
+        scoring_version=SCORING_VERSION,
+    )
+    bare = cohort_id(**kwargs)
+    stamped3 = cohort_id(**kwargs, pack_revision=3)
+    stamped0 = cohort_id(**kwargs, pack_revision=0)
+    assert bare == stamped3 == stamped0
+    assert COHORT_HASH_PACK_REVISION_FROM == 4
+    stamped4 = cohort_id(**kwargs, pack_revision=4)
+    assert stamped4 != bare

@@ -1175,7 +1175,7 @@ def is_mean_poolable_run(art: RunArtifact) -> bool:
     judge / timeout / empty) while others may still be valid — those N/A must
     count toward Failed %, so partial runs stay in the pool.
 
-    ``cancelled`` / ``failed`` = abort or hard stop; excluded from official /
+    ``cancelled`` / ``failed`` = abort or hard stop; excluded from protocol /
     rebuild means (STOP / crash stamps must not dilute Failed or means).
     """
     status = str(art.run_status or "complete").strip().lower()
