@@ -231,6 +231,27 @@ def test_ux_parity_shared_shell_on_both_tracks():
     assert not scoring_versions_equivalent("comprehension-v1", "graded-clinical-v4")
 
 
+def test_comprehension_guide_portal_and_sidebar_reopen_control():
+    """Comprehension must load the same guide portal as Structured; header CSS keeps >>."""
+    root = Path(__file__).resolve().parents[1]
+    home = (root / "app.py").read_text(encoding="utf-8")
+    structured = (root / "pages" / "structured_graded.py").read_text(encoding="utf-8")
+    css = (root / "assets" / "dashboard.css").read_text(encoding="utf-8")
+    guides = (root / "lib" / "guide_overlays.py").read_text(encoding="utf-8")
+    assert "dashboard_portal.js" in home
+    assert "dashboard_portal.js" in structured
+    assert "guides_always_available_html" in home
+    assert 'for="guide_setup"' in guides
+    assert 'for="guide_rank"' in guides
+    # Collapse reopen (>>) lives in stHeader — must not display:none the whole header.
+    assert "stExpandSidebarButton" in css
+    header_block = css.split('header[data-testid="stHeader"]', 1)[1].split(
+        '[data-testid="stToolbar"]', 1
+    )[0]
+    assert "display: none" not in header_block
+    assert "transparent" in header_block
+
+
 def test_new_beta_case_slot_does_not_mutate_pack():
     pack_slots = list_beta_slots()
     n_pack = len(pack_slots)

@@ -58,14 +58,35 @@ h1, h2, h3, h4 { font-family: 'Sora', 'Inter', sans-serif !important; letter-spa
     opacity: 0.6;
 }
 
+/* Transparent header — keep stExpandSidebarButton (>>) clickable when collapsed */
 header[data-testid="stHeader"],
 .stApp > header {
-    display: none !important;
+    background: transparent !important;
+    background-color: transparent !important;
+    box-shadow: none !important;
+    border: none !important;
+    height: 0 !important;
+    min-height: 0 !important;
+    overflow: visible !important;
+    pointer-events: none !important;
 }
 [data-testid="stToolbar"],
 [data-testid="stDecoration"],
 [data-testid="stStatusWidget"] {
     display: none !important;
+}
+[data-testid="stExpandSidebarButton"] {
+    pointer-events: auto !important;
+    display: flex !important;
+    visibility: visible !important;
+    position: fixed !important;
+    top: 0.55rem !important;
+    left: 0.55rem !important;
+    z-index: 1000001 !important;
+    border-radius: 8px !important;
+    border: 1px solid #334155 !important;
+    background: #1e293b !important;
+    color: #e2e8f0 !important;
 }
 .block-container { padding-top: 1.4rem; padding-bottom: 1.4rem; max-width: 1480px; }
 [data-testid="stMainBlockContainer"] { padding-top: 0.5rem; }

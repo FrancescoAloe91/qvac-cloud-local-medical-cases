@@ -190,29 +190,34 @@ div[class*="st-key-beta_case_btn_"] button[data-testid="baseButton-secondary"] s
     unsafe_allow_html=True,
 )
 
-# Same rank-live / provisional board chrome as Structured dashboard.
-_ASSETS = Path(__file__).resolve().parent / "assets" / "dashboard.css"
+# Same rank-live / provisional board chrome + guide portal as Structured.
+# Portal JS is required: overlays ship with inline display:none !important, so
+# CSS :checked alone cannot open Setup / How ranking from sidebar labels.
+_ASSETS_DIR = Path(__file__).resolve().parent / "assets"
+_ASSETS = _ASSETS_DIR / "dashboard.css"
 if _ASSETS.is_file():
     _css = _ASSETS.read_text(encoding="utf-8")
     _css_js = _css.replace("\\", "\\\\").replace("`", "\\`").replace("${", "\\${")
+    _css_inject = f"""
+(function(){{
+  var doc;
+  try {{ doc = window.parent && window.parent.document ? window.parent.document : document; }}
+  catch (e) {{ doc = document; }}
+  var s = doc.getElementById('qvac-comprehension-dashboard-css');
+  if (!s) {{
+    s = doc.createElement('style');
+    s.id = 'qvac-comprehension-dashboard-css';
+    doc.head.appendChild(s);
+  }}
+  s.textContent = `{_css_js}`;
+}})();
+"""
+    _portal_path = _ASSETS_DIR / "dashboard_portal.js"
+    _portal_js = _portal_path.read_text(encoding="utf-8") if _portal_path.is_file() else ""
     components.html(
-        f"""
-        <script>
-        (function(){{
-          var doc;
-          try {{ doc = window.parent && window.parent.document ? window.parent.document : document; }}
-          catch (e) {{ doc = document; }}
-          var s = doc.getElementById('qvac-comprehension-dashboard-css');
-          if (!s) {{
-            s = doc.createElement('style');
-            s.id = 'qvac-comprehension-dashboard-css';
-            doc.head.appendChild(s);
-          }}
-          s.textContent = `{_css_js}`;
-        }})();
-        </script>
-        """,
+        f"<script>{_css_inject}\n{_portal_js}</script>",
         height=0,
+        width=0,
     )
 
 # --- workspace (same owner scope when key is in session) ---
