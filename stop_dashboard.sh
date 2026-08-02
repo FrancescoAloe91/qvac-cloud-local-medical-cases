@@ -1,6 +1,6 @@
 #!/bin/bash
 # Stop Streamlit dashboard + QVAC sidecar. Does not start/stop Ollama.
-PIDFILE="/tmp/qvac-medical-cases-streamlit.pid"
+PIDFILE="/tmp/qvac-cloud-local-medical-cases-streamlit.pid"
 SIDECAR_PIDFILE="/tmp/qvac-sidecar.pid"
 PORT=8501
 SIDECAR_PORT=8787

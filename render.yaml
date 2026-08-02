@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: qvac-medical-cases
+    name: qvac-cloud-local-medical-cases
     runtime: python
     plan: free
     buildCommand: pip install -r requirements.txt

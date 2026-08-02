@@ -28,7 +28,7 @@ cat > "$APP/Contents/Info.plist" <<'EOF'
 	<key>CFBundleExecutable</key>
 	<string>launcher</string>
 	<key>CFBundleIdentifier</key>
-	<string>com.qvac.medical-cases.dashboard</string>
+	<string>com.qvac.cloud-local-medical-cases.dashboard</string>
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>

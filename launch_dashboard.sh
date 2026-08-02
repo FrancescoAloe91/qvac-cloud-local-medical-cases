@@ -7,8 +7,8 @@ cd "$PROJECT_DIR"
 
 PORT=8501
 URL="http://localhost:${PORT}"
-LOG="/tmp/qvac-medical-cases-streamlit.log"
-PIDFILE="/tmp/qvac-medical-cases-streamlit.pid"
+LOG="/tmp/qvac-cloud-local-medical-cases-streamlit.log"
+PIDFILE="/tmp/qvac-cloud-local-medical-cases-streamlit.pid"
 SIDECAR_LOG="/tmp/qvac-sidecar.log"
 SIDECAR_PIDFILE="/tmp/qvac-sidecar.pid"
 SIDECAR_URL="http://127.0.0.1:8787"
