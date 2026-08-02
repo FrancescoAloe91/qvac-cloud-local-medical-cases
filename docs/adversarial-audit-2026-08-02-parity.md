@@ -1,7 +1,8 @@
 # Adversarial audit — 2026-08-02 (parity · 10-case Comprehension)
 
 Ruthless critic after UX parity + user-facing de-beta. Scoring formulas unchanged.
-Wire protocol ids remain `beta-*` for History continuity.
+Primary wire ids are `comprehension-v1` / `comprehension`; legacy `beta-*` stamps
+still pool via dual-read for History continuity.
 
 ## Product framing
 
@@ -50,9 +51,13 @@ Shared spend Yes/Cancel on both tracks (incl. MedPsy-only on Structured).
 ### H6 — Statistical overclaim
 x-post requires pack_rev + case list / suite label; exploratory only.
 
+### H7 — pack_rev cosmetic (fixed)
+Rebuild now filters by stamped `pack_revision` (missing ≡ current rev); footer derives from pooled artifacts.
+
 ## Medium
 
-- Primary wire ids are `comprehension-v1` / `comprehension`; legacy `beta-*` History still pools via dual-read.
+- Primary wire ids: **`comprehension-v1`** / **`comprehension`** (Comprehension) vs **`graded-clinical-v4`** (Structured); legacy **`beta-comprehension-v1`** / **`beta_comprehension`** History still pools via dual-read on Comprehension only.
+- **`pack_revision`** stamped on new artifacts; Rebuild filters by rev with missing ≡ current; footer shows pooled rev or `mixed`.
 - `accuracy` field alias remains quote-tweetable — keep Clinical Composite wording in UI.
 - True discursive gold / soft-section parse rate = backlog.
 

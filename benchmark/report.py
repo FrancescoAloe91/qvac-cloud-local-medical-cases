@@ -73,6 +73,63 @@ def case_ids_equivalent(stored: str, want: str) -> bool:
     return False
 
 
+def artifact_pack_revision(art: RunArtifact, *, current: int = 0) -> int:
+    """Stored pack_revision (top-level or models_config), or *current* when missing.
+
+    Missing/empty stamps resolve to *current* so pre-stamp History keeps
+    pooling with today's pack (means must not split on the first persist).
+    """
+    raw = getattr(art, "pack_revision", None)
+    if raw is None or raw == "":
+        mc = art.models_config or {}
+        raw = mc.get("pack_revision") if isinstance(mc, dict) else None
+    if raw is None or raw == "":
+        return max(0, int(current))
+    try:
+        return max(0, int(raw))
+    except (TypeError, ValueError):
+        return max(0, int(current))
+
+
+def pack_revision_matches(
+    art: RunArtifact, want: int, *, current: int
+) -> bool:
+    """True when artifact pack rev equals *want*; missing/empty ≡ *current*.
+
+    Unstamped artifacts always match (treated as current), so existing
+    Comprehension History keeps entering Rebuild after pack_rev persist.
+    """
+    want_rev = max(0, int(want))
+    if want_rev <= 0:
+        return True
+    raw = getattr(art, "pack_revision", None)
+    if raw is None or raw == "":
+        mc = art.models_config or {}
+        raw = mc.get("pack_revision") if isinstance(mc, dict) else None
+    if raw is None or raw == "":
+        return True
+    try:
+        stored = max(0, int(raw))
+    except (TypeError, ValueError):
+        return True
+    if stored <= 0:
+        return True
+    return stored == want_rev
+
+
+def pooled_pack_revision_label(
+    arts: Sequence[RunArtifact], *, current: int = 0
+) -> str:
+    """Footer label: single rev or ``mixed`` when pooled artifacts disagree."""
+    cur = max(0, int(current))
+    revs = {artifact_pack_revision(a, current=cur) for a in arts}
+    if not revs:
+        return str(cur) if cur else "—"
+    if len(revs) == 1:
+        return str(next(iter(revs)))
+    return "mixed"
+
+
 def reliability_from_cv(cv_pct: float) -> str:
     """Map coefficient of variation (%) → super_high / high / medium / low / very_low."""
     if cv_pct <= CV_SUPER_HIGH_MAX:
@@ -1133,6 +1190,8 @@ def list_portfolio_runs(
     track: str = "controlled",
     model_ids: Optional[Sequence[str]] = None,
     preloaded: Optional[Sequence[RunArtifact]] = None,
+    pack_revision: Optional[int] = None,
+    current_pack_revision: int = 0,
 ) -> List[Tuple[Optional[Path], RunArtifact]]:
     """Newest-first poolable runs across cases matching protocol filters.
 
@@ -1168,6 +1227,10 @@ def list_portfolio_runs(
         if not is_mean_poolable_run(art):
             continue
         if not scoring_versions_equivalent(art.scoring_version, want_sv):
+            continue
+        if pack_revision is not None and not pack_revision_matches(
+            art, int(pack_revision), current=int(current_pack_revision)
+        ):
             continue
         if str(art.benchmark_track or "").strip() != want_track:
             continue
@@ -1499,6 +1562,8 @@ def rebuild_multi_from_history(
     model_ids: Optional[Sequence[str]] = None,
     preloaded: Optional[Sequence[RunArtifact]] = None,
     scoring_version: Optional[str] = None,
+    pack_revision: Optional[int] = None,
+    current_pack_revision: int = 0,
 ) -> Dict[str, Any]:
     """
     Offline Multi×N: same immutable cohort only; ``n`` = max **successful**
@@ -1526,6 +1591,14 @@ def rebuild_multi_from_history(
             for pair in all_pairs
             if scoring_versions_equivalent(pair[1].scoring_version, want_sv)
         ]
+    if pack_revision is not None:
+        all_pairs = [
+            pair
+            for pair in all_pairs
+            if pack_revision_matches(
+                pair[1], int(pack_revision), current=int(current_pack_revision)
+            )
+        ]
     if not all_pairs:
         return {
             "ok": False,
@@ -1543,8 +1616,8 @@ def rebuild_multi_from_history(
             "ok": False,
             "reason": (
                 "Newest runs are legacy artifacts without a cohort manifest. "
-                "They remain available as experimental history but cannot enter an "
-                "official mean under the new protocol."
+                "They remain available as experimental history but cannot enter a "
+                "protocol-locked mean under the new scoring stamp."
             ),
             "available": len(legacy_pairs),
             "legacy_auto_rescore": True,
@@ -1631,6 +1704,9 @@ def rebuild_multi_from_history(
         "successful_only": True,
         "model_ids": list(want_keys),
         "ops_reliability": ops_reliability,
+        "pack_revision_label": pooled_pack_revision_label(
+            rescored_arts, current=int(current_pack_revision)
+        ),
     }
 
 
@@ -1642,6 +1718,8 @@ def rebuild_portfolio_from_history(
     track: str = "controlled",
     model_ids: Optional[Sequence[str]] = None,
     preloaded: Optional[Sequence[RunArtifact]] = None,
+    pack_revision: Optional[int] = None,
+    current_pack_revision: int = 0,
 ) -> Dict[str, Any]:
     """Offline exploratory mean: ≤N **successful non-zero** scores per model.
 
@@ -1664,6 +1742,8 @@ def rebuild_portfolio_from_history(
         track=track,
         model_ids=want_keys,
         preloaded=preloaded,
+        pack_revision=pack_revision,
+        current_pack_revision=current_pack_revision,
     )
     n_cases_all = count_distinct_stem_keys(a for _, a in all_eligible)
     if len(all_eligible) < 1:
@@ -1753,6 +1833,9 @@ def rebuild_portfolio_from_history(
         "case_ids": sorted({a.case_id for a in rescored_arts}),
         "ops_reliability": ops_reliability,
         "mixed_case_exploratory": True,
+        "pack_revision_label": pooled_pack_revision_label(
+            rescored_arts, current=int(current_pack_revision)
+        ),
     }
 
 
@@ -1852,6 +1935,8 @@ def rebuild_balanced_cases_from_history(
     model_ids: Optional[Sequence[str]] = None,
     ordered_stem_keys: Optional[Sequence[str]] = None,
     preloaded: Optional[Sequence[RunArtifact]] = None,
+    pack_revision: Optional[int] = None,
+    current_pack_revision: int = 0,
 ) -> Dict[str, Any]:
     """Offline mean: ≤N obs/model round-robin across Case slots (1→K→1…).
 
@@ -1869,6 +1954,8 @@ def rebuild_balanced_cases_from_history(
         track=track,
         model_ids=want_keys,
         preloaded=preloaded,
+        pack_revision=pack_revision,
+        current_pack_revision=current_pack_revision,
     )
     # Ordered stems: caller Case1…K bindings, else discover by newest activity.
     slots = [str(s).strip() for s in (ordered_stem_keys or []) if str(s).strip()]
@@ -1966,6 +2053,9 @@ def rebuild_balanced_cases_from_history(
         "ops_reliability": ops_reliability,
         "mixed_case_exploratory": True,
         "balanced_round_robin": True,
+        "pack_revision_label": pooled_pack_revision_label(
+            rescored_arts, current=int(current_pack_revision)
+        ),
     }
 
 

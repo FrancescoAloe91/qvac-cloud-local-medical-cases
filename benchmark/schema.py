@@ -180,6 +180,7 @@ class RunArtifact(BaseModel):
     notes: str = ""
     cohort_id: str = ""
     scoring_version: str = "graded-clinical-v4"
+    pack_revision: Optional[int] = None
     prompt_version: str = "gold-only-v1"
     benchmark_track: Literal[
         "controlled", "native_defaults", "legacy", "strict_controlled"

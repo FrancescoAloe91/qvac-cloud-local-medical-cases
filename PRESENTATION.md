@@ -72,10 +72,12 @@ Post template: [docs/x-post-template.md](docs/x-post-template.md).
 1. Paste case → Prepare → edit claims → Confirm (new Confirm = new cohort)
 2. Same roster · rigid A1–A5 answers · separate History / Rebuild
 
-### Scoring (shared math · graded-clinical-v4 formula)
+### Scoring (shared C/Q/D math · different wire stamps)
 
 **Per section:** 50% graded reference coverage · 35% clinical quality · 15% evidence discipline  
 **Section weights:** Diagnosis 30% · Safety 25% · Plan 20% · Tests 15% · Urgency 10%  
+
+Same formula weights on both tracks; wire `scoring_version` stamps differ (**`comprehension-v1`** on Home vs **`graded-clinical-v4`** on Structured) so History/Rebuild never pool across tracks.
 
 Exact ties remain ties. Technical N/A is not a synthetic zero.
 

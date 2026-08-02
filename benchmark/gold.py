@@ -590,6 +590,12 @@ def assign_deterministic_claim_ids(
     return out
 
 
+# Pack revisions below this threshold are omitted from cohort_id so stamped
+# rev-3 artifacts keep the same hash as pre-stamp History (missing field).
+# Future pack bumps (≥4) enter the hash and split cohorts honestly.
+COHORT_HASH_PACK_REVISION_FROM = 4
+
+
 def cohort_id(
     *,
     case_stem: str,
@@ -598,16 +604,24 @@ def cohort_id(
     model_config: Mapping[str, Any],
     benchmark_track: str,
     scoring_version: str = SCORING_VERSION,
+    pack_revision: int | None = None,
 ) -> str:
+    payload: Dict[str, Any] = {
+        "case_stem": _normalized(case_stem),
+        "gold": scoring_contract_dump(gold),
+        "scoring_version": str(scoring_version or SCORING_VERSION),
+        "prompt_version": prompt_version,
+        "models": model_config,
+        "track": benchmark_track,
+    }
+    try:
+        pr = int(pack_revision) if pack_revision is not None else None
+    except (TypeError, ValueError):
+        pr = None
+    if pr is not None and pr >= COHORT_HASH_PACK_REVISION_FROM:
+        payload["pack_revision"] = pr
     canonical = json.dumps(
-        {
-            "case_stem": _normalized(case_stem),
-            "gold": scoring_contract_dump(gold),
-            "scoring_version": str(scoring_version or SCORING_VERSION),
-            "prompt_version": prompt_version,
-            "models": model_config,
-            "track": benchmark_track,
-        },
+        payload,
         ensure_ascii=False,
         sort_keys=True,
         separators=(",", ":"),

@@ -57,6 +57,7 @@ from benchmark.report import (
     rebuild_balanced_cases_from_history,
     rebuild_multi_from_history,
     rebuild_portfolio_from_history,
+    scoring_versions_equivalent,
 )
 from benchmark.runner import (
     build_run_artifact,
@@ -368,13 +369,13 @@ def _paint_beta_rebuild_mean_body(
                 cohort_id=rb_cohort,
                 n_label=rb_n_label,
                 protocol_id=PROTOCOL_ID,
-                pack_revision=int(
-                    (st.session_state.get("beta_confirmed_gold") or {}).get(
-                        "pack_revision"
-                    )
-                    or 0
-                )
-                or None,
+                pack_revision_label=str(
+                    payload.get("pack_revision_label")
+                    or (
+                        st.session_state.get("beta_confirmed_gold") or {}
+                    ).get("pack_revision")
+                    or _pack_revision
+                ),
                 extra=(
                     "Comprehension · scored-only · exact Clinical Composite == 0 "
                     "treated like N/A"
@@ -812,7 +813,9 @@ frozen = st.session_state.get("beta_confirmed_gold")
 frozen_ok = (
     isinstance(frozen, dict)
     and frozen.get("case_slot") == case_row["slot"]
-    and str(frozen.get("scoring_version") or "") == BETA_SV
+    and scoring_versions_equivalent(
+        str(frozen.get("scoring_version") or ""), BETA_SV
+    )
 )
 if frozen_ok:
     st.success(
@@ -1219,6 +1222,9 @@ if _ready:
             update={"id": CASE_ID, "stem": live_stem, "title": case_title}
         )
         messages = beta_candidate_messages(stem=live_stem)
+        _art_pack_rev = int(
+            frozen_payload.get("pack_revision") or _pack_revision or 0
+        )
         cohort = build_cohort_id(
             case_stem=live_stem,
             gold=gold_obj,
@@ -1226,6 +1232,7 @@ if _ready:
             model_config=model_config,
             benchmark_track=benchmark_track,
             scoring_version=BETA_SV,
+            pack_revision=_art_pack_rev or None,
         )
         last_cohort = cohort
 
@@ -1535,6 +1542,7 @@ if _ready:
             ranking=ranking,
             cohort_id=cohort,
             scoring_version=BETA_SV,
+            pack_revision=_art_pack_rev or None,
             prompt_version=PROMPT_VERSION,
             benchmark_track=benchmark_track,
             models_config={
@@ -1550,6 +1558,7 @@ if _ready:
                 "comprehension_round_i": round_i,
                 "comprehension_rounds_total": total_rounds,
                 "comprehension_multi_case_batch": bool(_multi_case),
+                "pack_revision": _art_pack_rev,
             },
             run_status=(
                 "complete"
@@ -1865,6 +1874,8 @@ if st.button("Rebuild Comprehension mean", key="beta_rebuild_btn", type="primary
             scoring_version=BETA_SV,
             track=benchmark_track,
             model_ids=model_ids,
+            pack_revision=_pack_revision,
+            current_pack_revision=_pack_revision,
         )
     elif _scope == "balanced_cases":
         # Comprehension pack slots are Case 1…K; rebuild helper discovers stem order.
@@ -1874,6 +1885,8 @@ if st.button("Rebuild Comprehension mean", key="beta_rebuild_btn", type="primary
             scoring_version=BETA_SV,
             track=benchmark_track,
             model_ids=model_ids,
+            pack_revision=_pack_revision,
+            current_pack_revision=_pack_revision,
         )
     else:
         cohort = st.session_state.get("beta_last_cohort")
@@ -1884,6 +1897,8 @@ if st.button("Rebuild Comprehension mean", key="beta_rebuild_btn", type="primary
             cohort_id=cohort,
             model_ids=model_ids,
             scoring_version=BETA_SV,
+            pack_revision=_pack_revision,
+            current_pack_revision=_pack_revision,
         )
     if not (built or {}).get("ok"):
         st.session_state["beta_rebuild_result"] = built or {}
@@ -1911,6 +1926,11 @@ elif isinstance(_rb, dict) and _rb and not _rb.get("ok"):
 
 _hist = artifacts_for_case(WORKSPACE_DIR, CASE_ID, limit=20)
 _beta_hist = [
-    a for _, a in _hist if str(a.scoring_version or "") == BETA_SV
+    a
+    for _, a in _hist
+    if scoring_versions_equivalent(str(a.scoring_version or ""), BETA_SV)
 ]
-st.caption(f"Comprehension History for `{CASE_ID}`: {len(_beta_hist)} recent artifact(s) in workspace.")
+st.caption(
+    f"Comprehension History for `{CASE_ID}` · wire `{BETA_SV}` (+ legacy dual-read): "
+    f"{len(_beta_hist)} recent artifact(s) in workspace."
+)

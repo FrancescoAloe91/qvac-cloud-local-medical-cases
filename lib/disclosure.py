@@ -109,6 +109,7 @@ def screenshot_footer_html(
     n_label: Optional[str] = None,
     extra: Optional[str] = None,
     pack_revision: Optional[int] = None,
+    pack_revision_label: Optional[str] = None,
     protocol_id: Optional[str] = None,
 ) -> str:
     """Compact footer under mean tables/charts (screenshot-friendly)."""
@@ -123,8 +124,10 @@ def screenshot_footer_html(
         t("disclosure.footer_exploratory", lang),
     ]
     if protocol_id:
-        bits.append(f"protocol={html.escape(str(protocol_id))}")
-    if pack_revision is not None:
+        bits.append(f"protocol={str(protocol_id)}")
+    if pack_revision_label:
+        bits.append(f"pack_rev={str(pack_revision_label)}")
+    elif pack_revision is not None:
         bits.append(f"pack_rev={int(pack_revision)}")
     if extra:
         bits.append(str(extra))

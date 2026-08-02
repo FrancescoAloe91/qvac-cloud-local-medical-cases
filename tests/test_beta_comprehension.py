@@ -406,3 +406,154 @@ def test_cohort_id_differs_for_beta_scoring_version():
     assert a != b
     assert CASE_ID == "comprehension"
     assert PROTOCOL_ID == SCORING_VERSION
+
+
+def test_comprehension_and_graded_pack_json_stay_in_sync():
+    root = Path(__file__).resolve().parents[1]
+    primary = root / "benchmark" / "default_cases" / "comprehension.json"
+    legacy = root / "benchmark" / "default_cases" / "beta_comprehension.json"
+    assert primary.is_file() and legacy.is_file()
+    assert primary.read_text(encoding="utf-8") == legacy.read_text(encoding="utf-8")
+
+
+def test_rebuild_cross_track_isolation(tmp_path: Path):
+    from tests.test_portfolio_rebuild import ROSTER, _write
+    from benchmark.report import (
+        list_portfolio_runs,
+        rebuild_portfolio_from_history,
+        scoring_versions_equivalent,
+    )
+    from benchmark.beta_protocol import CASE_ID, SCORING_VERSION as COMP_SV
+
+    for i in range(3):
+        _write(
+            tmp_path,
+            run_id=f"g{i}",
+            case_id="caseC",
+            finished_at=f"2026-08-01T1{i}:00:00Z",
+            cohort_id="cohort-g",
+            acc=90.0 + i,
+            scoring_version="graded-clinical-v4",
+        )
+    for i in range(3):
+        _write(
+            tmp_path,
+            run_id=f"c{i}",
+            case_id=CASE_ID,
+            finished_at=f"2026-08-02T1{i}:00:00Z",
+            cohort_id="cohort-c",
+            acc=70.0 + i,
+            scoring_version=COMP_SV,
+        )
+    graded = list_portfolio_runs(
+        tmp_path, n=10, scoring_version="graded-clinical-v4", track="controlled"
+    )
+    comp = list_portfolio_runs(
+        tmp_path, n=10, scoring_version=COMP_SV, track="controlled"
+    )
+    assert len(graded) == 3
+    assert len(comp) == 3
+    assert all(a.scoring_version == "graded-clinical-v4" for _, a in graded)
+    assert all(
+        scoring_versions_equivalent(a.scoring_version, COMP_SV) for _, a in comp
+    )
+    built = rebuild_portfolio_from_history(
+        tmp_path, n=5, scoring_version=COMP_SV, track="controlled", model_ids=ROSTER
+    )
+    assert built.get("ok")
+    assert built.get("pack_revision_label") is not None
+    graded_built = rebuild_portfolio_from_history(
+        tmp_path,
+        n=5,
+        scoring_version="graded-clinical-v4",
+        track="controlled",
+        model_ids=ROSTER,
+    )
+    assert graded_built.get("ok")
+    assert graded_built["summary"].case_id != built["summary"].case_id or (
+        graded_built["summary"].n != built["summary"].n
+    )
+
+
+def test_pack_revision_missing_matches_current_on_rebuild(tmp_path: Path):
+    from tests.test_portfolio_rebuild import _write
+    from benchmark.report import (
+        list_portfolio_runs,
+        rebuild_portfolio_from_history,
+        write_artifact,
+    )
+
+    _write(
+        tmp_path,
+        run_id="legacy",
+        case_id="caseC",
+        finished_at="2026-08-01T10:00:00Z",
+        cohort_id="cohort-legacy",
+        acc=85.0,
+    )
+    _write(
+        tmp_path,
+        run_id="old-rev",
+        case_id="caseC",
+        finished_at="2026-08-01T11:00:00Z",
+        cohort_id="cohort-old",
+        acc=80.0,
+    )
+    old_art = list_portfolio_runs(
+        tmp_path, n=5, scoring_version="graded-clinical-v4", track="controlled"
+    )[0][1]
+    old_art.models_config["pack_revision"] = 2
+    write_artifact(old_art, tmp_path)
+
+    all_runs = list_portfolio_runs(
+        tmp_path, n=10, scoring_version="graded-clinical-v4", track="controlled"
+    )
+    assert len(all_runs) == 2
+    filtered = list_portfolio_runs(
+        tmp_path,
+        n=10,
+        scoring_version="graded-clinical-v4",
+        track="controlled",
+        pack_revision=3,
+        current_pack_revision=3,
+    )
+    assert len(filtered) == 1
+    assert filtered[0][1].run_id == "legacy"
+    built = rebuild_portfolio_from_history(
+        tmp_path,
+        n=5,
+        scoring_version="graded-clinical-v4",
+        track="controlled",
+        pack_revision=3,
+        current_pack_revision=3,
+    )
+    assert built.get("ok")
+    assert built.get("pack_revision_label") == "3"
+
+
+def test_history_dual_read_includes_legacy_beta_stamp(tmp_path: Path):
+    from benchmark.report import artifacts_for_case, write_artifact
+    from benchmark.schema import RunArtifact
+
+    for sv in ("beta-comprehension-v1", "comprehension-v1"):
+        write_artifact(
+            RunArtifact(
+                run_id=f"hist-{sv}",
+                case_id="comprehension",
+                started_at="2026-08-01T00:00:00Z",
+                finished_at="2026-08-01T00:01:00Z",
+                scoring_version=sv,
+                cohort_id=f"cohort-{sv}",
+                ranking=[{"key": "chatgpt", "accuracy": 80.0, "status": "ok", "rank": 1}],
+            ),
+            tmp_path,
+        )
+    from benchmark.report import scoring_versions_equivalent
+    from benchmark.beta_protocol import SCORING_VERSION
+
+    hist = [
+        a
+        for _, a in artifacts_for_case(tmp_path, "comprehension", limit=10)
+        if scoring_versions_equivalent(str(a.scoring_version or ""), SCORING_VERSION)
+    ]
+    assert len(hist) == 2

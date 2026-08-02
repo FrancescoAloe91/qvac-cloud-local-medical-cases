@@ -100,6 +100,7 @@ from benchmark.report import (
     rebuild_balanced_cases_from_history,
     rebuild_portfolio_from_history,
     reliability_caption,
+    scoring_versions_equivalent,
     summarize_multi_batch,
     write_artifact,
 )
@@ -1119,6 +1120,7 @@ def history_mean_rebuild_dialog():
         or len(filter_current_roster_rows(summary.ranking_mean or []))
         or DEFAULT_ROSTER_VERSION
     )
+    _dlg_pack_rev = str(payload.get("pack_revision_label") or _pack_rev_meta or "")
     st.markdown(
         honesty_block_html(
             lang=_ui_lang(),
@@ -1218,6 +1220,8 @@ def history_mean_rebuild_dialog():
                 f"N≤{payload.get('n_per_model_cap') or '?'} successful/model · "
                 f"{payload.get('n_used') or summary.n} docs"
             ),
+            pack_revision_label=_dlg_pack_rev or None,
+            protocol_id=str(SCORING_VERSION),
             extra="mean±std whiskers · scored-only",
         ),
         unsafe_allow_html=True,
@@ -1242,6 +1246,8 @@ def history_mean_rebuild_dialog():
                 f"N≤{payload.get('n_per_model_cap') or '?'} successful/model · "
                 f"{payload.get('n_used') or summary.n} docs"
             ),
+            pack_revision_label=_dlg_pack_rev or None,
+            protocol_id=str(SCORING_VERSION),
             extra=(
                 "scored-only · exact Clinical Composite == 0 treated like N/A"
             ),
@@ -1360,7 +1366,7 @@ def scoring_guide_dialog():
         st.code(
             "Clinical Composite Score = Σ (section_weight × section_score)\n"
             "exact ties keep the same rank · technical failures are N/A\n"
-            "Multi ×N official rank = mean Clinical Composite ± std (CV% = reliability)",
+            "Multi ×N protocol mean rank = mean Clinical Composite ± std (CV% = reliability)",
             language=None,
         )
         st.markdown(
@@ -2608,7 +2614,11 @@ if missing:
 
 _hist_for_cost = []
 try:
-    _hist_for_cost = [a for _, a in RUN_STORE.list_artifacts()[:60]]
+    _hist_for_cost = [
+        a
+        for _, a in RUN_STORE.list_artifacts()[:60]
+        if scoring_versions_equivalent(str(a.scoring_version or ""), SCORING_VERSION)
+    ]
 except Exception:
     _hist_for_cost = []
 # Confirmed gold ⇒ extractor already billed; omit from pre-run forecast.
@@ -4395,6 +4405,7 @@ with _results_zone:
                                 "judge": cfg.get("judge") if isinstance(cfg, dict) else {},
                             },
                             benchmark_track=benchmark_track,
+                            pack_revision=int(_pack_rev_now) or None,
                         )
                         st.session_state["_active_cohort_id"] = _local_cohort
                         artifact = build_run_artifact(
@@ -4432,6 +4443,7 @@ with _results_zone:
                                     if _local_bakeoff
                                     else None
                                 ),
+                                "pack_revision": int(_pack_rev_now),
                             },
                             candidates=collected,
                             judgments=judgments,
@@ -4441,6 +4453,7 @@ with _results_zone:
                             notes=notes,
                             cohort_id=_local_cohort,
                             scoring_version=SCORING_VERSION,
+                            pack_revision=int(_pack_rev_now) or None,
                             prompt_version="gold-only-v1",
                             benchmark_track=benchmark_track,
                             run_status=(
@@ -4734,7 +4747,7 @@ with _results_zone:
                     st.session_state["last_multi_summary"] = summary.model_dump()
 
                     st.markdown(
-                        '<div class="sec-label">Only local · official ranking · mean across runs</div>',
+                        '<div class="sec-label">Only local · protocol ranking · mean across runs</div>',
                         unsafe_allow_html=True,
                     )
                     st.caption(reliability_caption(summary))
@@ -5558,6 +5571,7 @@ with _results_zone:
                         "judge": prep["cfg"].get("judge") or {},
                     },
                     benchmark_track=benchmark_track,
+                    pack_revision=int(_pack_rev_now) or None,
                 )
                 st.session_state["_active_cohort_id"] = _full_cohort
                 artifact = build_run_artifact(
@@ -5580,6 +5594,7 @@ with _results_zone:
                             st.session_state.get("or_key_session")
                         ),
                         "estimated_breakdown": bd if n_runs == 1 else bd_multi,
+                        "pack_revision": int(_pack_rev_now),
                     },
                     candidates=collected,
                     judgments=judgments,
@@ -5589,6 +5604,7 @@ with _results_zone:
                     notes=notes,
                     cohort_id=_full_cohort,
                     scoring_version=SCORING_VERSION,
+                    pack_revision=int(_pack_rev_now) or None,
                     prompt_version="gold-only-v1",
                     benchmark_track=benchmark_track,
                     run_status=(
@@ -5787,7 +5803,7 @@ with _results_zone:
                     height=160,
                 )
 
-            # -------- Multi ×N: official = mean KPIs; per-run via tabs/popups --------
+            # -------- Multi ×N: protocol mean KPIs; per-run via tabs/popups --------
             if len(all_artifacts) > 1:
                 summary, _mean_warn = summarize_multi_batch(all_artifacts)
                 if _mean_warn:
@@ -6897,6 +6913,8 @@ with _rebuild_zone:
                 track=str(benchmark_track or "controlled"),
                 model_ids=_portfolio_model_ids,
                 preloaded=_preloaded_artifacts() if _HOSTED_NO_PLAINTEXT else None,
+                pack_revision=_pack_rev_meta,
+                current_pack_revision=_pack_rev_meta,
             )
         elif _rebuild_scope == "balanced_cases":
             _built = rebuild_balanced_cases_from_history(
@@ -6907,6 +6925,8 @@ with _rebuild_zone:
                 model_ids=_portfolio_model_ids,
                 ordered_stem_keys=_ordered_case_stems,
                 preloaded=_preloaded_artifacts() if _HOSTED_NO_PLAINTEXT else None,
+                pack_revision=_pack_rev_meta,
+                current_pack_revision=_pack_rev_meta,
             )
         else:
             # Selected-case only: preload slot-scoped artifacts so other Case stems
@@ -6920,6 +6940,8 @@ with _rebuild_zone:
                 model_ids=_rebuild_model_ids,
                 preloaded=_same_preloaded,
                 scoring_version=SCORING_VERSION,
+                pack_revision=_pack_rev_meta,
+                current_pack_revision=_pack_rev_meta,
             )
         if not _built.get("ok"):
             st.warning(_built.get("reason") or "Rebuild failed.")
