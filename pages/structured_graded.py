@@ -147,6 +147,7 @@ from lib.deployment import is_local_install, is_streamlit_cloud
 from lib.disclosure import (
     DEFAULT_ROSTER_VERSION,
     honesty_block_html,
+    rebuild_scan_honesty_html,
     scope_label,
     screenshot_footer_html,
     short_cohort,
@@ -577,7 +578,10 @@ def _client_guide_overlay(uid: str, title: str, body_html: str) -> str:
 
 def _guides_always_available_html(*, qvac_status_line: str = "") -> str:
     """Compat wrapper — shared implementation in ``lib/guide_overlays``."""
-    return guides_always_available_html(qvac_status_line=qvac_status_line)
+    return guides_always_available_html(
+        qvac_status_line=qvac_status_line,
+        lang=_ui_lang(),
+    )
 
 
 QVAC_SETUP_GUIDE = """
@@ -1214,6 +1218,12 @@ def history_mean_rebuild_dialog():
         use_container_width=True,
         key="hm_dlg_mean_chart",
     )
+    _scan_banner = rebuild_scan_honesty_html(
+        list(payload.get("ops_reliability") or []),
+        lang=_ui_lang(),
+    )
+    if _scan_banner:
+        st.markdown(_scan_banner, unsafe_allow_html=True)
     st.markdown(
         screenshot_footer_html(
             lang=_ui_lang(),
@@ -1274,6 +1284,8 @@ def history_mean_rebuild_dialog():
             roster_n=_dlg_roster_n,
             cohort_id=_dlg_cohort,
             n_label=_ops_n_label,
+            pack_revision_label=_dlg_pack_rev or None,
+            protocol_id=str(SCORING_VERSION),
             extra="failures/N/A % · scan window · not clinical mean",
         ),
         chart_footer_html=screenshot_footer_html(
@@ -1282,6 +1294,8 @@ def history_mean_rebuild_dialog():
             roster_n=_dlg_roster_n,
             cohort_id=_dlg_cohort,
             n_label=_ops_n_label,
+            pack_revision_label=_dlg_pack_rev or None,
+            protocol_id=str(SCORING_VERSION),
             extra="ops reliability · zeros+N/A · not clinical mean",
         ),
     )
@@ -1506,7 +1520,12 @@ _qvac_guide_status = (
         else "sidecar offline — start it to include on-device"
     )
 )
-st.html(guides_always_available_html(qvac_status_line=_qvac_guide_status))
+st.html(
+    guides_always_available_html(
+        qvac_status_line=_qvac_guide_status,
+        lang=_ui_lang(),
+    )
+)
 
 # --- Sidebar: Tracks → key → QVAC → guides → (History later) → clock ---
 with st.sidebar:
@@ -1608,6 +1627,7 @@ with st.sidebar:
     st.caption(f"Judge · {(judge_cfg.get('display_label') or judge_cfg.get('model') or 'R1')[:42]}")
     render_guides_and_protocol(
         protocol_id=str(SCORING_VERSION),
+        lang=_ui_lang(),
         extra_caption="History picker + Run clock appear lower in this column.",
     )
 

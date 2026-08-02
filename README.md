@@ -76,8 +76,9 @@ Claude / Gemini.”
   no usable clinical content vs gold. Main ranking shows **n scored**; zeros +
   technical N/A appear in a **Failures/N/A table** (ops honesty), not as a
   fourth competing clinical chart.
-- Label **Same-case** vs **Portfolio** vs **Balanced cases**; new Freeze/Confirm
-  = new cohort (short hash).
+- Label **Same-case** vs **Portfolio** vs **Balanced cases**; a **new cohort**
+  (short hash) starts when case text or locked reference claims change —
+  Confirm alone on the same content keeps the same set id.
 - Roster version **default 9** · MedPsy family · medical peers where relevant.
 - Local recovery is **capped** (not identical cloud repair/fill weapons).
 
@@ -110,10 +111,12 @@ roster · cohort. Template: [docs/x-post-template.md](docs/x-post-template.md).
    does **not** split batch means. Default install is cloud-only until GGUFs +
    sidecar are present; if the QVAC sidecar is down, Compare is cloud-only.
    Pasting the same raw case/reference alone is not enough: a new Prepare that
-   changes claim splits starts a new cohort. The UI can **restore** an exact prior
-   confirmed gold from History when the pasted case+raw reference match a case
-   family. Confirm supports add/split/delete/move of claims; summaries are
-   display-only. Active protocol is gold-only; strings under `OLD/` are archived.
+   changes claim splits starts a new cohort. Re-Confirm without editing claims
+   keeps the same cohort id. The UI can **restore** an exact prior confirmed
+   gold from History when the pasted case+raw reference match a case family.
+   Confirm supports add/split/delete/move of claims; summaries are display-only.
+   Active protocol is gold-only; strings under `OLD/` are archived (not the live
+   judge Clinical Composite path).
 
 Demo cases and rubric scoring are not part of the active protocol.
 

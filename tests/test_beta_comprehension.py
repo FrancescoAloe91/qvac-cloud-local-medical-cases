@@ -546,6 +546,24 @@ def test_rebuild_cross_track_isolation(tmp_path: Path):
     assert "caseC" not in (balanced.get("case_ids") or [])
 
 
+def test_pack_revision_matches_missing_equals_current_only():
+    from benchmark.report import pack_revision_matches
+    from benchmark.schema import RunArtifact
+
+    bare = RunArtifact(
+        run_id="bare",
+        case_id="c",
+        started_at="t",
+        finished_at="t",
+        scoring_version="comprehension-v1",
+    )
+    assert pack_revision_matches(bare, 3, current=3) is True
+    assert pack_revision_matches(bare, 4, current=3) is False
+    stamped = bare.model_copy(update={"models_config": {"pack_revision": 2}})
+    assert pack_revision_matches(stamped, 3, current=3) is False
+    assert pack_revision_matches(stamped, 2, current=3) is True
+
+
 def test_pack_revision_missing_matches_current_on_rebuild(tmp_path: Path):
     from tests.test_portfolio_rebuild import _write
     from benchmark.report import (

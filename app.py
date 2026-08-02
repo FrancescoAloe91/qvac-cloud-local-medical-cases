@@ -81,8 +81,13 @@ from lib.benchmark_multi_ui import (
 )
 from lib.boot_welcome import run_boot_dialogs
 from lib.charts import fig_judge_accuracy_bars, fig_judge_mean_accuracy_bars
-from lib.disclosure import honesty_block_html, screenshot_footer_html
+from lib.disclosure import (
+    honesty_block_html,
+    rebuild_scan_honesty_html,
+    screenshot_footer_html,
+)
 from lib.guide_overlays import guides_always_available_html
+from lib.i18n import t
 from lib.track_sidebar import render_guides_and_protocol, render_tracks_block
 from lib.run_store import LocalRunStore
 from lib.run_timer import (
@@ -363,6 +368,11 @@ def _paint_beta_rebuild_mean_body(
             use_container_width=True,
             key=f"{key_prefix}_mean_chart",
         )
+        _scan_banner = rebuild_scan_honesty_html(
+            list(payload.get("ops_reliability") or [])
+        )
+        if _scan_banner:
+            st.markdown(_scan_banner, unsafe_allow_html=True)
         st.markdown("##### Ranking table")
         rb_html = reliability_table_html(
             mean_rows,
@@ -396,6 +406,11 @@ def _paint_beta_rebuild_mean_body(
             ),
             unsafe_allow_html=True,
         )
+    _ops_pack = str(
+        payload.get("pack_revision_label")
+        or (st.session_state.get("beta_confirmed_gold") or {}).get("pack_revision")
+        or _pack_revision
+    )
     paint_rebuild_ops_reliability_panels(
         st,
         list(payload.get("ops_reliability") or []),
@@ -406,6 +421,7 @@ def _paint_beta_rebuild_mean_body(
             cohort_id=rb_cohort,
             n_label=rb_n_label,
             protocol_id=PROTOCOL_ID,
+            pack_revision_label=_ops_pack,
             extra="Comprehension · failures/N/A % · not clinical mean",
         ),
         chart_footer_html=screenshot_footer_html(
@@ -413,6 +429,7 @@ def _paint_beta_rebuild_mean_body(
             cohort_id=rb_cohort,
             n_label=rb_n_label,
             protocol_id=PROTOCOL_ID,
+            pack_revision_label=_ops_pack,
             extra="Comprehension · ops reliability · zeros+N/A · not clinical mean",
         ),
     )
@@ -503,11 +520,20 @@ _qvac_guide_status = (
         else "sidecar offline — start it to include on-device"
     )
 )
+_guide_lang = str(st.session_state.get("lang") or "en")
 if hasattr(st, "html"):
-    st.html(guides_always_available_html(qvac_status_line=_qvac_guide_status))
+    st.html(
+        guides_always_available_html(
+            qvac_status_line=_qvac_guide_status,
+            lang=_guide_lang,
+        )
+    )
 else:
     st.markdown(
-        guides_always_available_html(qvac_status_line=_qvac_guide_status),
+        guides_always_available_html(
+            qvac_status_line=_qvac_guide_status,
+            lang=_guide_lang,
+        ),
         unsafe_allow_html=True,
     )
 
@@ -543,6 +569,7 @@ with st.sidebar:
     st.caption("QVAC sidecar · " + ("up" if sidecar_up else "offline"))
     render_guides_and_protocol(
         protocol_id=PROTOCOL_ID,
+        lang=_guide_lang,
         extra_caption=(
             "Rebuild below averages only this track’s saved runs. "
             "MedPsy may look idle while the AI judge double-checks an answer — "
@@ -1059,6 +1086,7 @@ if _ready:
             f"{n_runs} pass(es) = **{len(cases_plan) * n_runs}** rounds · "
             "progressive tabs below (same strip as graded Multi) · exploratory Comprehension track only."
         )
+        st.warning(t("disclosure.banner_auto_freeze", _guide_lang))
     else:
         cases_plan = [{**case_row, "_frozen": frozen}]
 

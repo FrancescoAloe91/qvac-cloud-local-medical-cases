@@ -13,6 +13,11 @@ _STRINGS = {
         "subtitle": "Identical prompt for every model · QVAC-only depth setting · Manual cloud paste · Diagnosis comparison",
         "cloud.demo_banner": "☁️ **Public demo (free hosting)** — Cloud LLM paste + rankings work here. **Live QVAC Run benchmark** needs a local Mac/PC with the QVAC sidecar (`./install.sh` + `sidecar`). You can paste a QVAC answer generated locally into the QVAC box.",
         "cloud.demo_link": "Full local setup (free): [GitHub README](https://github.com/FrancescoAloe91/qvac-vs-cloud-llms-health-test) · [Live demo](https://francescoaloe91-qvac-vs-cloud-llms-health-test-app-wihxyd.streamlit.app)",
+        "guide.setup_btn": "Setup guide",
+        "guide.rank_btn": "How ranking works",
+        "guide.setup_title": "QVAC + MedPsy setup",
+        "guide.rank_title": "How ranking works",
+        "guide.hint": "Opens without pausing the run · ✕ to close",
         "sidebar.reset": "Reset",
         "sidebar.reset_help": "Clear everything including wallet to 0 USDT",
         "sidebar.cloud_tiers": "Cloud model versions",
@@ -198,7 +203,10 @@ _STRINGS = {
         "decision.section": "Decision & compliance",
         "decision.lead": "Now that you've seen the results side by side — which path would you actually pick for this case?",
         "decision.cloud": "Cloud",
-        "decision.cloud_err": "HIPAA/GDPR violation. 100% data leak.",
+        "decision.cloud_err": (
+            "Cloud path: data leaves this device — typically needs a DPA, "
+            "consent, and audit trail (GDPR/HIPAA context)."
+        ),
         "decision.cloud_caption": "Data leaves the device — no DPA, no consent trail.",
         "decision.qvac": "Local QVAC",
         "decision.qvac_ok": "Encrypted report. Generation stayed on-device.",
@@ -675,8 +683,27 @@ _STRINGS = {
         ),
         "disclosure.bullet_scope": "Average scope",
         "disclosure.bullet_confirm": (
-            "<b>Confirming again starts a new comparison set</b> (also after "
-            "re-preparing or editing claims)"
+            "<b>New comparison set only when the case text or locked reference "
+            "answers change</b> — Confirm alone on the same content keeps the "
+            "same set id"
+        ),
+        "disclosure.bullet_validity": (
+            "<b>Not medical validity</b> — amateur exercise · not a device · "
+            "not clinical advice · not an official MedPsy evaluation · case "
+            "fixtures from public teaching-style material, not real charts"
+        ),
+        "disclosure.bullet_never_pool": (
+            "<b>Never mix tracks</b> — Comprehension and Structured averages "
+            "stay in separate Histories"
+        ),
+        "disclosure.banner_auto_freeze": (
+            "**Pack Multi×all:** each case’s reference is **auto-locked** for "
+            "scoring (no Prepare/Confirm review). Same frozen pack checklist "
+            "as manual Lock — not a human re-check of claims."
+        ),
+        "disclosure.rebuild_scan_line": (
+            "Rebuild mean · scored {scored}/{seen} · zeros {zero} · N/A {na} "
+            "excluded from average (see Failures/N/A below)"
         ),
         "disclosure.bullet_roster": (
             "Model list version <b>default {n}</b> · do not mix results from "
@@ -689,6 +716,27 @@ _STRINGS = {
         "disclosure.scope_same": "Same-case",
         "disclosure.scope_portfolio": "Portfolio",
         "disclosure.scope_balanced": "Balanced cases",
+        "disclosure.scope_comprehension": "Comprehension (free-form)",
+        "disclosure.scope_structured": "Structured A1–A5",
+        "disclosure.bullet_comp_scoring": (
+            "<b>How scoring works here</b> — models are scored against the "
+            "locked reference checklist for this case. The long text is the "
+            "readable story; the checklist is what the judge compares against"
+        ),
+        "disclosure.bullet_comp_copy": (
+            "<b>Copying caveat</b> — if notes are not clearly split into "
+            "sections, the same text may land in all five parts, so those "
+            "parts are not fully independent"
+        ),
+        "disclosure.bullet_comp_provenance": (
+            "<b>Where these cases come from</b> — emergency-style teaching "
+            "cases from public material · not real patient charts · not a "
+            "general medical IQ test"
+        ),
+        "disclosure.bullet_structured": (
+            "<b>Structured track</b> — optional · fixed answer slots · "
+            "results never mix with the Comprehension track"
+        ),
         "disclosure.footer_mean_std": "mean±std",
         "disclosure.footer_n_default": "N=successful scores",
         "disclosure.footer_scope": "scope",
@@ -700,8 +748,9 @@ _STRINGS = {
             "scope = which runs are averaged · set = comparison group id"
         ),
         "disclosure.confirm_new_cohort": (
-            "**Confirming again starts a new comparison set** — Rebuild only "
-            "averages runs that share the same set{hash}."
+            "**New comparison set only if case text or locked claims change** — "
+            "Confirm on the same content keeps the same set id. Rebuild "
+            "averages runs that share that set{hash}."
         ),
         "disclosure.rebuild_scope_loud": (
             "**Average scope: {scope}** — Same-case = one locked reference; "
@@ -716,6 +765,11 @@ _STRINGS = {
         "subtitle": "Prompt identico per tutti · Profondità scelta solo per QVAC · Cloud manuali · Confronto diagnosi",
         "cloud.demo_banner": "☁️ **Demo pubblica (hosting gratuito)** — Incolla cloud + ranking funzionano qui. **Run benchmark QVAC live** richiede Mac/PC locale con sidecar QVAC (`./install.sh` + `sidecar`). Puoi incollare nel riquadro QVAC una risposta generata in locale.",
         "cloud.demo_link": "Setup locale completo (gratis): [README GitHub](https://github.com/FrancescoAloe91/qvac-vs-cloud-llms-health-test) · [Demo live](https://francescoaloe91-qvac-vs-cloud-llms-health-test-app-wihxyd.streamlit.app)",
+        "guide.setup_btn": "Guida setup",
+        "guide.rank_btn": "Come funziona la classifica",
+        "guide.setup_title": "Setup QVAC + MedPsy",
+        "guide.rank_title": "Come funziona la classifica",
+        "guide.hint": "Si apre senza mettere in pausa la run · ✕ per chiudere",
         "sidebar.reset": "Reset",
         "sidebar.reset_help": "Azzera tutto incluso wallet a 0 USDT",
         "sidebar.cloud_tiers": "Versioni modelli cloud",
@@ -901,7 +955,10 @@ _STRINGS = {
         "decision.section": "Decisione e conformità",
         "decision.lead": "Ora che hai visto i risultati fianco a fianco — quale percorso scegli davvero per questo caso?",
         "decision.cloud": "Cloud",
-        "decision.cloud_err": "Violazione HIPAA/GDPR. Leak 100%.",
+        "decision.cloud_err": (
+            "Percorso cloud: il dato lascia questo dispositivo — in genere "
+            "servono DPA, consenso e audit trail (contesto GDPR/HIPAA)."
+        ),
         "decision.cloud_caption": "Il dato lascia il dispositivo — nessun DPA, nessuna traccia di consenso.",
         "decision.qvac": "QVAC locale",
         "decision.qvac_ok": "Report cifrato. Generazione restata on-device.",
@@ -1383,8 +1440,28 @@ _STRINGS = {
         ),
         "disclosure.bullet_scope": "Ambito della media",
         "disclosure.bullet_confirm": (
-            "<b>Confermare di nuovo apre un nuovo set di confronto</b> "
-            "(anche dopo un nuovo Prepare o modifiche alle claim)"
+            "<b>Nuovo set di confronto solo se cambiano il testo del caso o "
+            "le risposte di riferimento bloccate</b> — Confermare sullo stesso "
+            "contenuto mantiene lo stesso id del set"
+        ),
+        "disclosure.bullet_validity": (
+            "<b>Non è validità medica</b> — esercizio amatoriale · non un "
+            "dispositivo · non consiglio clinico · non una valutazione ufficiale "
+            "MedPsy · casi da materiale didattico pubblico, non cartelle reali"
+        ),
+        "disclosure.bullet_never_pool": (
+            "<b>Non mescolare i track</b> — le medie Comprehension e Structured "
+            "restano in History separate"
+        ),
+        "disclosure.banner_auto_freeze": (
+            "**Pack Multi×all:** il riferimento di ogni caso è "
+            "**bloccato automaticamente** per lo score (niente Prepare/Confirm). "
+            "Stessa checklist del pack del Lock manuale — non è un ricontrollo "
+            "umano delle claim."
+        ),
+        "disclosure.rebuild_scan_line": (
+            "Media Rebuild · scored {scored}/{seen} · zeri {zero} · N/A {na} "
+            "esclusi dalla media (vedi Failures/N/A sotto)"
         ),
         "disclosure.bullet_roster": (
             "Versione elenco modelli <b>default {n}</b> — non mescolare "
@@ -1397,6 +1474,27 @@ _STRINGS = {
         "disclosure.scope_same": "Same-case",
         "disclosure.scope_portfolio": "Portfolio",
         "disclosure.scope_balanced": "Casi bilanciati",
+        "disclosure.scope_comprehension": "Comprehension (testo libero)",
+        "disclosure.scope_structured": "Structured A1–A5",
+        "disclosure.bullet_comp_scoring": (
+            "<b>Come funziona lo score qui</b> — i modelli sono valutati sulla "
+            "checklist di riferimento bloccata per questo caso. Il testo lungo "
+            "è la storia leggibile; la checklist è ciò che il giudice confronta"
+        ),
+        "disclosure.bullet_comp_copy": (
+            "<b>Attenzione alle copie</b> — se le note non sono ben spezzate "
+            "in sezioni, lo stesso testo può finire in tutte e cinque le parti, "
+            "che quindi non sono del tutto indipendenti"
+        ),
+        "disclosure.bullet_comp_provenance": (
+            "<b>Da dove vengono questi casi</b> — vignette didattiche di "
+            "pronto soccorso da materiale pubblico · non cartelle pazienti "
+            "reali · non un test di QI medico generale"
+        ),
+        "disclosure.bullet_structured": (
+            "<b>Track Structured</b> — opzionale · slot di risposta fissi · "
+            "i risultati non si mescolano mai con Comprehension"
+        ),
         "disclosure.footer_mean_std": "media±std",
         "disclosure.footer_n_default": "N=score riusciti",
         "disclosure.footer_scope": "ambito",
@@ -1408,8 +1506,9 @@ _STRINGS = {
             "ambito = quali run sono mediati · set = id del gruppo di confronto"
         ),
         "disclosure.confirm_new_cohort": (
-            "**Confermare di nuovo apre un nuovo set di confronto** — Rebuild "
-            "media solo le run dello stesso set{hash}."
+            "**Nuovo set solo se cambiano caso o claim bloccate** — Confermare "
+            "sullo stesso contenuto mantiene lo stesso id. Rebuild media le "
+            "run di quel set{hash}."
         ),
         "disclosure.rebuild_scope_loud": (
             "**Ambito media: {scope}** — Same-case = un riferimento bloccato; "

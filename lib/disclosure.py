@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import html
-from typing import List, Optional
+from typing import Any, Iterable, List, Optional
 
 from lib.i18n import t
 
@@ -26,8 +26,44 @@ def scope_label(scope: str, lang: Optional[str] = None) -> str:
     if s in {"balanced_cases", "balanced", "round_robin"}:
         return t("disclosure.scope_balanced", lang)
     if s in {"comprehension", "discursive", "beta", "beta_comprehension"}:
-        return "Comprehension (discursive)"
+        return t("disclosure.scope_comprehension", lang)
+    if s in {"structured", "graded", "a1a5", "structured_a1a5"}:
+        return t("disclosure.scope_structured", lang)
     return t("disclosure.scope_same", lang)
+
+
+def rebuild_scan_honesty_html(
+    ops_rows: Optional[Iterable[Any]] = None,
+    *,
+    lang: Optional[str] = None,
+) -> str:
+    """Loud one-liner under Rebuild mean chart: scored vs zeros/N/A excluded."""
+    scored = zero = na = seen = 0
+    for r in ops_rows or []:
+        if not isinstance(r, dict):
+            continue
+        scored += int(r.get("n_scored") or 0)
+        zero += int(r.get("n_zero") or 0)
+        na += int(r.get("n_technical_na") or 0)
+        seen += int(r.get("n_seen") or 0)
+    if seen <= 0 and scored <= 0:
+        return ""
+    line = t(
+        "disclosure.rebuild_scan_line",
+        lang,
+        scored=scored,
+        seen=seen,
+        zero=zero,
+        na=na,
+    )
+    return (
+        '<div class="rebuild-scan-banner" role="note" '
+        'style="margin:0.35rem 0 0.75rem;padding:0.45rem 0.65rem;'
+        "border:1px solid #f59e0b;border-radius:6px;background:#422006;"
+        'color:#fde68a;font-size:0.82rem;font-weight:600">'
+        f"{html.escape(line)}"
+        "</div>"
+    )
 
 
 def honesty_block_html(
@@ -58,32 +94,14 @@ def honesty_block_html(
             f"{html.escape(scope_label(scope, lang))}"
         )
         scope_l = str(scope).strip().lower()
+        lines.append(t("disclosure.bullet_validity", lang))
+        lines.append(t("disclosure.bullet_never_pool", lang))
         if scope_l in {"comprehension", "discursive", "beta", "beta_comprehension"}:
-            lines.append(
-                "<b>Exercise only</b> — not a medical device, not clinical "
-                "advice, and not an official MedPsy evaluation."
-            )
-            lines.append(
-                "<b>How scoring works here</b> — models are scored against the "
-                "locked reference checklist for this case. The long text in the "
-                "right box is the readable story; the checklist is what the "
-                "judge compares against."
-            )
-            lines.append(
-                "<b>Copying caveat</b> — if notes are not clearly split into "
-                "sections, the same text may land in all five parts, so those "
-                "parts are not fully independent."
-            )
-            lines.append(
-                "<b>Where these cases come from</b> — emergency-style teaching "
-                "cases built or adapted from public material · not real patient "
-                "charts · not a general medical IQ test."
-            )
+            lines.append(t("disclosure.bullet_comp_scoring", lang))
+            lines.append(t("disclosure.bullet_comp_copy", lang))
+            lines.append(t("disclosure.bullet_comp_provenance", lang))
         elif scope_l in {"structured", "graded", "a1a5", "structured_a1a5"}:
-            lines.append(
-                "<b>Structured track</b> — optional · fixed answer slots · "
-                "results never mix with the Comprehension track."
-            )
+            lines.append(t("disclosure.bullet_structured", lang))
     lines.extend(
         [
             confirm,

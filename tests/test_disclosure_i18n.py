@@ -5,10 +5,12 @@ from __future__ import annotations
 from lib.disclosure import (
     DEFAULT_ROSTER_VERSION,
     honesty_block_html,
+    rebuild_scan_honesty_html,
     scope_label,
     screenshot_footer_html,
     short_cohort,
 )
+from lib.guide_overlays import guides_always_available_html, sidebar_guides_block_html
 from lib.i18n import _STRINGS
 
 
@@ -23,11 +25,21 @@ DISCLOSURE_KEYS = [
     "disclosure.bullet_ops",
     "disclosure.bullet_scope",
     "disclosure.bullet_confirm",
+    "disclosure.bullet_validity",
+    "disclosure.bullet_never_pool",
+    "disclosure.bullet_comp_scoring",
+    "disclosure.bullet_comp_copy",
+    "disclosure.bullet_comp_provenance",
+    "disclosure.bullet_structured",
+    "disclosure.banner_auto_freeze",
+    "disclosure.rebuild_scan_line",
     "disclosure.bullet_roster",
     "disclosure.bullet_recovery",
     "disclosure.scope_same",
     "disclosure.scope_portfolio",
     "disclosure.scope_balanced",
+    "disclosure.scope_comprehension",
+    "disclosure.scope_structured",
     "disclosure.footer_mean_std",
     "disclosure.footer_n_default",
     "disclosure.footer_scope",
@@ -37,6 +49,11 @@ DISCLOSURE_KEYS = [
     "disclosure.footer_gloss",
     "disclosure.confirm_new_cohort",
     "disclosure.rebuild_scope_loud",
+    "guide.setup_btn",
+    "guide.rank_btn",
+    "guide.setup_title",
+    "guide.rank_title",
+    "guide.hint",
 ]
 
 
@@ -69,11 +86,41 @@ def test_honesty_block_includes_core_phrases():
     assert "Same-case" in html
     assert "abcdef01" in html
     assert str(DEFAULT_ROSTER_VERSION) in html
-    # Comprehension extras stay plain-language.
+    # Comprehension extras stay plain-language + sharp validity.
     comp = honesty_block_html(lang="en", scope="comprehension", roster_n=9)
-    assert "Exercise only" in comp
+    assert "Not medical validity" in comp
+    assert "Never mix tracks" in comp
     assert "gold_raw" not in comp
     assert "reference checklist" in comp.lower()
+    assert "case text or locked reference" in html.lower()
+
+
+def test_rebuild_scan_honesty_banner():
+    banner = rebuild_scan_honesty_html(
+        [
+            {"n_scored": 8, "n_zero": 1, "n_technical_na": 1, "n_seen": 10},
+            {"n_scored": 7, "n_zero": 0, "n_technical_na": 2, "n_seen": 9},
+        ],
+        lang="en",
+    )
+    assert "rebuild-scan-banner" in banner
+    assert "scored 15/19" in banner
+    assert "zeros 1" in banner
+    assert "N/A 3" in banner
+
+
+def test_guide_overlays_split_live_vs_rebuild_and_i18n():
+    en = guides_always_available_html(lang="en")
+    assert "Live Multi" in en
+    assert "Rebuild mean" in en
+    assert "successful scores only" in en
+    # Live may mention partial; Rebuild section must say no partial on mean.
+    assert "no partial badge on the\nmean ranking" in en or "no partial badge" in en.lower()
+    it = guides_always_available_html(lang="it")
+    assert "Media Rebuild" in it or "Come funziona" in it
+    side_it = sidebar_guides_block_html(lang="it")
+    assert "Guida setup" in side_it
+    assert "Come funziona la classifica" in side_it
 
 
 def test_screenshot_footer_is_plain_and_compact():

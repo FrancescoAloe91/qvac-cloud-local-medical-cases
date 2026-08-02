@@ -1,4 +1,10 @@
-"""QVAC vs Cloud LLMs - Health Test — Medical benchmark dashboard."""
+"""ARCHIVED legacy dashboard — NOT the live Comprehension / Structured tracks.
+
+Do not use this module (or ``lib.metrics`` consensus rescale) for public
+Clinical Composite claims. Prefer ``app.py`` and ``pages/structured_graded.py``.
+"""
+
+# Legacy medical benchmark dashboard (archived).
 
 import os
 import time

@@ -96,24 +96,26 @@ def pack_revision_matches(
 ) -> bool:
     """True when artifact pack rev equals *want*; missing/empty ≡ *current*.
 
-    Unstamped artifacts always match (treated as current), so existing
-    Comprehension History keeps entering Rebuild after pack_rev persist.
+    Unstamped or invalid stamps are treated as *current* only — they do **not**
+    match an arbitrary *want*. UI Rebuild passes want==current so pre-stamp
+    History still pools with today's pack.
     """
     want_rev = max(0, int(want))
     if want_rev <= 0:
         return True
+    cur = max(0, int(current))
     raw = getattr(art, "pack_revision", None)
     if raw is None or raw == "":
         mc = art.models_config or {}
         raw = mc.get("pack_revision") if isinstance(mc, dict) else None
     if raw is None or raw == "":
-        return True
+        return want_rev == cur
     try:
         stored = max(0, int(raw))
     except (TypeError, ValueError):
-        return True
+        return want_rev == cur
     if stored <= 0:
-        return True
+        return want_rev == cur
     return stored == want_rev
 
 

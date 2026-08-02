@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
-"""Smoke-test saved snapshots: bars visible, tables compact, margins sane."""
+"""Smoke-test saved snapshots: bars visible, tables compact, margins sane.
+
+NOT authoritative for public Clinical Composite rankings.
+Uses the legacy ``lib.metrics`` consensus / rescale path (and
+``OLD/legacy_dashboard``-era snapshots). Live Comprehension / Structured
+tracks score via the DeepSeek R1 judge — do not regenerate marketing
+screenshots from this script and present them as judge-track results.
+"""
 
 from __future__ import annotations
 

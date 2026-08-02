@@ -13,6 +13,7 @@ from typing import Optional
 import streamlit as st
 
 from lib.guide_overlays import sidebar_guides_block_html
+from lib.i18n import DEFAULT_LANG
 
 
 def render_tracks_block(*, active: str = "comprehension") -> None:
@@ -54,8 +55,12 @@ def render_guides_and_protocol(
     *,
     protocol_id: Optional[str] = None,
     extra_caption: Optional[str] = None,
+    lang: Optional[str] = None,
 ) -> None:
-    st.markdown(sidebar_guides_block_html(), unsafe_allow_html=True)
+    st.markdown(
+        sidebar_guides_block_html(lang=lang or DEFAULT_LANG),
+        unsafe_allow_html=True,
+    )
     if protocol_id:
         st.code(str(protocol_id), language=None)
         st.caption(
