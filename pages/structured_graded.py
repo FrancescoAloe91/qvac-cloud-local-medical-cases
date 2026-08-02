@@ -1215,7 +1215,7 @@ def history_mean_rebuild_dialog():
         fig_judge_mean_accuracy_bars(
             summary.ranking_mean,
             title=_chart_title,
-            height=160,
+            height=200,
             hide_partial_labels=_rebuild_clean,
             rank_by=_rank_by,
             compact=True,
@@ -4828,7 +4828,7 @@ with _results_zone:
                         fig_judge_mean_accuracy_bars(
                             summary.ranking_mean,
                             title="Only local · mean Clinical Composite Score",
-                            height=280,
+                            height=320,
                         ),
                         use_container_width=True,
                         key="rank_chart_local_only_mean",
@@ -5930,7 +5930,7 @@ with _results_zone:
                         fig_judge_mean_accuracy_bars(
                             summary.ranking_mean,
                             title="Mean Clinical Composite Score",
-                            height=280,
+                            height=320,
                         ),
                         use_container_width=True,
                         key="rank_chart_multi_mean",
@@ -6391,8 +6391,8 @@ with _results_zone:
             st.plotly_chart(
                 fig_judge_mean_accuracy_bars(
                     _sum.ranking_mean,
-                        title="Mean Clinical Composite Score",
-                    height=260,
+                    title="Mean Clinical Composite Score",
+                    height=320,
                 ),
                 use_container_width=True,
                 key="rank_chart_saved_multi",

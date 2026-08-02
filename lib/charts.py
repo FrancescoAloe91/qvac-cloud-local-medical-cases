@@ -559,7 +559,7 @@ def fig_judge_mean_accuracy_bars(
     ranking_mean_rows: list,
     *,
     title: str = "Mean Clinical Composite Score ± std",
-    height: int = 280,
+    height: int = 320,
     hide_partial_labels: bool = False,
     rank_by: str = "mean",
     compact: bool = False,
@@ -620,8 +620,9 @@ def fig_judge_mean_accuracy_bars(
             medians.append(None)
     colors = [MODEL_COLORS.get(r.get("key"), "#94a3b8") for r in rows]
     n = max(1, len(rows))
-    row_px = 34 if compact else 52
-    base_pad = 48 if compact else 64
+    # Modest readability bump vs prior 34/52 row heights (labels + whiskers).
+    row_px = 40 if compact else 60
+    base_pad = 56 if compact else 76
     bar_h = max(height, base_pad + n * row_px)
 
     y_rev = labels[::-1]
@@ -653,7 +654,7 @@ def fig_judge_mean_accuracy_bars(
             text=[f"{m:.1f}%" for m in means_rev],
             textposition="inside",
             insidetextanchor="middle",
-            textfont=dict(color="#0f172a", size=13, family="Inter, system-ui, sans-serif"),
+            textfont=dict(color="#0f172a", size=14, family="Inter, system-ui, sans-serif"),
             hovertemplate=(
                 "%{y}<br>Mean %{x:.1f}% ± %{customdata[0]:.1f}"
                 "<br>Median %{customdata[3]:.1f}%"
@@ -677,8 +678,8 @@ def fig_judge_mean_accuracy_bars(
                 array=stds_rev,
                 visible=True,
                 color="rgba(255,255,255,1)",
-                thickness=5.5,
-                width=11,
+                thickness=6.0,
+                width=12,
             ),
             hoverinfo="skip",
             showlegend=False,
@@ -697,8 +698,8 @@ def fig_judge_mean_accuracy_bars(
                 array=stds_rev,
                 visible=True,
                 color="rgba(15,23,42,1)",
-                thickness=2.4,
-                width=7,
+                thickness=2.6,
+                width=8,
             ),
             hoverinfo="skip",
             showlegend=False,
@@ -715,9 +716,9 @@ def fig_judge_mean_accuracy_bars(
                 mode="markers",
                 marker=dict(
                     symbol="diamond",
-                    size=9,
+                    size=10,
                     color="#f8fafc",
-                    line=dict(color="#0f172a", width=1.4),
+                    line=dict(color="#0f172a", width=1.5),
                 ),
                 name="Median",
                 hovertemplate="Median %{x:.1f}%<extra></extra>",
@@ -727,7 +728,7 @@ def fig_judge_mean_accuracy_bars(
         )
     layout = _base_layout(title, height=bar_h)
     layout["margin"] = (
-        dict(l=140, r=20, t=36, b=28) if compact else dict(l=168, r=28, t=48, b=36)
+        dict(l=148, r=24, t=40, b=32) if compact else dict(l=176, r=36, t=56, b=44)
     )
     xmax = max(means[i] + stds[i] for i in range(len(means))) if means else 100
     for m in medians:
@@ -740,18 +741,25 @@ def fig_judge_mean_accuracy_bars(
         range=[0, min(110, max(40, xmax * 1.12))],
         title=axis_title,
         gridcolor="rgba(51,65,85,0.5)",
-        title_font=dict(size=11 if compact else 12),
+        title_font=dict(size=12 if compact else 14),
+        tickfont=dict(size=11 if compact else 12),
     )
     layout["yaxis"] = dict(
         title="",
-        tickfont=dict(size=10 if compact else 11),
+        tickfont=dict(size=11 if compact else 13),
         automargin=True,
     )
     layout["barmode"] = "overlay"
+    layout["bargap"] = 0.28 if compact else 0.24
     if compact:
         layout["title"] = dict(
             text=title,
-            font=dict(size=13),
+            font=dict(size=14),
+        )
+    else:
+        layout["title"] = dict(
+            text=title,
+            font=dict(size=17, color="#fafafa"),
         )
     fig.update_layout(**layout)
     return fig
