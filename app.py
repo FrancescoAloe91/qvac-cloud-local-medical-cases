@@ -1679,6 +1679,7 @@ if _ready:
         st.plotly_chart(
             fig_judge_accuracy_bars(last_ranking),
             use_container_width=True,
+            key="comp_bar_live_single",
         )
         st.session_state["beta_last_ranking"] = last_ranking
         st.session_state["beta_last_cohort"] = last_cohort
@@ -1892,11 +1893,13 @@ if _last_sum is not None:
         st.plotly_chart(
             fig_judge_mean_accuracy_bars(mean_rows, hide_partial_labels=True),
             use_container_width=True,
+            key="comp_bar_kpi_mean",
         )
 elif _last_rank:
     st.plotly_chart(
         fig_judge_accuracy_bars(_last_rank),
         use_container_width=True,
+        key="comp_bar_kpi_last",
     )
 else:
     st.caption("No Comprehension run in this session yet.")
