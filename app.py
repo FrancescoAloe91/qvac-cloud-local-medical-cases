@@ -1914,7 +1914,7 @@ st.caption(
 )
 _bn = st.selectbox(
     "N scored / model",
-    options=[5, 10, 20, 30, 50, 100],
+    options=[5, 10, 20, 30, 50, 70, 100],
     index=0,
     key="beta_rebuild_n",
 )

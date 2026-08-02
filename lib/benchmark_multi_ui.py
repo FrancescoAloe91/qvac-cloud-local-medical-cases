@@ -1263,7 +1263,7 @@ def _reliability_table_html(
             "(technical N/A and exact-zero composites skipped; older successful "
             "History used) · Failed%/zeros live in the separate ops reliability "
             "chart below · models with only failures are omitted · "
-            "N=5 exploratory · ~10 better for CV eye-check · 20–50 diminishing · 100 max · "
+            "N=5 exploratory · ~10 better for CV eye-check · 20–70 diminishing · 100 max · "
             "<b>C/Q/D</b> = coverage / quality / discipline "
             "(quality is independent of coverage; a high board % can still have low C)"
         )
@@ -1283,7 +1283,7 @@ def _reliability_table_html(
             "<b>partial</b> = ranked by mean of scored runs despite incomplete coverage · "
             "unranked rows (#—) have zero scored observations · "
             "≤N non-zero scored obs/model; N/A and exact-zero skipped, older scored used · "
-            "N=5 exploratory · ~10 better for CV eye-check · 20–50 diminishing · 100 max · "
+            "N=5 exploratory · ~10 better for CV eye-check · 20–70 diminishing · 100 max · "
             "<b>C/Q/D</b> = coverage / quality / discipline "
             "(quality is independent of coverage; a high board % can still have low C)"
         )

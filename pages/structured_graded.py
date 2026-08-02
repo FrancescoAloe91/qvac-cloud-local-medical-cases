@@ -6776,7 +6776,7 @@ with _rebuild_zone:
         )
 
     # Per-model valid N; N=5 remains exploratory.
-    _n_options = [5, 10, 20, 30, 50, 100]
+    _n_options = [5, 10, 20, 30, 50, 70, 100]
     _rb1, _rb2, _rb3 = st.columns([1, 1.6, 0.9])
     with _rb1:
         # Default once — value MUST stay inside options or Streamlit raises TypeError
@@ -6796,7 +6796,7 @@ with _rebuild_zone:
                 f"≤{n} successful / model"
                 + (" · exploratory" if n == 5 else "")
                 + (" · better CV (suggested)" if n == 10 else "")
-                + (" · diminishing returns" if n in (20, 30, 50) else "")
+                + (" · diminishing returns" if n in (20, 30, 50, 70) else "")
                 + (" · max" if n == 100 else "")
                 + (f"  (only {_avail_n} eligible runs)" if _avail_n < n else "")
             ),
@@ -6805,7 +6805,7 @@ with _rebuild_zone:
             help="N = max successful non-zero scored observations per model (newest first); "
             "technical N/A and exact-zero skipped, older successful History used — not a global "
             "last-N run slice. Optional/legacy models appear only when toggled. "
-            "Tiers: 5 exploratory · ~10 better for CV · 20–50 diminishing returns "
+            "Tiers: 5 exploratory · ~10 better for CV · 20–70 diminishing returns "
             "(100 max). Default stays 5. Selecting N alone does not open a popup — "
             "use Rebuild mean.",
         )
