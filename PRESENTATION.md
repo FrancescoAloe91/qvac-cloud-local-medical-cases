@@ -52,7 +52,9 @@ N=5 is exploratory. Showing **larger descriptive N** (e.g. ~70 scored runs in a 
 - **Structured** = optional format-stress — do not headline it as clinical IQ.
 - **Rebuild mean = scored-only.** Exact Clinical Composite == 0 treated like N/A
   (refusal / empty clinical content). Ops honesty = Failures/N/A **table** only.
-- Label **Same-case** vs **Portfolio** vs **Balanced cases**; new Freeze/Confirm = new cohort.
+- Label **Same-case** vs **Portfolio** vs **Balanced cases**; a **new cohort**
+  starts when case text or locked reference claims change — Confirm alone on
+  the same content keeps the same set id.
 - Roster version **default 9** · MedPsy family · medical peers where relevant.
 - Local recovery is **capped**.
 
@@ -69,7 +71,7 @@ Post template: [docs/x-post-template.md](docs/x-post-template.md).
 
 ### Structured (optional)
 
-1. Paste case → Prepare → edit claims → Confirm (new Confirm = new cohort)
+1. Paste case → Prepare → edit claims → Confirm (new cohort if claims/case change)
 2. Same roster · rigid A1–A5 answers · separate History / Rebuild
 
 ### Scoring (shared C/Q/D math · different wire stamps)

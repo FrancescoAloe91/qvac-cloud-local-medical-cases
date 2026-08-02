@@ -12,11 +12,17 @@ from typing import Optional
 from lib.i18n import t
 
 
-def client_guide_overlay(uid: str, title: str, body_html: str) -> str:
+def client_guide_overlay(
+    uid: str,
+    title: str,
+    body_html: str,
+    *,
+    lang: Optional[str] = None,
+) -> str:
     """Fullscreen guide overlay toggled by ``<label for=uid>`` — no rerun."""
     u = html.escape(uid)
     ttl = html.escape(title)
-    close_lab = "Close"
+    close_lab = html.escape(t("guide.close", lang))
     return f"""
 <input type="checkbox" id="{u}" class="fs-ck" autocomplete="off" />
 <div class="fs-overlay" hidden style="display:none !important;visibility:hidden !important">
@@ -149,11 +155,13 @@ def guides_always_available_html(
             "guide_setup",
             setup_title,
             _setup_body(lang=lang, qvac_status_line=qvac_status_line),
+            lang=lang,
         )
         + client_guide_overlay(
             "guide_rank",
             rank_title,
             _rank_body(lang=lang),
+            lang=lang,
         )
     )
 

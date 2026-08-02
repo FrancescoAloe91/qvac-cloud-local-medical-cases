@@ -44,7 +44,7 @@ Repo: https://github.com/FrancescoAloe91/qvac-vs-cloud-llms-health-test
 
 3/ Cloud slots ≠ consumer web apps. Judge = uncalibrated DeepSeek R1. Rebuild = scored-only mean; exact Clinical Composite == 0 treated like N/A. Ops honesty = Failures/N/A table (not a competing clinical chart).
 
-4/ Scope: [Same-case | Portfolio | Balanced] · roster default 9 · Freeze/Confirm = new cohort [abcdefgh]. Larger descriptive N (e.g. ~70 suite runs) stabilizes mean±std — still not a powered study.
+4/ Scope: [Same-case | Portfolio | Balanced] · roster default 9 · new cohort when case/claims change [abcdefgh] (same Confirm content = same set). Larger descriptive N (e.g. ~70 suite runs) stabilizes mean±std — still not a powered study.
 
 5/ Screenshot keeps: track · protocol · pack_rev · mean±std · N · scope · roster · cohort. Details: README “Known limitations”.
 ```

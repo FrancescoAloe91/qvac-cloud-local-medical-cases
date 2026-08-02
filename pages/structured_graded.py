@@ -4808,6 +4808,13 @@ with _results_zone:
                             roster_n=_lo_roster_n,
                             cohort_id=_lo_cohort,
                             n_label=f"N={summary.n} runs · successful scores",
+                            protocol_id=str(SCORING_VERSION),
+                            pack_revision_label=str(
+                                st.session_state.get("_ui_pack_revision")
+                                or _pack_rev_now
+                                or ""
+                            )
+                            or None,
                         ),
                         unsafe_allow_html=True,
                     )
@@ -4828,6 +4835,13 @@ with _results_zone:
                             roster_n=_lo_roster_n,
                             cohort_id=_lo_cohort,
                             n_label=f"N={summary.n} runs · successful scores",
+                            protocol_id=str(SCORING_VERSION),
+                            pack_revision_label=str(
+                                st.session_state.get("_ui_pack_revision")
+                                or _pack_rev_now
+                                or ""
+                            )
+                            or None,
                             extra="mean±std whiskers",
                         ),
                         unsafe_allow_html=True,
@@ -5896,6 +5910,13 @@ with _results_zone:
                             roster_n=_multi_roster_n,
                             cohort_id=_multi_cohort,
                             n_label=f"N={summary.n} runs · successful scores",
+                            protocol_id=str(SCORING_VERSION),
+                            pack_revision_label=str(
+                                st.session_state.get("_ui_pack_revision")
+                                or _pack_rev_now
+                                or ""
+                            )
+                            or None,
                         ),
                         unsafe_allow_html=True,
                     )
@@ -5916,6 +5937,13 @@ with _results_zone:
                             roster_n=_multi_roster_n,
                             cohort_id=_multi_cohort,
                             n_label=f"N={summary.n} runs · successful scores",
+                            protocol_id=str(SCORING_VERSION),
+                            pack_revision_label=str(
+                                st.session_state.get("_ui_pack_revision")
+                                or _pack_rev_now
+                                or ""
+                            )
+                            or None,
                             extra="mean±std whiskers",
                         ),
                         unsafe_allow_html=True,
@@ -6714,7 +6742,8 @@ with _rebuild_zone:
             )
             + ". Cohort hash = normalized case + confirmed gold (excl. timestamp) + "
             "models + track. Other Case slots are excluded. "
-            "**New Confirm = new cohort.** **No API calls.**"
+            "**New cohort only if case text or locked claims change** "
+            "(Confirm on the same content keeps the same set). **No API calls.**"
         )
         _avail_n = _avail_same
 

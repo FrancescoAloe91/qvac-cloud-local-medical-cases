@@ -54,6 +54,7 @@ DISCLOSURE_KEYS = [
     "guide.setup_title",
     "guide.rank_title",
     "guide.hint",
+    "guide.close",
 ]
 
 
@@ -121,6 +122,11 @@ def test_guide_overlays_split_live_vs_rebuild_and_i18n():
     side_it = sidebar_guides_block_html(lang="it")
     assert "Guida setup" in side_it
     assert "Come funziona la classifica" in side_it
+    assert 'aria-label="Chiudi"' in it
+    assert 'aria-label="Close"' in en
+    assert "New Confirm = new cohort" not in (
+        __import__("pathlib").Path("PRESENTATION.md").read_text(encoding="utf-8")
+    )
 
 
 def test_screenshot_footer_is_plain_and_compact():

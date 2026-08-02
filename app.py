@@ -368,8 +368,10 @@ def _paint_beta_rebuild_mean_body(
             use_container_width=True,
             key=f"{key_prefix}_mean_chart",
         )
+        _ui_lang = str(st.session_state.get("lang") or "en")
         _scan_banner = rebuild_scan_honesty_html(
-            list(payload.get("ops_reliability") or [])
+            list(payload.get("ops_reliability") or []),
+            lang=_ui_lang,
         )
         if _scan_banner:
             st.markdown(_scan_banner, unsafe_allow_html=True)
@@ -386,6 +388,7 @@ def _paint_beta_rebuild_mean_body(
             st.markdown(rb_html, unsafe_allow_html=True)
         st.markdown(
             screenshot_footer_html(
+                lang=_ui_lang,
                 scope=rb_scope,
                 cohort_id=rb_cohort,
                 n_label=rb_n_label,
@@ -406,6 +409,7 @@ def _paint_beta_rebuild_mean_body(
             ),
             unsafe_allow_html=True,
         )
+    _ui_lang = str(st.session_state.get("lang") or "en")
     _ops_pack = str(
         payload.get("pack_revision_label")
         or (st.session_state.get("beta_confirmed_gold") or {}).get("pack_revision")
@@ -417,6 +421,7 @@ def _paint_beta_rebuild_mean_body(
         n_per_model_cap=rb_cap,
         chart_key=f"{key_prefix}_ops_chart",
         table_footer_html=screenshot_footer_html(
+            lang=_ui_lang,
             scope=rb_scope,
             cohort_id=rb_cohort,
             n_label=rb_n_label,
@@ -425,6 +430,7 @@ def _paint_beta_rebuild_mean_body(
             extra="Comprehension · failures/N/A % · not clinical mean",
         ),
         chart_footer_html=screenshot_footer_html(
+            lang=_ui_lang,
             scope=rb_scope,
             cohort_id=rb_cohort,
             n_label=rb_n_label,
@@ -503,8 +509,13 @@ hobby comparison — not medical advice and not a medical device.
 """,
     unsafe_allow_html=True,
 )
+_guide_lang = str(st.session_state.get("lang") or "en")
 st.markdown(
-    honesty_block_html(scope="comprehension", roster_n=9),
+    honesty_block_html(
+        lang=_guide_lang,
+        scope="comprehension",
+        roster_n=9,
+    ),
     unsafe_allow_html=True,
 )
 st.caption(
@@ -520,7 +531,6 @@ _qvac_guide_status = (
         else "sidecar offline — start it to include on-device"
     )
 )
-_guide_lang = str(st.session_state.get("lang") or "en")
 if hasattr(st, "html"):
     st.html(
         guides_always_available_html(
@@ -847,6 +857,7 @@ if st.button(
             f"Locked · Case {case_row['slot']} · "
             f"{n_claims} checklist points ready for scoring."
         )
+        st.warning(t("disclosure.confirm_new_cohort", _guide_lang, hash=""))
 
 frozen = st.session_state.get("beta_confirmed_gold")
 frozen_ok = (
@@ -867,6 +878,7 @@ if frozen_ok:
         f"id `{frozen.get('gold_fingerprint') or '—'}` · "
         f"`{frozen.get('scoring_version')}`*"
     )
+    st.caption(t("disclosure.confirm_new_cohort", _guide_lang, hash=""))
 else:
     st.info("Lock a reference for this case before Single / Multi.")
 
