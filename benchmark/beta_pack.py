@@ -22,6 +22,8 @@ BETA_PACK_PATH = DEFAULT_CASES_DIR / PACK_FILENAME
 _LEGACY_PACK_PATH = DEFAULT_CASES_DIR / LEGACY_PACK_FILENAME
 # Soft cap for session custom Comprehension cases (pack slots stay untouched).
 SOFT_MAX_BETA_SLOTS = 50
+# Owner-workspace persistence (API-key fingerprint dir) — not pack JSON.
+CUSTOM_DRAFTS_FILENAME = "comprehension_custom_drafts.json"
 
 
 def is_beta_artifact(art: Any) -> bool:
@@ -303,6 +305,92 @@ def delete_beta_artifacts_for_slot(workspace: Path, slot: int) -> int:
         except OSError:
             continue
     return removed
+
+
+def _parse_persisted_custom_drafts(
+    raw_drafts: Any,
+) -> Dict[int, Dict[str, Any]]:
+    if not isinstance(raw_drafts, dict):
+        return {}
+    out: Dict[int, Dict[str, Any]] = {}
+    for key, val in raw_drafts.items():
+        try:
+            sid = int(key)
+        except (TypeError, ValueError):
+            continue
+        if not (1 <= sid <= SOFT_MAX_BETA_SLOTS) or not isinstance(val, Mapping):
+            continue
+        row = empty_beta_custom_slot(sid)
+        for field in ("title", "stem", "reference_prose", "gold_raw"):
+            if val.get(field) is not None:
+                row[field] = str(val.get(field) or "")
+        # Keep empty shells too (user opened New case) so slot buttons return.
+        out[sid] = row
+    return out
+
+
+def load_beta_custom_state(
+    workspace: Path,
+) -> tuple[Dict[int, Dict[str, Any]], List[int]]:
+    """Load custom drafts + Lock marks from owner workspace (API-key scoped)."""
+    path = Path(workspace) / CUSTOM_DRAFTS_FILENAME
+    if not path.is_file():
+        return {}, []
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}, []
+    if not isinstance(raw, dict):
+        return {}, []
+    drafts = _parse_persisted_custom_drafts(raw.get("drafts"))
+    locked: List[int] = []
+    for item in raw.get("locked_slots") or []:
+        try:
+            sid = int(item)
+        except (TypeError, ValueError):
+            continue
+        if sid in drafts and sid not in locked:
+            locked.append(sid)
+    return drafts, locked
+
+
+def save_beta_custom_state(
+    workspace: Path,
+    custom_drafts: Optional[Mapping[int, Mapping[str, Any]]] = None,
+    locked_custom_slots: Optional[Iterable[Any]] = None,
+) -> None:
+    """Persist custom drafts + Lock marks under the owner workspace."""
+    drafts = _parse_persisted_custom_drafts(
+        {int(k): v for k, v in (custom_drafts or {}).items()}
+    )
+    locked: List[int] = []
+    for item in locked_custom_slots or []:
+        try:
+            sid = int(item)
+        except (TypeError, ValueError):
+            continue
+        if sid in drafts and sid not in locked:
+            locked.append(sid)
+    payload = {
+        "version": 1,
+        "drafts": {
+            str(sid): {
+                "title": drafts[sid].get("title") or f"Custom case {sid}",
+                "stem": str(drafts[sid].get("stem") or ""),
+                "reference_prose": str(drafts[sid].get("reference_prose") or ""),
+                "gold_raw": str(drafts[sid].get("gold_raw") or ""),
+            }
+            for sid in sorted(drafts)
+        },
+        "locked_slots": locked,
+    }
+    root = Path(workspace)
+    root.mkdir(parents=True, exist_ok=True)
+    path = root / CUSTOM_DRAFTS_FILENAME
+    path.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
 
 
 def resolve_beta_gold_raw(case_entry: Mapping[str, Any]) -> str:

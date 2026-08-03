@@ -13,10 +13,12 @@ from benchmark.beta_pack import (
     delete_beta_custom_slot,
     is_beta_artifact,
     list_beta_slots,
+    load_beta_custom_state,
     load_beta_pack,
     merge_beta_slots,
     open_new_beta_case_slot,
     resolve_beta_gold_raw,
+    save_beta_custom_state,
     synthetic_gold_raw_from_prose,
 )
 from benchmark.beta_prompts import (
@@ -197,6 +199,9 @@ def test_beta_multi_finish_arms_mean_popup_like_graded():
     assert "delete_beta_custom_slot" in src
     assert "custom_slots_for_multi_all" in src
     assert "beta_locked_custom_slots" in src
+    assert "load_beta_custom_state" in src
+    assert "save_beta_custom_state" in src
+    assert "beta_custom_workspace_fp" in src
     assert "run_boot_dialogs" in src
     # Plain-language lock copy + pack revision + balanced default.
     assert 't("comp.lock_btn"' in src or "comp.lock_btn" in src
@@ -410,6 +415,41 @@ def test_custom_slots_for_multi_all_requires_lock_and_text():
     assert len(plan) == n_pack + 1
     assert all(not s.get("custom") for s in plan[:n_pack])
     assert plan[-1].get("custom") is True
+
+
+def test_beta_custom_state_persists_per_workspace(tmp_path: Path):
+    """Same API-key workspace keeps customs until deleted; other key is empty."""
+    ws_a = tmp_path / "owner_a"
+    ws_b = tmp_path / "owner_b"
+    drafts = {
+        11: {
+            "title": "Custom case 11",
+            "stem": "Patient: persist me",
+            "reference_prose": "Give epinephrine.",
+            "gold_raw": "",
+        },
+        12: {
+            "title": "Custom case 12",
+            "stem": "Patient: also keep",
+            "reference_prose": "Plan B.",
+            "gold_raw": "",
+        },
+    }
+    save_beta_custom_state(ws_a, drafts, locked_custom_slots=[11])
+    loaded_d, loaded_l = load_beta_custom_state(ws_a)
+    assert set(loaded_d) == {11, 12}
+    assert loaded_d[11]["stem"] == "Patient: persist me"
+    assert loaded_l == [11]
+    empty_d, empty_l = load_beta_custom_state(ws_b)
+    assert empty_d == {} and empty_l == []
+    # Delete 12 on disk state → only 11 remains for that key.
+    after = delete_beta_custom_slot(
+        12, pack_slots=list_beta_slots(), custom_drafts=loaded_d
+    )
+    save_beta_custom_state(ws_a, after, locked_custom_slots=[11])
+    d2, l2 = load_beta_custom_state(ws_a)
+    assert set(d2) == {11}
+    assert l2 == [11]
 
 
 def test_delete_beta_artifacts_for_slot(tmp_path: Path):

@@ -673,7 +673,8 @@ _STRINGS = {
             "Deleted custom Case {n} · removed {runs} History run(s)."
         ),
         "comp.custom_multi_caption": (
-            "Custom case · Lock builds a rough five-part checklist from your "
+            "Custom case · saved with this API key’s workspace until you "
+            "delete it. Lock builds a rough five-part checklist from your "
             "reference text (exploratory — ideas may repeat). Built-in pack "
             "cases keep curated checklists. **Multi×all includes this slot "
             "only after Lock** (with non-empty case + reference)."
@@ -1537,11 +1538,12 @@ _STRINGS = {
             "Eliminato Case custom {n} · rimossi {runs} run dalla History."
         ),
         "comp.custom_multi_caption": (
-            "Caso custom · Lock costruisce una checklist a cinque parti dal "
-            "tuo testo di riferimento (esplorativo — le idee possono "
-            "ripetersi). I casi pack hanno checklist curate. **Multi×all "
-            "include questo slot solo dopo Lock** (caso + riferimento non "
-            "vuoti)."
+            "Caso custom · resta salvato con il workspace di questa API key "
+            "finché non lo elimini. Lock costruisce una checklist a cinque "
+            "parti dal tuo testo di riferimento (esplorativo — le idee "
+            "possono ripetersi). I casi pack hanno checklist curate. "
+            "**Multi×all include questo slot solo dopo Lock** (caso + "
+            "riferimento non vuoti)."
         ),
         "bench.case_slot_loaded": (
             "Caricato **Case {n}**: testo del caso + riferimento confermato "

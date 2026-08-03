@@ -29,10 +29,12 @@ from benchmark.beta_pack import (
     delete_beta_custom_slot,
     is_beta_artifact,
     list_beta_slots,
+    load_beta_custom_state,
     load_beta_pack,
     merge_beta_slots,
     open_new_beta_case_slot,
     resolve_beta_gold_raw,
+    save_beta_custom_state,
 )
 from benchmark.beta_prompts import (
     beta_candidate_messages,
@@ -682,11 +684,28 @@ st.caption(
     f"· *Advanced: `{PROTOCOL_ID}`*"
 )
 
-# Session custom cases (NEW CASE) — never mutate pack JSON (cases 1–K curated).
+# Custom cases (NEW CASE) — session + owner-workspace disk (API-key scoped).
+# Pack JSON (cases 1–K) is never mutated. Same key → customs return until deleted.
+_ws_fp = str(WORKSPACE_DIR.resolve())
+if st.session_state.get("beta_custom_workspace_fp") != _ws_fp:
+    _disk_drafts, _disk_locked = load_beta_custom_state(WORKSPACE_DIR)
+    st.session_state["beta_custom_drafts"] = _disk_drafts
+    st.session_state["beta_locked_custom_slots"] = list(_disk_locked)
+    st.session_state["beta_custom_workspace_fp"] = _ws_fp
 if "beta_custom_drafts" not in st.session_state:
     st.session_state["beta_custom_drafts"] = {}
 if "beta_locked_custom_slots" not in st.session_state:
     st.session_state["beta_locked_custom_slots"] = []
+
+
+def _persist_beta_customs() -> None:
+    save_beta_custom_state(
+        WORKSPACE_DIR,
+        st.session_state.get("beta_custom_drafts") or {},
+        st.session_state.get("beta_locked_custom_slots") or [],
+    )
+
+
 slots = merge_beta_slots(pack_slots, st.session_state.get("beta_custom_drafts") or {})
 _pack_slot_ids = {int(s["slot"]) for s in pack_slots}
 _slots_locked = bool(
@@ -743,6 +762,7 @@ with _row1_cols[0]:
                 st.session_state["beta_custom_drafts"] = _new_drafts
                 st.session_state["beta_active_case_slot"] = int(_new_idx)
                 st.session_state["_beta_case_flash"] = "empty"
+                _persist_beta_customs()
             st.rerun()
 for _ci, _slot_entry in enumerate(_base_row):
     _sid = int(_slot_entry["slot"])
@@ -837,6 +857,7 @@ if _is_custom_case and not _slots_locked:
         "gold_raw": str(case_row.get("gold_raw") or ""),
     }
     st.session_state["beta_custom_drafts"] = _drafts
+    _persist_beta_customs()
     case_row = {**case_row, "stem": stem or "", "reference_prose": prose or ""}
 
 if _is_custom_case:
@@ -881,6 +902,7 @@ if _is_custom_case:
                             )
                             if int(x) != _del_sid
                         ]
+                        _persist_beta_customs()
                         _fg = st.session_state.get("beta_confirmed_gold") or {}
                         if (
                             isinstance(_fg, dict)
@@ -1013,6 +1035,7 @@ if st.button(
             }
             _locked_set.add(int(case_row["slot"]))
             st.session_state["beta_locked_custom_slots"] = sorted(_locked_set)
+            _persist_beta_customs()
         st.success(
             t(
                 "comp.lock_success",
@@ -1022,6 +1045,37 @@ if st.button(
             )
         )
         st.warning(t("disclosure.confirm_new_cohort", _guide_lang, hash=""))
+
+# Re-hydrate Lock for persisted custom slots (same API-key workspace).
+if (
+    _is_custom_case
+    and int(case_row["slot"]) in set(_locked_custom_ids)
+    and (stem or "").strip()
+    and (prose or "").strip()
+):
+    _cur_fr = st.session_state.get("beta_confirmed_gold")
+    _need_restore = not (
+        isinstance(_cur_fr, dict)
+        and int(_cur_fr.get("case_slot") or 0) == int(case_row["slot"])
+        and scoring_versions_equivalent(
+            str(_cur_fr.get("scoring_version") or ""), BETA_SV
+        )
+    )
+    if _need_restore:
+        try:
+            _restored = auto_freeze_beta_slot(
+                {
+                    **case_row,
+                    "stem": (stem or "").strip(),
+                    "reference_prose": (prose or "").strip(),
+                }
+            )
+            _restored["auto_confirmed"] = False
+            _restored["custom_case"] = True
+            _restored["pack_revision"] = _pack_revision
+            st.session_state["beta_confirmed_gold"] = _restored
+        except Exception:
+            pass
 
 frozen = st.session_state.get("beta_confirmed_gold")
 frozen_ok = (
