@@ -76,9 +76,20 @@ def render_spend_confirm_card(
     multi_case = bool(pr.get("multi_case"))
     show_fc = bool(st.session_state.get("show_cost_forecast", True))
 
+    n_custom = int(pr.get("n_custom") or 0)
+    n_pack = int(pr.get("n_pack") or 0)
+    n_cases = int(pr.get("n_cases") or 0)
+
     if not show_fc:
+        if multi_case and n_custom > 0 and n_cases > 0:
+            round_bit = (
+                f"<b>{rounds}</b> round(s) · pack {n_pack} + "
+                f"<b>{n_custom}</b> Lock-ed custom = <b>{n_cases}</b> cases"
+            )
+        else:
+            round_bit = f"<b>{rounds}</b> round(s)"
         spend_body = (
-            f"Start <b>{rounds}</b> round(s) on <b>{track_label}</b> "
+            f"Start {round_bit} on <b>{track_label}</b> "
             f"({'on-device / judge path' if mode != 'full' else 'cloud + judge'}). "
             f"Cost forecast is hidden — billed truth = OpenRouter usage."
         )
@@ -90,9 +101,18 @@ def render_spend_confirm_card(
             f"Billed truth = OpenRouter usage."
         )
     elif multi_case:
+        if n_custom > 0 and n_cases > 0:
+            case_bit = (
+                f"pack {n_pack} + <b>{n_custom}</b> Lock-ed custom = "
+                f"<b>{n_cases}</b> cases · <b>{rounds}</b> total rounds"
+            )
+        elif n_cases > 0:
+            case_bit = f"<b>{n_cases}</b> cases · <b>{rounds}</b> total rounds"
+        else:
+            case_bit = f"<b>{rounds}</b> rounds"
         spend_body = (
             f"Rough OpenRouter estimate <b>${est:.4f} – ${est_hi:.4f}</b> "
-            f"(often over) for <b>Multi×all</b> · <b>{rounds}</b> rounds "
+            f"(often over) for <b>Multi×all</b> · {case_bit} "
             f"({track_label}). Cloud + DeepSeek R1 judge; on-device = $0 if included. "
             f"Billed truth = OpenRouter usage."
         )

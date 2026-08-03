@@ -275,7 +275,39 @@ async function loadFromPath(requestedPath, requestedSampling = {}) {
   if (!requestedPath || !String(requestedPath).trim()) {
     throw new Error("Missing model_path");
   }
-  const next = spaceFreePath(String(requestedPath).trim());
+  const rawPath = String(requestedPath).trim();
+  if (rawPath.includes("..") || rawPath.includes("\0")) {
+    throw new Error("Invalid model_path");
+  }
+  if (!rawPath.toLowerCase().endsWith(".gguf")) {
+    throw new Error("model_path must end with .gguf");
+  }
+  const modelsDir = path.resolve(__dirname, "..", "models");
+  const resolvedRaw = path.resolve(rawPath);
+  const realTarget = fs.existsSync(resolvedRaw)
+    ? fs.realpathSync(resolvedRaw)
+    : resolvedRaw;
+  const allowedRoots = [modelsDir];
+  if (process.env.QVAC_MODEL_PATH) {
+    allowedRoots.push(path.dirname(path.resolve(process.env.QVAC_MODEL_PATH)));
+  }
+  if (MODEL_PATH) {
+    try {
+      allowedRoots.push(
+        path.dirname(fs.realpathSync(path.resolve(MODEL_PATH)))
+      );
+    } catch {
+      allowedRoots.push(path.dirname(path.resolve(MODEL_PATH)));
+    }
+  }
+  const underAllowed = allowedRoots.some((root) => {
+    const rel = path.relative(root, realTarget);
+    return rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel));
+  });
+  if (!underAllowed) {
+    throw new Error("model_path must be under the models directory");
+  }
+  const next = spaceFreePath(rawPath);
   if (!fs.existsSync(next)) {
     throw new Error(`MedPsy GGUF not found at ${next}`);
   }

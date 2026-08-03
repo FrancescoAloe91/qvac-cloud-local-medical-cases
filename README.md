@@ -339,21 +339,29 @@ valid score; it never imputes missing scores.
 ## Privacy and hosted persistence
 
 The app no longer stores raw keys in an IP-address vault and never copies a
-visitor key into process-global environment state.
+visitor key into process-global environment state. **Comprehension** and
+**Structured** differ on Cloud — read both bullets.
 
-- Local mode: key and data are scoped to the current session/local workspace
-  under `artifacts/owners/<key-fingerprint>/`. Saved artifacts may contain case
-  text, reference quotes, and model answers — treat the folder as sensitive PHI/
-  clinical plaintext; do not commit or share it. Anonymize cases before paste.
-- Hosted mode (Streamlit Cloud + Supabase Auth): configure Supabase Auth, apply
-  `supabase/migrations/202607270001_secure_benchmark.sql`, and provide a Fernet
-  `APP_ENCRYPTION_KEY`. Workspace directories use the Supabase user id. After
-  decrypt, artifacts stay in session memory — plaintext is **not** written to
-  disk on the host. The public Streamlit demo typically has **no QVAC sidecar**;
-  on-device MedPsy requires a local install (`./install.sh` + sidecar).
-- Supabase Row Level Security restricts rows to `auth.uid()`.
-- API keys and full artifacts (case, reference, answers, judgments) are encrypted
-  before cloud storage.
+- **Local Comprehension** (`app.py` on your machine): key-scoped workspace under
+  `artifacts/owners/<key-fingerprint>/` (or `_local_no_key/` for QVAC-only
+  rehearsal). Saved run JSON and custom drafts may contain case text, reference
+  quotes, and model answers — treat the folder as sensitive PHI/clinical
+  **plaintext**; do not commit or share it. Anonymize cases before paste.
+- **Comprehension on Streamlit Cloud** (home track): session-memory only for run
+  artifacts and custom drafts — **no** plaintext run JSON and **no**
+  `comprehension_custom_drafts.json` on the host FS. Requires visitor BYOK.
+  Anonymous (no key) visitors get a per-browser ephemeral owner id
+  (`_cloud_ephemeral_<hash16>`), never the shared `_local_no_key` bucket.
+  History/Rebuild for that visit lives in the browser session and is lost on
+  refresh.
+- **Structured + Supabase hosted** (`pages/structured_graded.py` with Auth +
+  Fernet `APP_ENCRYPTION_KEY`): configure Supabase Auth and apply
+  `supabase/migrations/202607270001_secure_benchmark.sql`. Workspace directories
+  use the Supabase user id. After decrypt, artifacts stay in session memory —
+  plaintext is **not** written to disk on the host. Rows are encrypted at rest
+  with RLS on `auth.uid()`.
+- The public Streamlit demo typically has **no QVAC sidecar**; on-device MedPsy
+  requires a local install (`./install.sh` + sidecar).
 - Files under `artifacts/`, `.env`, secrets, and GGUF weights are gitignored.
 
 Scores are **reference-relative** (Clinical Composite vs the user-confirmed

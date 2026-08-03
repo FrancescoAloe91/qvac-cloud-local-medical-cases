@@ -45,14 +45,19 @@ def owner_id_for_current_key(key: str | None = None) -> str:
 
 
 def scoped_artifacts_dir(
-    key: str | None = None, *, account_user_id: str | None = None
+    key: str | None = None,
+    *,
+    account_user_id: str | None = None,
+    cloud_ephemeral_id: str | None = None,
 ) -> Path:
     """
     Directory for this visitor's run JSON.
 
     With Supabase account auth → artifacts/owners/user_<user_id>/
     With a usable key → artifacts/owners/<sha256[:24]>/
-    Without → artifacts/owners/_local_no_key/ (local QVAC rehearsal only)
+    Local without key → artifacts/owners/_local_no_key/ (QVAC rehearsal only)
+    Streamlit Cloud without key/account → artifacts/owners/_cloud_ephemeral_<hash16>/
+    (never the shared ``_local_no_key`` bucket on Cloud)
     """
     uid = (account_user_id or "").strip()
     if uid:
@@ -60,7 +65,17 @@ def scoped_artifacts_dir(
     else:
         k = normalize_api_key(key) if key is not None else current_api_key()
         fp = owner_fingerprint(k)
-        oid = fp or LOCAL_NO_KEY_ID
+        if fp:
+            oid = fp
+        else:
+            from lib.deployment import is_streamlit_cloud
+
+            if is_streamlit_cloud():
+                ep = (cloud_ephemeral_id or "").strip() or "anonymous"
+                digest = hashlib.sha256(ep.encode("utf-8")).hexdigest()[:16]
+                oid = f"_cloud_ephemeral_{digest}"
+            else:
+                oid = LOCAL_NO_KEY_ID
     path = ARTIFACTS_DIR / OWNERS_DIRNAME / oid
     path.mkdir(parents=True, exist_ok=True)
     return path

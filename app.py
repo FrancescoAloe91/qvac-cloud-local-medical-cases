@@ -11,7 +11,9 @@ Rigid A1–A5 live collect lives on ``pages/structured_graded.py``
 from __future__ import annotations
 
 import hashlib
+import html
 import os
+import re
 import time
 import uuid
 from pathlib import Path
@@ -23,6 +25,7 @@ import streamlit.components.v1 as components
 from benchmark.beta_pack import (
     SOFT_MAX_BETA_SLOTS,
     auto_freeze_beta_slot,
+    beta_case_slot_of,
     count_beta_runs_by_slot,
     custom_slots_for_multi_all,
     delete_beta_artifacts_for_slot,
@@ -101,7 +104,7 @@ from lib.disclosure import (
 from lib.guide_overlays import guides_always_available_html
 from lib.i18n import t
 from lib.track_sidebar import render_guides_and_protocol, render_tracks_block
-from lib.run_store import LocalRunStore
+from lib.run_store import HostedRunStore, LocalRunStore
 from lib.run_timer import (
     _flash_collect_done,
     _paint_run_timer,
@@ -278,8 +281,35 @@ if _session_key and not is_usable_openrouter_key(_session_key):
     st.session_state.pop("or_key_session", None)
     _session_key = ""
 has_key = is_usable_openrouter_key(_session_key)
-WORKSPACE_DIR = scoped_artifacts_dir(_session_key)
-RUN_STORE = LocalRunStore(WORKSPACE_DIR)
+# Cloud + no key: per-browser ephemeral owner — never shared `_local_no_key`.
+_cloud_ephemeral: Optional[str] = None
+if is_streamlit_cloud() and not has_key:
+    if "_cloud_anon_ws" not in st.session_state:
+        st.session_state["_cloud_anon_ws"] = str(uuid.uuid4())
+    _cloud_ephemeral = str(st.session_state["_cloud_anon_ws"])
+WORKSPACE_DIR = scoped_artifacts_dir(
+    _session_key, cloud_ephemeral_id=_cloud_ephemeral
+)
+# Cloud Comprehension: session-memory only (no plaintext run JSON on host FS).
+# Local: keep LocalRunStore so History/means under artifacts/owners/ unchanged.
+if is_streamlit_cloud():
+    RUN_STORE = HostedRunStore(
+        memory=list(st.session_state.get("_comp_artifacts_memory") or []),
+        memory_setter=lambda arts: st.session_state.__setitem__(
+            "_comp_artifacts_memory", arts
+        ),
+        summaries=list(st.session_state.get("_comp_summaries_memory") or []),
+        summaries_setter=lambda s: st.session_state.__setitem__(
+            "_comp_summaries_memory", s
+        ),
+    )
+else:
+    RUN_STORE = LocalRunStore(WORKSPACE_DIR)
+
+
+def _comp_preloaded() -> List[Any]:
+    """Newest-first artifacts for Rebuild/History when HostedRunStore is active."""
+    return [a for _, a in RUN_STORE.list_artifacts()]
 
 # Boot: API key every session · QVAC SDK OK remembered locally (not mid-run / spend).
 _qvac_online = bool(qvac_bridge and qvac_bridge.reachable())
@@ -684,21 +714,31 @@ st.caption(
     f"· *Advanced: `{PROTOCOL_ID}`*"
 )
 
-# Custom cases (NEW CASE) — session + owner-workspace disk (API-key scoped).
-# Pack JSON (cases 1–K) is never mutated. Same key → customs return until deleted.
-_ws_fp = str(WORKSPACE_DIR.resolve())
-if st.session_state.get("beta_custom_workspace_fp") != _ws_fp:
-    _disk_drafts, _disk_locked = load_beta_custom_state(WORKSPACE_DIR)
-    st.session_state["beta_custom_drafts"] = _disk_drafts
-    st.session_state["beta_locked_custom_slots"] = list(_disk_locked)
-    st.session_state["beta_custom_workspace_fp"] = _ws_fp
-if "beta_custom_drafts" not in st.session_state:
-    st.session_state["beta_custom_drafts"] = {}
-if "beta_locked_custom_slots" not in st.session_state:
-    st.session_state["beta_locked_custom_slots"] = []
+# Custom cases (NEW CASE) — local: session + owner-workspace disk (API-key scoped).
+# Cloud: session-only (never hydrate/persist shared host drafts).
+# Pack JSON (cases 1–K) is never mutated.
+if is_streamlit_cloud():
+    if "beta_custom_drafts" not in st.session_state:
+        st.session_state["beta_custom_drafts"] = {}
+    if "beta_locked_custom_slots" not in st.session_state:
+        st.session_state["beta_locked_custom_slots"] = []
+else:
+    _ws_fp = str(WORKSPACE_DIR.resolve())
+    if st.session_state.get("beta_custom_workspace_fp") != _ws_fp:
+        _disk_drafts, _disk_locked = load_beta_custom_state(WORKSPACE_DIR)
+        st.session_state["beta_custom_drafts"] = _disk_drafts
+        st.session_state["beta_locked_custom_slots"] = list(_disk_locked)
+        st.session_state["beta_custom_workspace_fp"] = _ws_fp
+    if "beta_custom_drafts" not in st.session_state:
+        st.session_state["beta_custom_drafts"] = {}
+    if "beta_locked_custom_slots" not in st.session_state:
+        st.session_state["beta_locked_custom_slots"] = []
 
 
 def _persist_beta_customs() -> None:
+    # Cloud: customs stay in session_state only — no host-disk draft file.
+    if is_streamlit_cloud():
+        return
     save_beta_custom_state(
         WORKSPACE_DIR,
         st.session_state.get("beta_custom_drafts") or {},
@@ -891,9 +931,21 @@ if _is_custom_case:
                     except ValueError as exc:
                         st.error(str(exc))
                     else:
-                        _n_wiped = delete_beta_artifacts_for_slot(
-                            WORKSPACE_DIR, _del_sid
-                        )
+                        if getattr(RUN_STORE, "writes_plaintext", True):
+                            _n_wiped = delete_beta_artifacts_for_slot(
+                                WORKSPACE_DIR, _del_sid
+                            )
+                        else:
+                            _mem = list(
+                                st.session_state.get("_comp_artifacts_memory") or []
+                            )
+                            _kept = [
+                                a
+                                for a in _mem
+                                if beta_case_slot_of(a) != _del_sid
+                            ]
+                            _n_wiped = len(_mem) - len(_kept)
+                            st.session_state["_comp_artifacts_memory"] = _kept
                         st.session_state["beta_custom_drafts"] = _new_drafts
                         st.session_state["beta_locked_custom_slots"] = [
                             int(x)
@@ -1293,6 +1345,9 @@ if multi_all_clicked:
         "n": int(n_multi),
         "rounds": _rounds_all,
         "multi_case": True,
+        "n_pack": int(_n_pack_cases),
+        "n_custom": int(len(_multi_all_extra)),
+        "n_cases": int(_n_multi_all_cases),
         "mode": "full" if include_cloud else "local_only",
         "est": float(_bd_all.get("total_usd_for_n") or 0),
         "est_hi": float(
@@ -1423,14 +1478,19 @@ if _ready:
         cols = st.columns(len(row) or 1, gap="small")
         for col, cand in zip(cols, row):
             key = cand["key"]
-            color = cand.get("color") or "#64748b"
+            _raw_color = str(cand.get("color") or "#64748b")
+            color = (
+                _raw_color
+                if re.fullmatch(r"#[0-9A-Fa-f]{3,8}", _raw_color)
+                else "#64748b"
+            )
             label = str(cand.get("label") or key)
             model_bit = str(cand.get("model") or "")
             with col:
                 st.markdown(
                     f'<div class="panel-card" style="border-top-color:{color}">'
-                    f'<p class="live-head">{label}</p>'
-                    f'<p class="live-meta">{model_bit}</p></div>',
+                    f'<p class="live-head">{html.escape(label)}</p>'
+                    f'<p class="live-meta">{html.escape(model_bit)}</p></div>',
                     unsafe_allow_html=True,
                 )
                 status_boxes[key] = st.empty()
@@ -1966,6 +2026,9 @@ if _ready:
     if len(all_artifacts) > 1:
         _model_ids = [c["key"] for c in roster] if roster else None
         _n_cap = max(1, int(n_runs) if _multi_case else len(all_artifacts))
+        _pre_mem = (
+            None if getattr(RUN_STORE, "writes_plaintext", True) else _comp_preloaded()
+        )
         if _multi_case:
             st.session_state["beta_rebuild_scope"] = "balanced_cases"
             _built = rebuild_balanced_cases_from_history(
@@ -1974,6 +2037,7 @@ if _ready:
                 scoring_version=BETA_SV,
                 track=benchmark_track,
                 model_ids=_model_ids,
+                preloaded=_pre_mem,
             )
         else:
             _built = rebuild_multi_from_history(
@@ -1983,6 +2047,7 @@ if _ready:
                 cohort_id=last_cohort,
                 model_ids=_model_ids,
                 scoring_version=BETA_SV,
+                preloaded=_pre_mem,
             )
         if (_built or {}).get("ok"):
             _arm_beta_mean_popup(_built)
@@ -2070,9 +2135,20 @@ if not st.session_state.get("beta_running") and not _ready:
             for _col, _cand in zip(_cols, _row):
                 _key = _cand["key"]
                 _prev = _saved_out.get(_key) or {}
-                _label = str(_cand.get("label") or _prev.get("label") or _key)
-                _color = _cand.get("color") or _prev.get("color") or "#64748b"
-                _model_bit = str(_cand.get("model") or _prev.get("model") or "")
+                _label = html.escape(
+                    str(_cand.get("label") or _prev.get("label") or _key)
+                )
+                _raw_c = str(
+                    _cand.get("color") or _prev.get("color") or "#64748b"
+                )
+                _color = (
+                    _raw_c
+                    if re.fullmatch(r"#[0-9A-Fa-f]{3,8}", _raw_c)
+                    else "#64748b"
+                )
+                _model_bit = html.escape(
+                    str(_cand.get("model") or _prev.get("model") or "")
+                )
                 with _col:
                     st.markdown(
                         f'<div class="panel-card" style="border-top-color:{_color}">'
@@ -2180,6 +2256,9 @@ _scope = st.radio(
 )
 if st.button("Rebuild Comprehension mean", key="beta_rebuild_btn", type="primary"):
     model_ids = [c["key"] for c in roster] if roster else None
+    _pre_mem = (
+        None if getattr(RUN_STORE, "writes_plaintext", True) else _comp_preloaded()
+    )
     if _scope == "portfolio":
         built = rebuild_portfolio_from_history(
             WORKSPACE_DIR,
@@ -2189,6 +2268,7 @@ if st.button("Rebuild Comprehension mean", key="beta_rebuild_btn", type="primary
             model_ids=model_ids,
             pack_revision=_pack_revision,
             current_pack_revision=_pack_revision,
+            preloaded=_pre_mem,
         )
     elif _scope == "balanced_cases":
         # Comprehension pack slots are Case 1…K; rebuild helper discovers stem order.
@@ -2200,6 +2280,7 @@ if st.button("Rebuild Comprehension mean", key="beta_rebuild_btn", type="primary
             model_ids=model_ids,
             pack_revision=_pack_revision,
             current_pack_revision=_pack_revision,
+            preloaded=_pre_mem,
         )
     else:
         cohort = st.session_state.get("beta_last_cohort")
@@ -2212,6 +2293,7 @@ if st.button("Rebuild Comprehension mean", key="beta_rebuild_btn", type="primary
             scoring_version=BETA_SV,
             pack_revision=_pack_revision,
             current_pack_revision=_pack_revision,
+            preloaded=_pre_mem,
         )
     if not (built or {}).get("ok"):
         st.session_state["beta_rebuild_result"] = built or {}
@@ -2237,13 +2319,25 @@ if _rb_ok:
 elif isinstance(_rb, dict) and _rb and not _rb.get("ok"):
     st.warning(_rb.get("reason") or "Rebuild failed")
 
-_hist = artifacts_for_case(WORKSPACE_DIR, CASE_ID, limit=20)
+_hist = artifacts_for_case(
+    WORKSPACE_DIR,
+    CASE_ID,
+    limit=20,
+    preloaded=(
+        None if getattr(RUN_STORE, "writes_plaintext", True) else _comp_preloaded()
+    ),
+)
 _beta_hist = [
     a
     for _, a in _hist
     if scoring_versions_equivalent(str(a.scoring_version or ""), BETA_SV)
 ]
+_hist_note = (
+    "this browser session"
+    if not getattr(RUN_STORE, "writes_plaintext", True)
+    else "this workspace"
+)
 st.caption(
-    f"Comprehension History · {len(_beta_hist)} recent saved run(s) in this workspace. "
+    f"Comprehension History · {len(_beta_hist)} recent saved run(s) in {_hist_note}. "
     f"· *Advanced · `{BETA_SV}`*"
 )

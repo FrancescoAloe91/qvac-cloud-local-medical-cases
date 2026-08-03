@@ -673,11 +673,13 @@ _STRINGS = {
             "Deleted custom Case {n} · removed {runs} History run(s)."
         ),
         "comp.custom_multi_caption": (
-            "Custom case · saved with this API key’s workspace until you "
-            "delete it. Lock builds a rough five-part checklist from your "
-            "reference text (exploratory — ideas may repeat). Built-in pack "
-            "cases keep curated checklists. **Multi×all includes this slot "
-            "only after Lock** (with non-empty case + reference)."
+            "Custom case · kept until you delete it (Cloud: this session only; "
+            "local: your API-key workspace). Lock builds a rough five-part "
+            "checklist from your reference (exploratory — ideas may repeat). "
+            "Scores are **reference-relative** to that custom gold — easy gold "
+            "can inflate scores; **not clinical accuracy**. Pack cases keep "
+            "curated checklists. **Multi×all includes this slot only after "
+            "Lock** (non-empty case + reference)."
         ),
         "bench.case_slot_loaded": (
             "Loaded **Case {n}** case text + confirmed reference from History."
@@ -1538,10 +1540,12 @@ _STRINGS = {
             "Eliminato Case custom {n} · rimossi {runs} run dalla History."
         ),
         "comp.custom_multi_caption": (
-            "Caso custom · resta salvato con il workspace di questa API key "
-            "finché non lo elimini. Lock costruisce una checklist a cinque "
-            "parti dal tuo testo di riferimento (esplorativo — le idee "
-            "possono ripetersi). I casi pack hanno checklist curate. "
+            "Caso custom · resta finché non lo elimini (Cloud: solo questa "
+            "sessione; locale: workspace della API key). Lock costruisce una "
+            "checklist a cinque parti dal tuo riferimento (esplorativo — le "
+            "idee possono ripetersi). I punteggi sono **relativi al gold "
+            "custom** — un gold facile può alzare gli score; **non è "
+            "accuratezza clinica**. I casi pack hanno checklist curate. "
             "**Multi×all include questo slot solo dopo Lock** (caso + "
             "riferimento non vuoti)."
         ),
