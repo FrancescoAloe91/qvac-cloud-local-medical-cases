@@ -741,7 +741,8 @@ _STRINGS = {
             "Limits are in the honesty box at the top of the page."
         ),
         "struct.track_caption": (
-            "**Optional track** · results **never mix** with Comprehension home. "
+            "**Optional legacy / advanced track** · results **never mix** with "
+            "Comprehension home (do not pool KPIs). "
             "**Workflow:** anonymized case → Prepare reference → review/edit → "
             "Confirm · models run only after Confirm. Cloud answers come from "
             "the OpenRouter API (not ChatGPT/Claude/Gemini in a browser). "
@@ -1580,8 +1581,9 @@ _STRINGS = {
             "clinico. I limiti sono nel box di onestà in cima alla pagina."
         ),
         "struct.track_caption": (
-            "**Track opzionale** · i risultati **non si mescolano** con la home "
-            "Comprehension. **Flusso:** caso anonimizzato → Prepare riferimento → "
+            "**Track opzionale legacy / advanced** · i risultati **non si "
+            "mescolano** con la home Comprehension (non unire i KPI). "
+            "**Flusso:** caso anonimizzato → Prepare riferimento → "
             "revisiona/modifica → Confirm · i modelli partono solo dopo Confirm. "
             "Le risposte cloud arrivano dall'API OpenRouter (non ChatGPT/Claude/"
             "Gemini nel browser). I punteggi confrontano il tuo riferimento — "

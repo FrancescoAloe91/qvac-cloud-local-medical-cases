@@ -283,17 +283,18 @@ section[data-testid="stSidebar"][aria-expanded="false"] iframe,
 .sidebar-guides-block .guide-open-btn {
   margin: 0.28rem 0 !important;
 }
-/* Track nav pills — Comprehension (yellow / primary) + Structured (orange).
+/* Track nav pills — Comprehension (yellow / primary).
+   Structured (legacy / advanced) is muted slate, lower in the rail.
    Portal JS adds .track-pill / .track-pill--* / .track-pill--active. */
 :root {
   --track-comp-bg: #facc15;
   --track-comp-bg-hover: #fde047;
   --track-comp-fg: #1c1917;
   --track-comp-border: #ca8a04;
-  --track-struct-bg: #ea580c;
-  --track-struct-bg-hover: #f97316;
-  --track-struct-fg: #fff7ed;
-  --track-struct-border: #c2410c;
+  --track-struct-bg: #334155;
+  --track-struct-bg-hover: #475569;
+  --track-struct-fg: #cbd5e1;
+  --track-struct-border: #475569;
   --track-active-ring: #f8fafc;
 }
 [data-testid="stSidebar"] [data-testid="stPageLink"] a,
@@ -347,23 +348,29 @@ section[data-testid="stSidebar"][aria-expanded="false"] iframe,
   background: var(--track-comp-bg-hover) !important;
   color: var(--track-comp-fg) !important;
 }
-/* Structured = orange, compact single row */
+/* Structured = muted slate, quieter than Comprehension primary */
 [data-testid="stSidebar"] [data-testid="stPageLink"] a[href*="structured"],
 [data-testid="stSidebar"] a.track-pill--structured {
   background: var(--track-struct-bg) !important;
   color: var(--track-struct-fg) !important;
   border-color: var(--track-struct-border) !important;
+  font-weight: 550 !important;
+  font-size: 0.68rem !important;
+  opacity: 0.88 !important;
+  margin-top: 0.1rem !important;
 }
 [data-testid="stSidebar"] [data-testid="stPageLink"] a[href*="structured"] span,
 [data-testid="stSidebar"] [data-testid="stPageLink"] a[href*="structured"] p,
 [data-testid="stSidebar"] a.track-pill--structured span,
 [data-testid="stSidebar"] a.track-pill--structured p {
   color: var(--track-struct-fg) !important;
+  font-weight: 550 !important;
 }
 [data-testid="stSidebar"] [data-testid="stPageLink"] a[href*="structured"]:hover,
 [data-testid="stSidebar"] a.track-pill--structured:hover {
   background: var(--track-struct-bg-hover) !important;
-  color: #fffbeb !important;
+  color: #e2e8f0 !important;
+  opacity: 1 !important;
 }
 /* Active track = thick border (aria-current and/or portal .track-pill--active) */
 [data-testid="stSidebar"] [data-testid="stPageLink"] a[aria-current="page"],

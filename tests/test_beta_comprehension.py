@@ -271,17 +271,37 @@ def test_comprehension_guide_portal_and_sidebar_reopen_control():
     assert "qvac-sidebar-reopen" in portal
     assert "qvac-sidebar-reopen" in css
     assert "syncTrackPills" in portal
-    # Compact track pills: yellow Comprehension, orange Structured, thick active.
+    # Primary pill = Comprehension; Structured is muted advanced link lower in rail.
     assert 'label="Comprehension"' in tracks
-    assert 'label="Structured A1–A5"' in tracks
+    assert 'STRUCTURED_NAV_LABEL = "Structured (legacy / advanced)"' in tracks
+    assert "label=STRUCTURED_NAV_LABEL" in tracks
+    assert 'label="Structured A1–A5"' not in tracks
     assert "Comprehension · home" not in tracks
     assert "Structured · A1–A5 (optional)" not in tracks
+    assert "render_advanced_track_link" in tracks
+    assert "active_track" in tracks
     assert "qvac-track-active" in tracks
     assert "track-pill--comprehension" in css
     assert "track-pill--structured" in css
     assert "track-pill--active" in css
     assert "--track-comp-bg" in css
     assert "--track-struct-bg" in css
+    # Structured styling stays muted (slate), not primary orange.
+    assert "#334155" in css or "--track-struct-bg: #334155" in css
+    home = (root / "app.py").read_text(encoding="utf-8")
+    structured_src = (root / "pages" / "structured_graded.py").read_text(
+        encoding="utf-8"
+    )
+    assert 'active_track="comprehension"' in home
+    assert 'active_track="structured"' in structured_src
+    # Advanced link is appended after guides, not in the primary Tracks block peer row.
+    tracks_fn = tracks.split("def render_tracks_block", 1)[1].split(
+        "def render_advanced_track_link", 1
+    )[0]
+    assert "structured_graded.py" not in tracks_fn
+    assert "structured_graded.py" in tracks.split(
+        "def render_advanced_track_link", 1
+    )[1]
 
 
 def test_new_beta_case_slot_does_not_mutate_pack():

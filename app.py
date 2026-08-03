@@ -621,6 +621,7 @@ with st.sidebar:
     render_guides_and_protocol(
         protocol_id=PROTOCOL_ID,
         lang=_guide_lang,
+        active_track="comprehension",
         extra_caption=(
             "Rebuild below averages only this track’s saved runs. "
             "MedPsy may look idle while the AI judge double-checks an answer — "

@@ -232,7 +232,7 @@ def _mean_rows_to_last_ranking(ranking_mean):
     return out
 
 st.set_page_config(
-    page_title="Structured A1–A5 · QVAC vs Cloud",
+    page_title="Structured (legacy / advanced) · QVAC vs Cloud",
     page_icon="📋",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -1469,14 +1469,18 @@ if st.session_state.get("or_key_session") and is_usable_openrouter_key(
     has_key = True
 
 st.markdown(
-    '<p class="demo-hero">QVAC vs Cloud · Structured A1–A5 '
-    '<span style="font-size:0.65em;opacity:.75">(optional)</span></p>',
+    '<p class="demo-hero">QVAC vs Cloud · Structured '
+    '<span style="font-size:0.65em;opacity:.75">'
+    "(legacy / advanced · optional)</span></p>",
     unsafe_allow_html=True,
 )
 st.markdown(
     '<p class="demo-sub">Local MedPsy on your machine · your own OpenRouter key · '
     "an AI judge scores answers · hobby comparison — not medical advice.</p>",
     unsafe_allow_html=True,
+)
+st.caption(
+    "Optional advanced track · KPIs here must not be pooled with Comprehension home."
 )
 st.markdown(
     """
@@ -1624,6 +1628,7 @@ with st.sidebar:
     render_guides_and_protocol(
         protocol_id=str(SCORING_VERSION),
         lang=_ui_lang(),
+        active_track="structured",
         extra_caption="History picker + Run clock appear lower in this column.",
     )
 
