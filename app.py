@@ -24,6 +24,9 @@ from benchmark.beta_pack import (
     SOFT_MAX_BETA_SLOTS,
     auto_freeze_beta_slot,
     count_beta_runs_by_slot,
+    custom_slots_for_multi_all,
+    delete_beta_artifacts_for_slot,
+    delete_beta_custom_slot,
     is_beta_artifact,
     list_beta_slots,
     load_beta_pack,
@@ -682,11 +685,18 @@ st.caption(
 # Session custom cases (NEW CASE) — never mutate pack JSON (cases 1–K curated).
 if "beta_custom_drafts" not in st.session_state:
     st.session_state["beta_custom_drafts"] = {}
+if "beta_locked_custom_slots" not in st.session_state:
+    st.session_state["beta_locked_custom_slots"] = []
 slots = merge_beta_slots(pack_slots, st.session_state.get("beta_custom_drafts") or {})
 _pack_slot_ids = {int(s["slot"]) for s in pack_slots}
 _slots_locked = bool(
     st.session_state.get("beta_running") or st.session_state.get("beta_confirmed_run")
 )
+_locked_custom_ids = [
+    int(x) for x in (st.session_state.get("beta_locked_custom_slots") or [])
+]
+_multi_all_extra = custom_slots_for_multi_all(slots, _locked_custom_ids)
+_n_multi_all_cases = len(pack_slots) + len(_multi_all_extra)
 
 # --- case pickers (NEW CASE + buttons + run counts; NOT toggles) ---
 _beta_arts = [a for _, a in RUN_STORE.list_artifacts()]
@@ -700,7 +710,7 @@ if not any(int(s["slot"]) == _active_slot for s in slots):
 
 st.markdown(
     '<div class="sec-label">Cases · pick one for a single run or Multi ×N '
-    "(Multi×all still walks every pack case)</div>",
+    "(Multi×all walks pack cases + Lock-ed custom cases)</div>",
     unsafe_allow_html=True,
 )
 
@@ -830,17 +840,119 @@ if _is_custom_case and not _slots_locked:
     case_row = {**case_row, "stem": stem or "", "reference_prose": prose or ""}
 
 if _is_custom_case:
-    st.caption(
-        "Custom case · Lock builds a rough five-part checklist from your reference "
-        "text (exploratory — ideas may repeat). Built-in pack cases keep curated "
-        "checklists. Multi×all never includes custom slots."
-    )
+    st.caption(t("comp.custom_multi_caption", _guide_lang))
+    _del_sid = int(case_row["slot"])
+    _del_pending = int(st.session_state.get("beta_delete_custom_pending") or 0)
+    if _del_pending == _del_sid:
+        st.warning(
+            f"**{t('comp.delete_custom_confirm_title', _guide_lang, n=_del_sid)}**\n\n"
+            + t("comp.delete_custom_confirm_body", _guide_lang, n=_del_sid)
+        )
+        _dy, _dn = st.columns(2)
+        with _dy:
+            if st.button(
+                t("comp.delete_custom_yes", _guide_lang, n=_del_sid),
+                key=f"beta_delete_custom_yes_{_del_sid}",
+                type="primary",
+                use_container_width=True,
+                disabled=_slots_locked,
+            ):
+                if _slots_locked:
+                    st.session_state["_beta_delete_flash"] = ("busy", _del_sid, 0)
+                else:
+                    try:
+                        _new_drafts = delete_beta_custom_slot(
+                            _del_sid,
+                            pack_slots=pack_slots,
+                            custom_drafts=st.session_state.get("beta_custom_drafts")
+                            or {},
+                        )
+                    except ValueError as exc:
+                        st.error(str(exc))
+                    else:
+                        _n_wiped = delete_beta_artifacts_for_slot(
+                            WORKSPACE_DIR, _del_sid
+                        )
+                        st.session_state["beta_custom_drafts"] = _new_drafts
+                        st.session_state["beta_locked_custom_slots"] = [
+                            int(x)
+                            for x in (
+                                st.session_state.get("beta_locked_custom_slots") or []
+                            )
+                            if int(x) != _del_sid
+                        ]
+                        _fg = st.session_state.get("beta_confirmed_gold") or {}
+                        if (
+                            isinstance(_fg, dict)
+                            and int(_fg.get("case_slot") or 0) == _del_sid
+                        ):
+                            st.session_state.pop("beta_confirmed_gold", None)
+                        for _wk in (
+                            f"beta_stem_{_del_sid}",
+                            f"beta_prose_{_del_sid}",
+                            f"beta_confirm_box_{_del_sid}",
+                        ):
+                            st.session_state.pop(_wk, None)
+                        for _rk in (
+                            "beta_rebuild_result",
+                            "beta_last_cohort",
+                            "beta_live_outputs",
+                        ):
+                            st.session_state.pop(_rk, None)
+                        if int(
+                            st.session_state.get("beta_active_case_slot") or 0
+                        ) == _del_sid:
+                            st.session_state["beta_active_case_slot"] = int(
+                                pack_slots[0]["slot"]
+                            )
+                        st.session_state.pop("beta_delete_custom_pending", None)
+                        st.session_state["_beta_delete_flash"] = (
+                            "done",
+                            _del_sid,
+                            _n_wiped,
+                        )
+                        st.rerun()
+        with _dn:
+            if st.button(
+                t("comp.delete_custom_cancel", _guide_lang),
+                key=f"beta_delete_custom_no_{_del_sid}",
+                use_container_width=True,
+            ):
+                st.session_state.pop("beta_delete_custom_pending", None)
+                st.rerun()
+    else:
+        if st.button(
+            t("comp.delete_custom_btn", _guide_lang),
+            key=f"beta_delete_custom_btn_{_del_sid}",
+            use_container_width=True,
+            disabled=_slots_locked,
+            help=t("comp.delete_custom_help", _guide_lang),
+        ):
+            if _slots_locked:
+                st.session_state["_beta_delete_flash"] = ("busy", _del_sid, 0)
+            else:
+                st.session_state["beta_delete_custom_pending"] = _del_sid
+                st.rerun()
 else:
     st.caption(
         "Scoring uses the curated reference checklist for this pack case. "
         "The long text above is the readable story — the judge scores against "
         "the checklist, not that story alone."
     )
+
+_del_flash = st.session_state.pop("_beta_delete_flash", None)
+if isinstance(_del_flash, tuple) and _del_flash:
+    if _del_flash[0] == "busy":
+        st.warning(t("comp.delete_custom_busy", _guide_lang))
+    elif _del_flash[0] == "done":
+        st.success(
+            t(
+                "comp.delete_custom_done",
+                _guide_lang,
+                n=int(_del_flash[1]),
+                runs=int(_del_flash[2]),
+            )
+        )
 
 confirm = st.checkbox(
     t("comp.lock_checkbox", _guide_lang),
@@ -894,6 +1006,13 @@ if st.button(
             }
         )
         st.session_state["beta_confirmed_gold"] = payload
+        if _is_custom_case:
+            _locked_set = {
+                int(x)
+                for x in (st.session_state.get("beta_locked_custom_slots") or [])
+            }
+            _locked_set.add(int(case_row["slot"]))
+            st.session_state["beta_locked_custom_slots"] = sorted(_locked_set)
         st.success(
             t(
                 "comp.lock_success",
@@ -1005,14 +1124,21 @@ _cost_kwargs = dict(
 _bd_single = estimate_cost_breakdown(cfg, _live_case, n=1, **_cost_kwargs)
 _bd_multi = estimate_cost_breakdown(cfg, _live_case, n=int(n_multi), **_cost_kwargs)
 _bd_all = estimate_cost_breakdown(
-    cfg, _live_case, n=max(1, _n_pack_cases * int(n_multi)), **_cost_kwargs
+    cfg, _live_case, n=max(1, _n_multi_all_cases * int(n_multi)), **_cost_kwargs
 )
 
 st.caption(
     f"**Multi ×N** repeats the selected case N times. "
-    f"**Multi×all cases** walks pack Case 1→{_n_pack_cases}, then again "
-    f"(N passes) · e.g. N=2 → {_n_pack_cases * 2} rounds · pack references "
-    "lock automatically · finished rounds stay visible below. "
+    f"**Multi×all cases** walks pack Case 1→{_n_pack_cases}"
+    + (
+        f" + {len(_multi_all_extra)} Lock-ed custom"
+        if _multi_all_extra
+        else ""
+    )
+    + f" ({_n_multi_all_cases} cases), then again "
+    f"(N passes) · e.g. N=2 → {_n_multi_all_cases * 2} rounds · pack "
+    "references lock automatically · customs need Lock first · finished "
+    "rounds stay visible below. "
     "**New launches** ask you to OK the estimated cost first."
 )
 show_cost_forecast = st.toggle(
@@ -1048,19 +1174,25 @@ with r2:
         st.markdown(fmt_cost_multi(_bd_multi, int(n_multi)), unsafe_allow_html=True)
 with r3:
     multi_all_clicked = st.button(
-        f"Multi×all cases · {_n_pack_cases}×{int(n_multi)}",
+        f"Multi×all cases · {_n_multi_all_cases}×{int(n_multi)}",
         disabled=not _can_launch or _slots_locked,
         use_container_width=True,
         type="secondary",
         help=(
-            f"Round-robin curated pack Case 1→{_n_pack_cases} for N={int(n_multi)} "
-            f"passes ({_n_pack_cases * int(n_multi)} rounds). Custom slots excluded. "
-            "Cost OK required."
+            f"Round-robin pack Case 1→{_n_pack_cases}"
+            + (
+                f" + {len(_multi_all_extra)} Lock-ed custom"
+                if _multi_all_extra
+                else ""
+            )
+            + f" for N={int(n_multi)} passes "
+            f"({_n_multi_all_cases * int(n_multi)} rounds). "
+            "Empty/unlocked customs excluded. Cost OK required."
         ),
     )
     if show_cost_forecast:
         st.markdown(
-            fmt_cost_multi(_bd_all, max(1, _n_pack_cases * int(n_multi))),
+            fmt_cost_multi(_bd_all, max(1, _n_multi_all_cases * int(n_multi))),
             unsafe_allow_html=True,
         )
 with r4:
@@ -1102,7 +1234,7 @@ if multi_clicked:
     }
     st.rerun()
 if multi_all_clicked:
-    _rounds_all = max(1, _n_pack_cases * int(n_multi))
+    _rounds_all = max(1, _n_multi_all_cases * int(n_multi))
     st.session_state["beta_pending_run"] = {
         "n": int(n_multi),
         "rounds": _rounds_all,
@@ -1140,11 +1272,27 @@ if _ready:
     n_runs = int(run_cfg.get("n") or 1)
     cases_plan: List[Dict[str, Any]]
     if _multi_case:
-        cases_plan = list(pack_slots)
+        # Re-merge drafts at launch so Lock-ed customs match current session.
+        _launch_slots = merge_beta_slots(
+            pack_slots, st.session_state.get("beta_custom_drafts") or {}
+        )
+        _launch_locked = [
+            int(x) for x in (st.session_state.get("beta_locked_custom_slots") or [])
+        ]
+        _launch_customs = custom_slots_for_multi_all(_launch_slots, _launch_locked)
+        cases_plan = list(pack_slots) + _launch_customs
+        _n_pack_plan = len(pack_slots)
+        _n_custom_plan = len(_launch_customs)
         st.info(
-            f"**Multi×all cases** · round-robin Case 1→{len(cases_plan)} × "
-            f"{n_runs} pass(es) = **{len(cases_plan) * n_runs}** rounds · "
-            "progressive tabs below (same strip as graded Multi) · exploratory Comprehension track only."
+            f"**Multi×all cases** · round-robin pack 1→{_n_pack_plan}"
+            + (
+                f" + {_n_custom_plan} Lock-ed custom"
+                if _n_custom_plan
+                else ""
+            )
+            + f" × {n_runs} pass(es) = **{len(cases_plan) * n_runs}** rounds · "
+            "progressive tabs below (same strip as graded Multi) · exploratory "
+            "Comprehension track only."
         )
         st.warning(t("disclosure.banner_auto_freeze", _guide_lang))
     else:

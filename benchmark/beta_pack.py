@@ -229,6 +229,82 @@ def open_new_beta_case_slot(
     return new_idx, drafts
 
 
+def delete_beta_custom_slot(
+    slot: int,
+    *,
+    pack_slots: List[Dict[str, Any]],
+    custom_drafts: Optional[Mapping[int, Mapping[str, Any]]] = None,
+) -> Dict[int, Dict[str, Any]]:
+    """Remove a session custom draft. Never deletes pack Case 1…K. Gaps kept."""
+    sid = int(slot)
+    pack_ids = set()
+    for entry in pack_slots or []:
+        try:
+            pack_ids.add(int(entry["slot"]))
+        except (KeyError, TypeError, ValueError):
+            continue
+    if sid in pack_ids:
+        raise ValueError(f"Cannot delete pack Case {sid}")
+    drafts: Dict[int, Dict[str, Any]] = {
+        int(k): dict(v) for k, v in (custom_drafts or {}).items()
+    }
+    drafts.pop(sid, None)
+    return drafts
+
+
+def custom_slots_for_multi_all(
+    slots: List[Dict[str, Any]],
+    locked_custom_slots: Optional[Iterable[Any]] = None,
+) -> List[Dict[str, Any]]:
+    """Custom rows eligible for Multi×all: Lock-marked + non-empty stem/prose."""
+    locked = set()
+    for raw in locked_custom_slots or []:
+        try:
+            locked.add(int(raw))
+        except (TypeError, ValueError):
+            continue
+    out: List[Dict[str, Any]] = []
+    for entry in slots or []:
+        if not entry.get("custom"):
+            continue
+        try:
+            sid = int(entry["slot"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if sid not in locked:
+            continue
+        if not str(entry.get("stem") or "").strip():
+            continue
+        if not str(entry.get("reference_prose") or "").strip():
+            continue
+        out.append(dict(entry))
+    return out
+
+
+def delete_beta_artifacts_for_slot(workspace: Path, slot: int) -> int:
+    """Delete Comprehension run JSON files stamped with ``slot``. Returns count."""
+    from benchmark.report import list_run_artifacts, load_artifact
+
+    sid = int(slot)
+    removed = 0
+    root = Path(workspace)
+    if not root.is_dir():
+        return 0
+    for path in list_run_artifacts(root):
+        try:
+            art = load_artifact(path)
+        except Exception:
+            continue
+        if beta_case_slot_of(art) != sid:
+            continue
+        try:
+            path.unlink(missing_ok=True)
+            removed += 1
+        except OSError:
+            continue
+    return removed
+
+
 def resolve_beta_gold_raw(case_entry: Mapping[str, Any]) -> str:
     """Pack gold_raw, or synthesize from reference prose for custom cases."""
     gold_raw = str(case_entry.get("gold_raw") or "").strip()

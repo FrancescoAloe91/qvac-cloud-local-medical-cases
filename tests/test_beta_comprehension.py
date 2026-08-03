@@ -8,6 +8,9 @@ from benchmark.beta_pack import (
     auto_freeze_beta_slot,
     beta_case_slot_of,
     count_beta_runs_by_slot,
+    custom_slots_for_multi_all,
+    delete_beta_artifacts_for_slot,
+    delete_beta_custom_slot,
     is_beta_artifact,
     list_beta_slots,
     load_beta_pack,
@@ -191,6 +194,9 @@ def test_beta_multi_finish_arms_mean_popup_like_graded():
         encoding="utf-8"
     )
     assert "open_new_beta_case_slot" in src
+    assert "delete_beta_custom_slot" in src
+    assert "custom_slots_for_multi_all" in src
+    assert "beta_locked_custom_slots" in src
     assert "run_boot_dialogs" in src
     # Plain-language lock copy + pack revision + balanced default.
     assert 't("comp.lock_btn"' in src or "comp.lock_btn" in src
@@ -205,6 +211,9 @@ def test_beta_multi_finish_arms_mean_popup_like_graded():
     assert "--case-new-bg" in css and "--case-selected-bg" in css
     assert "st-key-beta_case_new_btn" in css
     assert "st-key-case_slot_btn_" in css
+    i18n = (root / "lib" / "i18n.py").read_text(encoding="utf-8")
+    assert "comp.delete_custom_btn" in i18n
+    assert "comp.custom_multi_caption" in i18n
 
 
 def test_ux_parity_shared_shell_on_both_tracks():
@@ -328,6 +337,128 @@ def test_new_beta_case_slot_does_not_mutate_pack():
     merged2 = merge_beta_slots(pack_slots, drafts)
     assert merged2[0]["stem"] == pack_slots[0]["stem"]
     assert not merged2[0].get("custom")
+
+
+def test_delete_beta_custom_slot_keeps_gaps_and_pack():
+    pack_slots = list_beta_slots()
+    n_pack = len(pack_slots)
+    drafts = {
+        n_pack + 1: {
+            "title": "C11",
+            "stem": "stem 11",
+            "reference_prose": "prose 11",
+            "gold_raw": "",
+        },
+        n_pack + 2: {
+            "title": "C12",
+            "stem": "stem 12",
+            "reference_prose": "prose 12",
+            "gold_raw": "",
+        },
+        n_pack + 3: {
+            "title": "C13",
+            "stem": "stem 13",
+            "reference_prose": "prose 13",
+            "gold_raw": "",
+        },
+    }
+    after = delete_beta_custom_slot(
+        n_pack + 2, pack_slots=pack_slots, custom_drafts=drafts
+    )
+    assert n_pack + 1 in after and n_pack + 3 in after
+    assert n_pack + 2 not in after
+    merged = merge_beta_slots(pack_slots, after)
+    assert {int(s["slot"]) for s in merged if s.get("custom")} == {
+        n_pack + 1,
+        n_pack + 3,
+    }
+    assert len([s for s in merged if not s.get("custom")]) == n_pack
+    try:
+        delete_beta_custom_slot(1, pack_slots=pack_slots, custom_drafts=after)
+        raise AssertionError("pack delete should raise")
+    except ValueError:
+        pass
+
+
+def test_custom_slots_for_multi_all_requires_lock_and_text():
+    pack_slots = list_beta_slots()
+    n_pack = len(pack_slots)
+    drafts = {
+        n_pack + 1: {
+            "title": "locked",
+            "stem": "Patient: locked custom",
+            "reference_prose": "Give epinephrine first.",
+            "gold_raw": "",
+        },
+        n_pack + 2: {
+            "title": "empty",
+            "stem": "",
+            "reference_prose": "",
+            "gold_raw": "",
+        },
+        n_pack + 3: {
+            "title": "unlocked filled",
+            "stem": "Patient: unlocked",
+            "reference_prose": "Some answer.",
+            "gold_raw": "",
+        },
+    }
+    merged = merge_beta_slots(pack_slots, drafts)
+    only_locked = custom_slots_for_multi_all(merged, [n_pack + 1, n_pack + 2])
+    assert [int(s["slot"]) for s in only_locked] == [n_pack + 1]
+    plan = list(pack_slots) + only_locked
+    assert len(plan) == n_pack + 1
+    assert all(not s.get("custom") for s in plan[:n_pack])
+    assert plan[-1].get("custom") is True
+
+
+def test_delete_beta_artifacts_for_slot(tmp_path: Path):
+    from benchmark.report import write_artifact
+    from benchmark.schema import (
+        CandidateAnswer,
+        JudgeResult,
+        ModelCallMeta,
+        RunArtifact,
+    )
+
+    def _mk(run_id: str, slot: int) -> RunArtifact:
+        return RunArtifact(
+            run_id=run_id,
+            case_id=CASE_ID,
+            started_at="t0",
+            finished_at="t1",
+            cohort_id="c1",
+            scoring_version=SCORING_VERSION,
+            models_config={"comprehension_case_slot": slot},
+            candidates=[
+                CandidateAnswer(
+                    candidate_key="chatgpt",
+                    label="c",
+                    blind_id="b",
+                    answers={},
+                    meta=ModelCallMeta(model="m", provider="openrouter"),
+                )
+            ],
+            judgments=[
+                JudgeResult(
+                    candidate_key="chatgpt",
+                    blind_id="b",
+                    question_scores=[],
+                    weighted_accuracy=50,
+                    judge_model="j",
+                    judge_meta=ModelCallMeta(model="j", provider="openrouter"),
+                )
+            ],
+            ranking=[{"key": "chatgpt", "accuracy": 50, "status": "ok"}],
+        )
+
+    write_artifact(_mk("keep-10", 10), tmp_path)
+    write_artifact(_mk("wipe-11a", 11), tmp_path)
+    write_artifact(_mk("wipe-11b", 11), tmp_path)
+    assert delete_beta_artifacts_for_slot(tmp_path, 11) == 2
+    remaining = list(tmp_path.glob("*.json"))
+    assert len(remaining) == 1
+    assert "keep-10" in remaining[0].name
 
 
 def test_synthetic_gold_raw_from_prose_parses():

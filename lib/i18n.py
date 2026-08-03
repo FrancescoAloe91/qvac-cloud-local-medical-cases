@@ -651,6 +651,33 @@ _STRINGS = {
             "Reached the soft limit of {n} Case slots for this key. Select an "
             "existing slot to edit or rebuild averages."
         ),
+        "comp.delete_custom_btn": "Delete this custom case",
+        "comp.delete_custom_help": (
+            "Remove this New-case slot, its text, Lock, History runs, and mean "
+            "contribution. Pack Case 1–10 stay untouched."
+        ),
+        "comp.delete_custom_busy": (
+            "Cannot delete while a run is pending or in progress. "
+            "Use Stop / clear pending first, or wait for the batch to finish."
+        ),
+        "comp.delete_custom_confirm_title": "Delete custom Case {n}?",
+        "comp.delete_custom_confirm_body": (
+            "This permanently clears the draft text, Lock for this slot, saved "
+            "History runs for Case {n}, and their contribution to means. "
+            "Pack cases 1–10 are not changed. Slot numbers are not renumbered "
+            "(gaps stay). This cannot be undone."
+        ),
+        "comp.delete_custom_yes": "Yes, delete Case {n}",
+        "comp.delete_custom_cancel": "Cancel",
+        "comp.delete_custom_done": (
+            "Deleted custom Case {n} · removed {runs} History run(s)."
+        ),
+        "comp.custom_multi_caption": (
+            "Custom case · Lock builds a rough five-part checklist from your "
+            "reference text (exploratory — ideas may repeat). Built-in pack "
+            "cases keep curated checklists. **Multi×all includes this slot "
+            "only after Lock** (with non-empty case + reference)."
+        ),
         "bench.case_slot_loaded": (
             "Loaded **Case {n}** case text + confirmed reference from History."
         ),
@@ -1487,6 +1514,34 @@ _STRINGS = {
         "bench.new_case_full": (
             "Raggiunto il limite soft di {n} slot Case per questa chiave. "
             "Seleziona uno slot esistente per modificare o ricalcolare le medie."
+        ),
+        "comp.delete_custom_btn": "Elimina questo caso custom",
+        "comp.delete_custom_help": (
+            "Rimuove questo New-case: testo, Lock, run in History e contributo "
+            "alle medie. I Case pack 1–10 restano intatti."
+        ),
+        "comp.delete_custom_busy": (
+            "Non si può eliminare mentre un run è in corso o in attesa. "
+            "Usa Stop / clear pending, oppure aspetta la fine del batch."
+        ),
+        "comp.delete_custom_confirm_title": "Eliminare il Case custom {n}?",
+        "comp.delete_custom_confirm_body": (
+            "Cancella in modo permanente il testo, il Lock di questo slot, i "
+            "run salvati in History per il Case {n} e il loro contributo alle "
+            "medie. I Case pack 1–10 non cambiano. I numeri di slot non vengono "
+            "rinumerati (restano i buchi). Non si può annullare."
+        ),
+        "comp.delete_custom_yes": "Sì, elimina Case {n}",
+        "comp.delete_custom_cancel": "Annulla",
+        "comp.delete_custom_done": (
+            "Eliminato Case custom {n} · rimossi {runs} run dalla History."
+        ),
+        "comp.custom_multi_caption": (
+            "Caso custom · Lock costruisce una checklist a cinque parti dal "
+            "tuo testo di riferimento (esplorativo — le idee possono "
+            "ripetersi). I casi pack hanno checklist curate. **Multi×all "
+            "include questo slot solo dopo Lock** (caso + riferimento non "
+            "vuoti)."
         ),
         "bench.case_slot_loaded": (
             "Caricato **Case {n}**: testo del caso + riferimento confermato "
