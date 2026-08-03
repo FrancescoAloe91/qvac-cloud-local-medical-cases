@@ -110,3 +110,4 @@ def test_readme_separates_comprehension_and_structured_privacy():
     assert "_local_no_key" in text
     assert "_cloud_ephemeral_" in text
     assert "plaintext" in text.lower()
+    assert "Same OpenRouter key = shared History" in text

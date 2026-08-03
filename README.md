@@ -344,9 +344,11 @@ visitor key into process-global environment state. **Comprehension** and
 
 - **Local Comprehension** (`app.py` on your machine): key-scoped workspace under
   `artifacts/owners/<key-fingerprint>/` (or `_local_no_key/` for QVAC-only
-  rehearsal). Saved run JSON and custom drafts may contain case text, reference
-  quotes, and model answers — treat the folder as sensitive PHI/clinical
-  **plaintext**; do not commit or share it. Anonymize cases before paste.
+  rehearsal). **Same OpenRouter key = shared History/customs/means vault** for
+  that workspace on the machine. Saved run JSON and custom drafts may contain
+  case text, reference quotes, and model answers — treat the folder as sensitive
+  PHI/clinical **plaintext**; do not commit or share it. Anonymize cases before
+  paste.
 - **Comprehension on Streamlit Cloud** (home track): session-memory only for run
   artifacts and custom drafts — **no** plaintext run JSON and **no**
   `comprehension_custom_drafts.json` on the host FS. Requires visitor BYOK.

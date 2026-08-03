@@ -62,6 +62,9 @@ DISCLOSURE_KEYS = [
     "comp.track_caption",
     "comp.need_lock",
     "comp.rebuild_caption",
+    "comp.ranking_pack_caption",
+    "comp.rebuild_public_claim",
+    "comp.same_key_warning",
     "bench.rebuild_n_help",
     "struct.track_caption",
     "struct.judge_caption",
@@ -98,6 +101,33 @@ def test_disclosure_keys_exist_in_en_and_it():
         assert key in it, f"missing IT key {key}"
         assert en[key].strip(), f"empty EN {key}"
         assert it[key].strip(), f"empty IT {key}"
+
+
+def test_pack_ranking_and_same_key_copy():
+    """Public claim = pack 1–10; same API key shares History vault."""
+    en = _STRINGS["en"]
+    it = _STRINGS["it"]
+    pack_en = en["comp.ranking_pack_caption"].lower()
+    assert "pack case 1–10" in pack_en or "pack case 1-10" in pack_en
+    assert "custom" in pack_en and "leaderboard" in pack_en
+    claim_en = en["comp.rebuild_public_claim"].lower()
+    assert "pack case 1–10" in claim_en or "pack case 1-10" in claim_en
+    assert "custom" in claim_en
+    key_en = en["comp.same_key_warning"].lower()
+    assert "same openrouter key" in key_en
+    assert "history" in key_en
+    assert "custom" in key_en
+    assert "case pack 1–10" in it["comp.ranking_pack_caption"].lower() or (
+        "1–10" in it["comp.ranking_pack_caption"]
+    )
+    assert "openrouter" in it["comp.same_key_warning"].lower()
+    # Soft rebuild help mentions public pack claim without changing math.
+    assert "pack case 1–10" in en["bench.rebuild_n_help"].lower() or (
+        "1–10" in en["bench.rebuild_n_help"]
+    )
+    assert "pack case 1–10" in en["bench.rebuild_btn_help_balanced"].lower() or (
+        "1–10" in en["bench.rebuild_btn_help_balanced"]
+    )
 
 
 def test_honesty_block_includes_core_phrases():

@@ -644,6 +644,7 @@ with st.sidebar:
         st.rerun()
     elif key_in:
         st.error("Key truncated / too short")
+    st.caption(t("comp.same_key_warning", _guide_lang))
     st.markdown("**QVAC · MedPsy**")
     sidecar_up = bool(qvac_bridge and (qvac_bridge.reachable() or qvac_bridge.available()))
     if _qvac_loaded:
@@ -713,6 +714,7 @@ st.caption(
     f"{len(pack_slots)} ready-made emergency-style cases. "
     f"· *Advanced: `{PROTOCOL_ID}`*"
 )
+st.caption(t("comp.ranking_pack_caption", _guide_lang))
 
 # Custom cases (NEW CASE) — local: session + owner-workspace disk (API-key scoped).
 # Cloud: session-only (never hydrate/persist shared host drafts).
@@ -1247,6 +1249,7 @@ st.caption(
     "rounds stay visible below. "
     "**New launches** ask you to OK the estimated cost first."
 )
+st.caption(t("comp.ranking_pack_caption", _guide_lang))
 show_cost_forecast = st.toggle(
     "Show OpenRouter cost forecast",
     value=bool(st.session_state.get("show_cost_forecast", True)),
@@ -2224,6 +2227,7 @@ st.caption(
     t("comp.rebuild_caption", _guide_lang)
     + f" · *Advanced · pack v{_pack_revision}*"
 )
+st.caption(t("comp.rebuild_public_claim", _guide_lang))
 _bn = st.selectbox(
     t("bench.rebuild_n_label", _guide_lang),
     options=[5, 10, 20, 30, 50, 70, 100],
@@ -2341,3 +2345,5 @@ st.caption(
     f"Comprehension History · {len(_beta_hist)} recent saved run(s) in {_hist_note}. "
     f"· *Advanced · `{BETA_SV}`*"
 )
+st.caption(t("comp.same_key_warning", _guide_lang))
+st.caption(t("comp.ranking_pack_caption", _guide_lang))

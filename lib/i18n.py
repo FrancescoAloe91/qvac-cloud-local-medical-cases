@@ -536,7 +536,8 @@ _STRINGS = {
             "(newest first); technical N/A and exact-zero skipped. "
             "Larger N only stabilizes descriptive mean±std — still "
             "exploratory. Default stays 5. Selecting N alone does not open "
-            "a popup — use Rebuild mean."
+            "a popup — use Rebuild mean. For public / screenshot ranking, "
+            "intend pack Case 1–10 (not custom-only means)."
         ),
         "bench.rebuild_btn": "Rebuild mean · ≤{n} successful / model · open KPI popup · $0",
         "bench.rebuild_btn_help_same": (
@@ -553,14 +554,18 @@ _STRINGS = {
             "≤N **successful** non-zero scored observations (same track + "
             "scoring_version; N/A and exact-zero skipped, older successful used). "
             "No partial badge. Can overweight cases you ran most recently. "
-            "Mixed-case / mixed-gold — not clinical validation. Zero API cost."
+            "May include custom stems from History — **public claim = pack "
+            "Case 1–10**, not this mixed mean. Mixed-case / mixed-gold — not "
+            "clinical validation. Zero API cost."
         ),
         "bench.rebuild_btn_help_balanced": (
             "Offline exploratory mean: for each model, fill ≤N successful "
             "non-zero scores by cycling Case 1→2→…→K→1… (round-robin). "
             "Example N=10 with 7 cases → one pass of all cases + Case 1–3 again. "
             "Balances case weight vs portfolio newest-N. Same track + "
-            "scoring_version. Not clinical validation. Zero API cost."
+            "scoring_version. Customs in History can enter the rotation — "
+            "**public / screenshot ranking = pack Case 1–10**. Not clinical "
+            "validation. Zero API cost."
         ),
         "bench.rebuild_portfolio_intro": (
             "**All cases (portfolio)** — exploratory mean across every Case "
@@ -679,7 +684,26 @@ _STRINGS = {
             "Scores are **reference-relative** to that custom gold — easy gold "
             "can inflate scores; **not clinical accuracy**. Pack cases keep "
             "curated checklists. **Multi×all includes this slot only after "
-            "Lock** (non-empty case + reference)."
+            "Lock** (non-empty case + reference). Custom cases (11+) are "
+            "**optional extras** — do **not** treat custom-only means as the "
+            "product / screenshot leaderboard (that claim is pack Case 1–10)."
+        ),
+        "comp.ranking_pack_caption": (
+            "**Official comparison / screenshot ranking = pack Case 1–10.** "
+            "Custom New cases (11+) are optional extras — do not treat "
+            "custom-only means as the product leaderboard."
+        ),
+        "comp.rebuild_public_claim": (
+            "**Public claim = pack Case 1–10.** Portfolio / Balanced may mix "
+            "custom stems from History; for public posts use Rebuild scoped "
+            "to pack cases (or Same-case on a pack slot). Customs may appear "
+            "in History — they are not the headline ranking."
+        ),
+        "comp.same_key_warning": (
+            "**Same OpenRouter key = shared History vault.** Anyone using "
+            "this key on this machine shares History, custom cases, and "
+            "Rebuild means for that workspace. Use a private key if you need "
+            "isolated runs."
         ),
         "bench.case_slot_loaded": (
             "Loaded **Case {n}** case text + confirmed reference from History."
@@ -767,8 +791,10 @@ _STRINGS = {
         "comp.rebuild_caption": (
             "Averages saved Comprehension runs only · offline · $0. "
             "After Multi×all prefer **Balanced cases** (fairer suite average). "
-            "Rebuild shows exploratory mean±std only — not a clinical study. "
-            "Limits are in the honesty box at the top of the page."
+            "Intended **public / screenshot ranking = pack Case 1–10** "
+            "(customs are extras). Rebuild shows exploratory mean±std only — "
+            "not a clinical study. Limits are in the honesty box at the top "
+            "of the page."
         ),
         "struct.track_caption": (
             "**Optional legacy / advanced track** · results **never mix** with "
@@ -1403,7 +1429,8 @@ _STRINGS = {
             "(più recenti prima); N/A tecnici e zero esatti esclusi. "
             "N più grande stabilizza solo mean±std descrittivo — resta "
             "esplorativo. Default 5. Scegliere N da solo non apre il popup — "
-            "usa Ricostruisci media."
+            "usa Ricostruisci media. Per classifica pubblica / screenshot, "
+            "intende i Case pack 1–10 (non medie solo-custom)."
         ),
         "bench.rebuild_btn": "Ricostruisci media · ≤{n} successful / modello · apri popup KPI · $0",
         "bench.rebuild_btn_help_same": (
@@ -1420,15 +1447,18 @@ _STRINGS = {
             "proprie ≤N osservazioni **successful** scored non-zero (stesso "
             "track + scoring_version; N/A e zero esatti saltati, successful "
             "più vecchi usati). Può sovrappesare i casi runnati di recente. "
-            "Nessun badge partial. Casi/gold misti — non validazione clinica. "
-            "Costo API zero."
+            "Nessun badge partial. Può includere stem custom dalla History — "
+            "**claim pubblica = Case pack 1–10**, non questa media mista. "
+            "Casi/gold misti — non validazione clinica. Costo API zero."
         ),
         "bench.rebuild_btn_help_balanced": (
             "Media esplorativa: per ogni modello riempie ≤N score successful "
             "ciclando Case 1→2→…→K→1… (round-robin). Esempio N=10 con 7 casi → "
             "un giro di tutti i casi + Case 1–3 di nuovo. Bilancia il peso dei "
             "casi rispetto al portfolio ultimi-N. Stesso track + scoring_version. "
-            "Non validazione clinica. Costo API zero."
+            "I custom in History possono entrare nella rotazione — "
+            "**classifica pubblica / screenshot = Case pack 1–10**. Non "
+            "validazione clinica. Costo API zero."
         ),
         "bench.rebuild_portfolio_intro": (
             "**Tutti i casi (portfolio)** — media esplorativa su ogni slot Case "
@@ -1547,7 +1577,28 @@ _STRINGS = {
             "custom** — un gold facile può alzare gli score; **non è "
             "accuratezza clinica**. I casi pack hanno checklist curate. "
             "**Multi×all include questo slot solo dopo Lock** (caso + "
-            "riferimento non vuoti)."
+            "riferimento non vuoti). I casi custom (11+) sono **extra "
+            "opzionali** — **non** trattare medie solo-custom come "
+            "leaderboard di prodotto / screenshot (quella claim è Case pack "
+            "1–10)."
+        ),
+        "comp.ranking_pack_caption": (
+            "**Confronto ufficiale / classifica da screenshot = Case pack "
+            "1–10.** I New case custom (11+) sono extra opzionali — non "
+            "trattare medie solo-custom come leaderboard di prodotto."
+        ),
+        "comp.rebuild_public_claim": (
+            "**Claim pubblica = Case pack 1–10.** Portfolio / Bilanciati "
+            "possono mescolare stem custom dalla History; per post pubblici "
+            "usa Rebuild sui casi pack (o Same-case su uno slot pack). I "
+            "custom possono apparire in History — non sono la classifica "
+            "principale."
+        ),
+        "comp.same_key_warning": (
+            "**Stessa chiave OpenRouter = vault History condiviso.** Chi "
+            "usa questa chiave su questa macchina condivide History, casi "
+            "custom e medie Rebuild di quel workspace. Usa una chiave "
+            "privata se ti servono run isolate."
         ),
         "bench.case_slot_loaded": (
             "Caricato **Case {n}**: testo del caso + riferimento confermato "
@@ -1638,8 +1689,10 @@ _STRINGS = {
         "comp.rebuild_caption": (
             "Media solo sulle run Comprehension salvate · offline · $0. "
             "Dopo Multi×all preferisci **Casi bilanciati** (media suite più "
-            "equa). Rebuild mostra solo mean±std esplorativo — non uno studio "
-            "clinico. I limiti sono nel box di onestà in cima alla pagina."
+            "equa). Classifica **pubblica / screenshot prevista = Case pack "
+            "1–10** (i custom sono extra). Rebuild mostra solo mean±std "
+            "esplorativo — non uno studio clinico. I limiti sono nel box di "
+            "onestà in cima alla pagina."
         ),
         "struct.track_caption": (
             "**Track opzionale legacy / advanced** · i risultati **non si "

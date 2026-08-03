@@ -1557,6 +1557,7 @@ with st.sidebar:
     else:
         st.warning("No full key · Single/Multi off")
     st.caption("Session/account isolated · never shared through process environment")
+    st.caption(t("comp.same_key_warning", _ui_lang()))
     if is_streamlit_cloud() and not account_store_configured():
         st.caption("Hosted without Supabase · session-only key/history (not durable).")
     key_in = st.text_input(
