@@ -160,7 +160,9 @@ def test_comprehension_home_and_structured_page_exist():
     # Legacy URL = thin redirect (kept for mid-flight Multi sessions).
     legacy = (root / "pages" / "comprehension_redirect.py").read_text(encoding="utf-8")
     assert "switch_page" in legacy
-    assert "app.py" in legacy
+    assert "streamlit_home_page" in legacy
+    assert (root / "streamlit_app.py").is_file()
+    assert "runpy" in (root / "streamlit_app.py").read_text(encoding="utf-8")
 
 
 def test_beta_rebuild_mean_wires_ops_reliability_panels():

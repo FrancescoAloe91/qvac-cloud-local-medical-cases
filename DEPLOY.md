@@ -5,7 +5,8 @@
 **Target URL (custom subdomain):**
 https://qvac-cloud-local-medical-cases.streamlit.app
 
-**Repo:** `FrancescoAloe91/qvac-cloud-local-medical-cases` · branch `main` · entrypoint `app.py`
+**Repo:** `FrancescoAloe91/qvac-cloud-local-medical-cases` · branch `main` ·
+entrypoint `streamlit_app.py` (Community Cloud default; `app.py` also works)
 
 There is **no** Streamlit Cloud rename/redeploy API usable from this repo’s CLI
 (`gh` / `streamlit` cannot manage Community Cloud apps). After a GitHub repo
@@ -28,7 +29,7 @@ Old slug (orphaned / stale):
      support to delete the disconnected app — then continue below.
 3. **New app** → choose repository
    `FrancescoAloe91/qvac-cloud-local-medical-cases`, branch `main`,
-   main file path `app.py` → Deploy.
+   Main file path `streamlit_app.py` (Cloud default; or `app.py`) → Deploy.
 4. After deploy: overflow (⋮) → **Settings** → **General** → set App URL
    subdomain to `qvac-cloud-local-medical-cases` (6–63 chars) → **Save**.
    Public URL becomes
@@ -51,7 +52,8 @@ rename a subdomain.
 
 ### Hosted secrets / behavior
 
-1. Deploy `app.py` from `main` (as above).
+1. Deploy with Main file path `streamlit_app.py` (or `app.py`) from `main`
+   (as above).
 2. Do not configure a shared `OPENROUTER_API_KEY`. Visitors use BYOK.
    Both Comprehension and Structured strip any process-wide
    `OPENROUTER_API_KEY` on Streamlit Cloud and refuse env fallback when the
@@ -88,7 +90,8 @@ Honesty fence (product copy, not scoring): cloud slots are OpenRouter API routes
 validity; judge is uncalibrated; cost estimate ≠ invoice; teaching pack ≠ EHR.
 
 **Deployability checklist:** `requirements.txt` (hashed lock from
-`requirements.in`), entrypoint `app.py`, no `packages.txt` (no apt deps).
+`requirements.in`), entrypoint `streamlit_app.py` (thin wrapper → `app.py`;
+both OK as Main file path), no `packages.txt` (no apt deps).
 `.streamlit/config.toml` is for local UX; Community Cloud overrides hosting.
 
 ## Local

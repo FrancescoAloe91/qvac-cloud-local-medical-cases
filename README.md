@@ -18,7 +18,7 @@ Repository: https://github.com/FrancescoAloe91/qvac-cloud-local-medical-cases
 
 | Track | Role | Entry | What it stresses | Protocol / History |
 |-------|------|--------|------------------|--------------------|
-| **Comprehension** | **Default home** | `app.py` | Free-form clinical narrative vs curated Q1–A5 `gold_raw` (prose is the narrative twin) · acute ED pack Case 1–10 | `comprehension-v1` · `case_id=comprehension` (legacy `beta-*` History still pools via dual-read) |
+| **Comprehension** | **Default home** | `app.py` (`streamlit_app.py` on Community Cloud) | Free-form clinical narrative vs curated Q1–A5 `gold_raw` (prose is the narrative twin) · acute ED pack Case 1–10 | `comprehension-v1` · `case_id=comprehension` (legacy `beta-*` History still pools via dual-read) |
 | **Structured A1–A5** | **Optional secondary** | Sidebar → Structured | Rigid `A1:`…`A5:` slots vs Prepare→Confirm claim gold | Graded / caseC History · A1–A5 Rebuild |
 
 Same Clinical Composite math (Coverage / Quality / Discipline → section → weighted mean).
@@ -475,7 +475,8 @@ files are not tracked.
 ## Project layout
 
 ```text
-app.py                         Streamlit app
+streamlit_app.py               Community Cloud entrypoint (→ app.py)
+app.py                         Streamlit app (local / alternate Cloud main)
 benchmark/gold.py              extraction validation + cohort identity
 benchmark/judge.py             evidence validation, N/A semantics, verifier
 benchmark/scoring.py           Clinical Composite Score (50/35/15)

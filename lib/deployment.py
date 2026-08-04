@@ -6,6 +6,25 @@ import os
 from pathlib import Path
 
 
+def streamlit_home_page() -> str:
+    """Main-script basename for ``st.switch_page`` / ``st.page_link``.
+
+    Community Cloud defaults to ``streamlit_app.py``; local docs use ``app.py``.
+    Both sit at repo root next to ``pages/``, so multipage discovery stays valid.
+    """
+    try:
+        from streamlit.runtime.scriptrunner import get_script_run_ctx
+
+        ctx = get_script_run_ctx()
+        if ctx and getattr(ctx, "main_script_path", None):
+            name = Path(ctx.main_script_path).name
+            if name:
+                return name
+    except Exception:
+        pass
+    return "app.py"
+
+
 def is_streamlit_cloud() -> bool:
     return bool(
         os.environ.get("STREAMLIT_SHARING_MODE")

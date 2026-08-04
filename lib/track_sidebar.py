@@ -13,6 +13,7 @@ from typing import Optional
 
 import streamlit as st
 
+from lib.deployment import streamlit_home_page
 from lib.guide_overlays import sidebar_guides_block_html
 from lib.i18n import DEFAULT_LANG
 
@@ -33,7 +34,7 @@ def render_tracks_block(*, active: str = "comprehension") -> None:
         f'<div id="qvac-track-active" data-active="{html.escape(active_norm)}" hidden></div>',
         unsafe_allow_html=True,
     )
-    st.page_link("app.py", label="Comprehension", icon="🏠")
+    st.page_link(streamlit_home_page(), label="Comprehension", icon="🏠")
     if active_norm == "comprehension":
         st.caption(
             "Default track · free-form answers. "
