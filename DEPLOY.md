@@ -94,6 +94,23 @@ validity; judge is uncalibrated; cost estimate ≠ invoice; teaching pack ≠ EH
 both OK as Main file path), no `packages.txt` (no apt deps).
 `.streamlit/config.toml` is for local UX; Community Cloud overrides hosting.
 
+### Python version on Community Cloud (required)
+
+Cloud defaults can jump to very new CPython (e.g. 3.14) where many wheels
+are missing, so `pip` builds packages like `numpy` from source and the
+deploy appears stuck “in the oven.”
+
+1. **Authoritative setting:** app **⋯ → Settings → Advanced / Python version
+   → 3.12** (or set it in Advanced settings when creating the app). Reboot
+   after changing. Community Cloud does **not** reliably honor `runtime.txt`
+   / `.python-version` for the build interpreter.
+2. **Repo hints (tracked anyway):** `runtime.txt` (`python-3.12`) and
+   `.python-version` (`3.12`) document the intended runtime for local tools
+   and reviewers.
+3. **uv / click:** the hashed lock pins `click==8.3.3` so `typer` (≥8.2.1)
+   and `streamlit` resolve under Cloud’s `uv` installer. An older
+   `click==8.1.8` pin made `uv` fail and fall back to slow `pip`.
+
 ## Local
 
 ```bash

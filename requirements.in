@@ -7,3 +7,5 @@ huggingface_hub
 supabase
 cryptography
 watchdog==6.0.0
+# typer (via huggingface_hub) requires click>=8.2.1; keep uv resolver happy on Cloud
+click>=8.2.1,<9
