@@ -5,30 +5,33 @@
 **Target URL (custom subdomain):**
 https://qvac-cloud-local-medical-cases.streamlit.app
 
-**Repo:** `FrancescoAloe91/qvac-cloud-local-medical-cases` · branch `main` ·
+**Repo:** `frankys91/qvac-cloud-local-medical-cases` · branch `main` ·
 entrypoint `streamlit_app.py` (Community Cloud default; `app.py` also works)
 
 There is **no** Streamlit Cloud rename/redeploy API usable from this repo’s CLI
-(`gh` / `streamlit` cannot manage Community Cloud apps). After a GitHub repo
-rename, Community Cloud often loses admin control of the old app (view-only /
-stuck waking). Fix by recreating the app in the UI.
+(`gh` / `streamlit` cannot manage Community Cloud apps). After a GitHub
+username or repo rename, Community Cloud often loses admin control of the old
+app (view-only / stuck waking). Fix by reconnecting GitHub and/or recreating
+the app in the UI.
 
-### Recreate / rename after GitHub repo rename
+### Recreate / rename after GitHub username or repo rename
 
 Old slug (orphaned / stale):
 `https://francescoaloe91-qvac-vs-cloud-llms-health-test-app-wihxyd.streamlit.app`
-(tied to former repo name `qvac-vs-cloud-llms-health-test`).
+(tied to former owner `FrancescoAloe91` and former repo name
+`qvac-vs-cloud-llms-health-test`).
 
 1. Open [share.streamlit.io](https://share.streamlit.io) and sign in with the
-   GitHub account that owns `FrancescoAloe91/qvac-cloud-local-medical-cases`.
+   GitHub account that owns `frankys91/qvac-cloud-local-medical-cases`
+   (reconnect GitHub after a username rename if prompted).
 2. If the old app still appears:
    - Overflow (⋮) → **Delete** if Delete is enabled; or
-   - If the app is **view-only** (repo rename broke GitHub coordinates): follow
+   - If the app is **view-only** (repo/username rename broke GitHub coordinates): follow
      [Streamlit’s rename docs](https://docs.streamlit.io/deploy/streamlit-community-cloud/manage-your-app/rename-your-app)
      — temporarily restore the old GitHub name *or* ask Snowflake/Streamlit
      support to delete the disconnected app — then continue below.
 3. **New app** → choose repository
-   `FrancescoAloe91/qvac-cloud-local-medical-cases`, branch `main`,
+   `frankys91/qvac-cloud-local-medical-cases`, branch `main`,
    Main file path `streamlit_app.py` (Cloud default; or `app.py`) → Deploy.
 4. After deploy: overflow (⋮) → **Settings** → **General** → set App URL
    subdomain to `qvac-cloud-local-medical-cases` (6–63 chars) → **Save**.

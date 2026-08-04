@@ -18,7 +18,7 @@ Amateur gold-only health bench exercise · no medical validity · track=Comprehe
 
 [Same-case | Portfolio | Balanced cases] mean±std · N=[scored] · roster v[9] · cohort [abcdefgh] · scored-only Rebuild · exploratory (even with ~tens of runs / model).
 
-Repo: https://github.com/FrancescoAloe91/qvac-cloud-local-medical-cases
+Repo: https://github.com/frankys91/qvac-cloud-local-medical-cases
 ```
 
 ---
@@ -30,7 +30,7 @@ Amateur gold-only health bench exercise · no medical validity · track=Structur
 
 [Same-case | Portfolio] mean±std · N=[…] · roster v[9] · cohort [abcdefgh] · scored-only Rebuild · exploratory.
 
-Repo: https://github.com/FrancescoAloe91/qvac-cloud-local-medical-cases
+Repo: https://github.com/frankys91/qvac-cloud-local-medical-cases
 ```
 
 ---

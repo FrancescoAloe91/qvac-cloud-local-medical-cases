@@ -8,10 +8,13 @@ from __future__ import annotations
 
 import hashlib
 import html
+import logging
 import os
 import time
 import uuid
 from pathlib import Path
+
+_LOG = logging.getLogger(__name__)
 
 import pandas as pd
 import streamlit as st
@@ -161,6 +164,7 @@ from lib.boot_welcome import init_boot_state, run_boot_dialogs
 from lib.guide_overlays import guides_always_available_html
 from lib.i18n import t
 from lib.stream_panels import (
+    status_pill as _status_pill,
     stream_body_html as _stream_body_html_shared,
     stream_shell_html as _stream_shell_html_shared,
 )
@@ -545,17 +549,19 @@ def _hard_abort_run(*, flash: bool = True) -> None:
                     st.session_state.get("_restored_cohort_id") or ""
                 ),
             )
+            # HostedRunStore.persist_artifact already encrypts via save_cloud;
+            # do not call account_save_artifact again (no plaintext fallback).
             _persist_run_artifact(_artifact, WORKSPACE_DIR)
-            if account_store_configured() and isinstance(
-                st.session_state.get("account_session"), AccountSession
-            ):
-                account_save_artifact(
-                    st.session_state["account_session"],
-                    _artifact,
-                )
-        except Exception:
+        except Exception as exc:
             # Cancellation itself must not be blocked by persistence failure.
-            pass
+            _LOG.warning(
+                "Cancel-path persistence failed (abort continues): %s",
+                exc,
+                exc_info=True,
+            )
+            st.session_state["_hosted_cloud_save_error"] = (
+                f"Cancel persist failed: {type(exc).__name__}: {exc}"
+            )
     for k in (
         "confirmed_run",
         "pending_run",
@@ -1528,6 +1534,9 @@ st.markdown(
 )
 st.caption(t("struct.track_caption", _ui_lang()))
 st.caption(t("struct.judge_caption", _ui_lang()))
+if is_streamlit_cloud():
+    st.info(t("cloud.demo_banner", _ui_lang()))
+    st.caption(t("cloud.demo_link", _ui_lang()))
 if is_streamlit_cloud() and not qvac_ok:
     st.caption(
         "Hosted demo · on-device QVAC/MedPsy needs a local sidecar — cloud roster only here."
@@ -2884,10 +2893,6 @@ def _kpi_line(meta: dict, text: str = "") -> str:
     if toks:
         parts.append(f"{toks} tok")
     return " · ".join(parts) if parts else "—"
-
-
-def _status_pill(kind: str, text: str) -> str:
-    return f'<span class="status-pill {kind}">{text}</span>'
 
 
 def _na_failure_label(status: str, reason: str) -> str:
@@ -4560,13 +4565,8 @@ with _results_zone:
                         )
 
                         WORKSPACE_DIR.mkdir(parents=True, exist_ok=True)
+                        # Single cloud path: HostedRunStore.save_cloud (no double save).
                         art_path = _persist_run_artifact(artifact, WORKSPACE_DIR)
-                        _account = st.session_state.get("account_session")
-                        if account_store_configured() and isinstance(_account, AccountSession):
-                            try:
-                                account_save_artifact(_account, artifact)
-                            except Exception as exc:
-                                st.warning(f"Encrypted cloud persistence failed: {exc}")
                         all_artifacts.append(artifact)
                         artifact_paths.append(str(art_path) if art_path else artifact.run_id)
 
@@ -5731,13 +5731,8 @@ with _results_zone:
                     },
                 )
                 WORKSPACE_DIR.mkdir(parents=True, exist_ok=True)
+                # Single cloud path: HostedRunStore.save_cloud (no double save).
                 art_path = _persist_run_artifact(artifact, WORKSPACE_DIR)
-                _account = st.session_state.get("account_session")
-                if account_store_configured() and isinstance(_account, AccountSession):
-                    try:
-                        account_save_artifact(_account, artifact)
-                    except Exception as exc:
-                        st.warning(f"Encrypted cloud persistence failed: {exc}")
                 all_artifacts.append(artifact)
                 artifact_paths.append(str(art_path) if art_path else artifact.run_id)
                 last_ranking = ranking

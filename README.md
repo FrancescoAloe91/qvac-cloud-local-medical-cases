@@ -12,7 +12,7 @@ not real-world diagnostic accuracy.
 
 Live app: https://qvac-cloud-local-medical-cases.streamlit.app  
 
-Repository: https://github.com/FrancescoAloe91/qvac-cloud-local-medical-cases
+Repository: https://github.com/frankys91/qvac-cloud-local-medical-cases
 
 ## Two tracks (KPIs never pool)
 
@@ -376,9 +376,10 @@ Scores are **reference-relative** (Clinical Composite vs the user-confirmed
 gold), not external clinical accuracy. **Mean policy:** exact Clinical
 Composite **0** is excluded from averages (treated like N/A for pooling);
 technical N/A are separate; low **non-zero** scores still count. Public
-screenshots / official ranking claim = **pack Case 1–10** (not custom-only
-means). Keep at least one honesty caption visible (OpenRouter API ≠ web ·
-author-supplied gold · uncalibrated judge · N=5 exploratory). Legacy Ollama
+screenshots / public pack claim = **pack Case 1–10** (not custom-only
+means; Indicative if N&lt;5). Keep at least one honesty caption visible
+(OpenRouter API ≠ web · author-supplied gold · uncalibrated judge ·
+N=5 exploratory). Legacy Ollama
 i18n/`lib/medpsy` helpers are unused on the gold Automated Benchmark path
 (live path = QVAC sidecar).
 
@@ -401,7 +402,7 @@ Requirements: Python 3.9+ (hashed locks and CI use 3.9; `./install.sh` prefers
 sidecar.
 
 ```bash
-git clone https://github.com/FrancescoAloe91/qvac-cloud-local-medical-cases.git
+git clone https://github.com/frankys91/qvac-cloud-local-medical-cases.git
 cd qvac-cloud-local-medical-cases
 
 chmod +x install.sh

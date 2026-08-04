@@ -112,6 +112,13 @@ def test_structured_cloud_uses_hosted_run_store_and_ephemeral_id():
     assert "error_setter" in src
     assert "_hosted_cloud_save_error" in src
     assert "Official ranking" not in src
+    assert 'cloud.demo_banner' in src
+    assert 'cloud.demo_link' in src
+    assert "status_pill as _status_pill" in src
+    # Single cloud save path: HostedRunStore.save_cloud only (no post-persist double).
+    assert src.count("account_save_artifact(") == 0
+    assert 'save_cloud"] = account_save_artifact' in src
+    assert "Cancel-path persistence failed" in src
     assert 'history_rebuild_scope"] = "balanced_cases"' in src or (
         '["history_rebuild_scope"] = "balanced_cases"' in src
     )

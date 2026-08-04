@@ -201,6 +201,7 @@ def test_same_case_rebuild_path_unchanged(tmp_path: Path):
     assert built["scope"] == "same_case"
     assert built["n_used"] == 5
     assert built["cohort_id"] == "cohort-same"
+    assert built["official"] is False
     assert all(pr.get("case_id") == "caseC" for pr in built["per_run"])
 
 

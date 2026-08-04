@@ -885,7 +885,7 @@ def rescore_artifact_current_formula(art: RunArtifact) -> Dict[str, Any]:
     gold_ref = str(cfg.get("gold_reference") or "")
     gold_mode = use_gold_ground_truth(gold_ref)
     # Ranking-only fixtures / incomplete offline payloads: keep stored ranks
-    # rather than wiping the mean (rebuild still needs ≥5 valid observations).
+    # rather than wiping the mean (rebuild ranks at N≥1; Indicative if N<5).
     if not art.judgments and art.ranking:
         return {
             "run_id": art.run_id,
@@ -1719,7 +1719,8 @@ def rebuild_multi_from_history(
         ),
         "api_cost_usd": 0.0,
         "cohort_id": target_cohort,
-        "official": True,
+        # Rebuild ranks at N≥1; Indicative if N<5 — never an "official" claim.
+        "official": False,
         "scope": "same_case",
         "n_cases": 1,
         "mean_rank": _mean_ranks_from_per_run(per_run),
@@ -2090,7 +2091,8 @@ def persist_rescored_artifacts(
     """Offline rescore recent artifacts in place; keep prior ranking in reproducibility.
 
     Includes legacy artifacts without cohort_id so History rebuild last 5/10 can
-    read stamped ``offline_rescore`` metadata (official means still require a cohort).
+    read stamped ``offline_rescore`` metadata (same-case Rebuild means still
+    require a cohort_id; ranks at N≥1, Indicative if N<5).
     """
     pairs = artifacts_for_case(out_dir, case_id, limit=limit)
     written: List[str] = []
