@@ -768,13 +768,13 @@ def fig_judge_mean_accuracy_bars(
 def fig_rebuild_ops_reliability_bars(
     ops_rows: list,
     *,
-    title: str = "Ops reliability · zeros + technical N/A (not clinical mean)",
+    title: str = "Failures / N/A · zeros + technical N/A (not clinical mean)",
     height: int = 280,
 ) -> go.Figure:
     """Stacked % bars: scored vs exact-zero vs technical N/A in Rebuild scan window.
 
-    Separate from the Clinical Composite mean chart — ops/honesty view only.
-    Does not encode clinical quality.
+    Legacy helper — UI paints the Failures/N/A table instead. Ops/honesty view
+    only; does not encode clinical quality.
     """
     ops_rows = filter_current_roster_rows(ops_rows or [])
     # Prefer models that actually saw observations in the fill-N walk.
@@ -782,7 +782,7 @@ def fig_rebuild_ops_reliability_bars(
     if not rows:
         fig = go.Figure()
         fig.add_annotation(
-            text="No scan-window observations for ops reliability",
+            text="No scan-window observations for Failures / N/A",
             x=0.5,
             y=0.5,
             xref="paper",

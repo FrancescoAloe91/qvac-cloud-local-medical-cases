@@ -283,22 +283,20 @@ def paint_rebuild_ops_reliability_panels(
     ops_rows: list,
     *,
     n_per_model_cap: Any = None,
-    chart_key: str = "rebuild_ops_chart",
+    chart_key: str = "rebuild_ops_table",
     table_footer_html: Optional[str] = None,
-    chart_footer_html: Optional[str] = None,
 ) -> bool:
-    """Render Rebuild Failures/N/A table only (no fourth ops chart KPI).
+    """Render Rebuild Failures/N/A table only (no ops chart KPI).
 
     Shared by Structured and Comprehension rebuild mean dialogs.
-    ``chart_key`` / ``chart_footer_html`` kept for call-site compat (unused).
-    ``st_mod`` is the Streamlit module (or a test double). Returns True when
-    the table was painted.
+    ``chart_key`` kept for call-site compat (unused). ``st_mod`` is the
+    Streamlit module (or a test double). Returns True when the table was painted.
     """
     rows = list(ops_rows or [])
     if not ops_reliability_has_scan_data(rows):
         return False
 
-    _ = (n_per_model_cap, chart_key, chart_footer_html)
+    _ = (n_per_model_cap, chart_key)
     st_mod.markdown("##### Failures / N/A · relative % (like live Multi Failed %)")
     st_mod.caption(
         "Honesty view of the Rebuild fill-N scan window — same role as the "
@@ -376,7 +374,7 @@ def ops_reliability_table_html(ops_rows: list) -> str:
         "<b>Failed / excluded %</b> = exact Clinical Composite == 0 + technical N/A "
         "in the Rebuild fill-N scan window (same idea as live Multi Failed %) — "
         "not a clinical zero. These observations are excluded from the scored-only "
-        "mean above. Chart below stacks scored / zero / N/A as relative % of "
+        "mean above. Table columns show scored / zero / N/A as relative % of "
         "n seen per model."
     )
     return (
@@ -1269,9 +1267,10 @@ def _reliability_table_html(
             "<b>CV band ≠ clinical validation</b> · "
             "<b>n scored</b> = last ≤N error-free non-zero scored runs per model "
             "(technical N/A and exact-zero composites skipped; older successful "
-            "History used) · Failed%/zeros live in the separate ops reliability "
-            "chart below · models with only failures are omitted · "
-            "N=5 exploratory · ~10 steadier mean±std · 20–70 exploratory mean±std · 100 max · "
+            "History used) · Failed%/zeros live in the separate Failures/N/A "
+            "table below · models with only failures are omitted · "
+            "Indicative if N&lt;5 · N=5 exploratory · ~10 steadier mean±std · "
+            "20–70 exploratory mean±std · 100 max · "
             "<b>C/Q/D</b> = coverage / quality / discipline "
             "(quality is independent of coverage; a high board % can still have low C)"
         )
@@ -1291,7 +1290,8 @@ def _reliability_table_html(
             "<b>partial</b> = ranked by mean of scored runs despite incomplete coverage · "
             "unranked rows (#—) have zero scored observations · "
             "≤N non-zero scored obs/model; N/A and exact-zero skipped, older scored used · "
-            "N=5 exploratory · ~10 steadier mean±std · 20–70 exploratory mean±std · 100 max · "
+            "Indicative if N&lt;5 · N=5 exploratory · ~10 steadier mean±std · "
+            "20–70 exploratory mean±std · 100 max · "
             "<b>C/Q/D</b> = coverage / quality / discipline "
             "(quality is independent of coverage; a high board % can still have low C)"
         )

@@ -166,13 +166,14 @@ def test_comprehension_home_and_structured_page_exist():
 
 
 def test_beta_rebuild_mean_wires_ops_reliability_panels():
-    """Comprehension Rebuild mean must show graded-style zeros/N/A table + chart."""
+    """Comprehension Rebuild mean must show graded-style Failures/N/A table."""
     root = Path(__file__).resolve().parents[1]
     src = (root / "app.py").read_text(encoding="utf-8")
     assert "paint_rebuild_ops_reliability_panels" in src
     assert "ops_reliability" in src
     assert "_paint_beta_rebuild_mean_body" in src
-    assert "ops_chart" in src
+    assert "ops_table" in src
+    assert "chart_footer_html" not in src
 
 
 def test_beta_rebuild_mean_uses_shared_reliability_table_html():

@@ -109,6 +109,12 @@ def test_structured_cloud_uses_hosted_run_store_and_ephemeral_id():
     assert "if is_streamlit_cloud():" in src
     assert "_HOSTED_ENCRYPTED" in src
     assert "_HOSTED_NO_PLAINTEXT = bool(is_streamlit_cloud())" in src
+    assert "error_setter" in src
+    assert "_hosted_cloud_save_error" in src
+    assert "Official ranking" not in src
+    assert 'history_rebuild_scope"] = "balanced_cases"' in src or (
+        '["history_rebuild_scope"] = "balanced_cases"' in src
+    )
     # ensure_owner_slots must not persist plaintext when store says so.
     assert "persist=bool(getattr(RUN_STORE, \"writes_plaintext\", True))" in src
     assert "LocalRunStore(WORKSPACE_DIR)" in src

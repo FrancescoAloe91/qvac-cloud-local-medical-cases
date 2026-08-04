@@ -687,9 +687,19 @@ def reliability_caption(
             "means use only non-zero scored runs."
         )
     eligible = len(ranked)
+    try:
+        min_n = min(int(r.get("n_runs") or r.get("n") or 0) for r in ranked)
+    except ValueError:
+        min_n = 0
+    n_note = (
+        "Indicative if N<5 (exploratory; not a powered study)"
+        if min_n < 5
+        else "N≥5 exploratory sample (still not clinical validation)"
+    )
     if successful_only:
         return (
             f"Mean ranking for {eligible} model(s) with ≥1 successful scored run · "
+            f"{n_note} · "
             "each mean is over its last ≤N successful non-zero runs · "
             "policy: technical N/A and exact Clinical Composite 0 excluded "
             "(like N/A); low non-zero kept; Rebuild may use older non-zero "
@@ -705,6 +715,7 @@ def reliability_caption(
     )
     return (
         f"Mean ranking for {eligible} model(s) with ≥1 scored run{partial_bit} · "
+        f"{n_note} · "
         "each mean shows its own N; technical N/A never discard other models' data · "
         "Failed % = technical N/A or exact-zero rate across requested runs "
         "(collect/judge/timeout/partial/empty/zero_score) · "

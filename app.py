@@ -443,7 +443,7 @@ def _paint_beta_rebuild_mean_body(
     key_prefix: str,
     rank_key: str,
 ) -> None:
-    """Full Rebuild mean KPIs: chart → ranking (bars+CV) → Failures/N/A → ops chart."""
+    """Full Rebuild mean KPIs: chart → ranking (bars+CV) → Failures/N/A table."""
     summary = _beta_rebuild_summary(payload)
     mean_rows = list(getattr(summary, "ranking_mean", None) or []) if summary else []
     rb_scope = str(payload.get("scope") or "same_case")
@@ -507,7 +507,7 @@ def _paint_beta_rebuild_mean_body(
         )
         if _scan_banner:
             st.markdown(_scan_banner, unsafe_allow_html=True)
-        st.markdown("##### Ranking table")
+        st.markdown(f"##### {t('bench.ranking_mean_label', _ui_lang)}")
         rb_html = reliability_table_html(
             mean_rows,
             successful_only=rb_clean,
@@ -551,7 +551,7 @@ def _paint_beta_rebuild_mean_body(
         st,
         list(payload.get("ops_reliability") or []),
         n_per_model_cap=rb_cap,
-        chart_key=f"{key_prefix}_ops_chart",
+        chart_key=f"{key_prefix}_ops_table",
         table_footer_html=screenshot_footer_html(
             lang=_ui_lang,
             scope=rb_scope,
@@ -560,15 +560,6 @@ def _paint_beta_rebuild_mean_body(
             protocol_id=PROTOCOL_ID,
             pack_revision_label=_ops_pack,
             extra="Comprehension · failures/N/A % · not clinical mean",
-        ),
-        chart_footer_html=screenshot_footer_html(
-            lang=_ui_lang,
-            scope=rb_scope,
-            cohort_id=rb_cohort,
-            n_label=rb_n_label,
-            protocol_id=PROTOCOL_ID,
-            pack_revision_label=_ops_pack,
-            extra="Comprehension · ops reliability · zeros+N/A · not clinical mean",
         ),
     )
     st.caption(
@@ -2402,6 +2393,8 @@ _scope = st.radio(
         )
     ),
 )
+if _scope in {"portfolio", "balanced_cases"}:
+    st.warning(t("bench.rebuild_customs_warning", _guide_lang))
 if st.button("Rebuild Comprehension mean", key="beta_rebuild_btn", type="primary"):
     model_ids = [c["key"] for c in roster] if roster else None
     _pre_mem = (

@@ -5,8 +5,9 @@ Hosted mode must never write plaintext artifacts/summaries/case text to disk.
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Protocol, Sequence, Tuple
+from typing import Any, List, Optional, Protocol, Sequence, Tuple
 
 from benchmark.report import (
     list_run_artifacts as _fs_list_run_artifacts,
@@ -15,6 +16,8 @@ from benchmark.report import (
     write_summary as _fs_write_summary,
 )
 from benchmark.schema import MultiRunSummary, RunArtifact
+
+_LOG = logging.getLogger(__name__)
 
 
 class RunStore(Protocol):
@@ -72,6 +75,7 @@ class HostedRunStore:
         save_cloud: Optional[Any] = None,
         summaries: Optional[List[MultiRunSummary]] = None,
         summaries_setter: Optional[Any] = None,
+        error_setter: Optional[Any] = None,
     ):
         self._memory = list(memory or [])
         self._memory_setter = memory_setter
@@ -79,10 +83,21 @@ class HostedRunStore:
         self._save_cloud = save_cloud
         self._summaries = list(summaries or [])
         self._summaries_setter = summaries_setter
+        self._error_setter = error_setter
+        self.last_cloud_save_error: Optional[str] = None
 
     @property
     def writes_plaintext(self) -> bool:
         return False
+
+    def _record_cloud_save_error(self, message: Optional[str]) -> None:
+        self.last_cloud_save_error = message
+        if self._error_setter is None:
+            return
+        try:
+            self._error_setter(message)
+        except Exception:
+            _LOG.debug("Hosted cloud-save error_setter failed", exc_info=True)
 
     def persist_artifact(self, artifact: RunArtifact) -> Optional[Path]:
         self._memory.append(artifact)
@@ -92,8 +107,14 @@ class HostedRunStore:
         if self._save_cloud and self._account_session is not None:
             try:
                 self._save_cloud(self._account_session, artifact)
-            except Exception:
-                pass
+                self._record_cloud_save_error(None)
+            except Exception as exc:
+                msg = f"{type(exc).__name__}: {exc}"
+                _LOG.warning(
+                    "Hosted encrypted cloud save failed (session memory kept): %s",
+                    msg,
+                )
+                self._record_cloud_save_error(msg)
         return None
 
     def list_artifacts(self) -> List[Tuple[Optional[Path], RunArtifact]]:

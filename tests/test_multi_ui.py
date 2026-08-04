@@ -487,6 +487,8 @@ def test_ops_reliability_table_html_shows_relative_percentages():
     assert "2 (33%)" in html
     assert "3 (50%)" in html
     assert "1 (17%)" in html or "1 (16%)" in html
+    assert "Chart below" not in html
+    assert "Table columns" in html
 
 
 def test_paint_rebuild_ops_reliability_panels_order_and_skip_empty():
@@ -535,9 +537,8 @@ def test_paint_rebuild_ops_reliability_panels_order_and_skip_empty():
             st_mod,
             rows,
             n_per_model_cap=10,
-            chart_key="beta_rebuild_ops_chart",
+            chart_key="beta_rebuild_ops_table",
             table_footer_html="<div>table-foot</div>",
-            chart_footer_html="<div>chart-foot</div>",
         )
         is True
     )
@@ -546,4 +547,5 @@ def test_paint_rebuild_ops_reliability_panels_order_and_skip_empty():
     md_texts = [str(c[1][0]) for c in st_mod.calls if c[0] == "markdown"]
     assert any("Failures / N/A" in t for t in md_texts)
     assert not any("Ops reliability chart" in t for t in md_texts)
+    assert not any("Chart below" in t for t in md_texts)
     assert any("table-foot" in t for t in md_texts)

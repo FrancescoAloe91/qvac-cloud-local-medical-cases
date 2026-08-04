@@ -65,6 +65,9 @@ DISCLOSURE_KEYS = [
     "comp.ranking_pack_caption",
     "comp.rebuild_public_claim",
     "comp.same_key_warning",
+    "bench.ranking_mean_label",
+    "bench.ranking_mean_local_label",
+    "bench.rebuild_customs_warning",
     "bench.rebuild_n_help",
     "struct.track_caption",
     "struct.judge_caption",
@@ -110,9 +113,19 @@ def test_pack_ranking_and_same_key_copy():
     pack_en = en["comp.ranking_pack_caption"].lower()
     assert "pack case 1–10" in pack_en or "pack case 1-10" in pack_en
     assert "custom" in pack_en and "leaderboard" in pack_en
+    assert "official" not in pack_en
     claim_en = en["comp.rebuild_public_claim"].lower()
     assert "pack case 1–10" in claim_en or "pack case 1-10" in claim_en
     assert "custom" in claim_en
+    assert "warning" in claim_en
+    warn_en = en["bench.rebuild_customs_warning"].lower()
+    assert "custom" in warn_en
+    assert "1–10" in en["bench.rebuild_customs_warning"] or "1-10" in warn_en
+    assert "hard-filtered" in warn_en
+    rank_en = en["bench.ranking_mean_label"].lower()
+    assert "ranking" in rank_en and "indicative" in rank_en
+    assert "official" not in rank_en
+    assert "indicativa" in it["bench.ranking_mean_label"].lower()
     key_en = en["comp.same_key_warning"].lower()
     assert "same openrouter key" in key_en
     assert "history" in key_en

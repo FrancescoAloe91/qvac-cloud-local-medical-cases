@@ -71,3 +71,34 @@ def test_hosted_store_no_fs_writes(tmp_path: Path):
     assert len(store.list_artifacts()) == 1
     # Workspace dir must stay empty
     assert list(tmp_path.glob("*.json")) == []
+
+
+def test_hosted_cloud_save_error_is_surfaced_not_swallowed(tmp_path: Path):
+    """Cloud save failures keep session memory and record last_error."""
+    mem: list = []
+    errors: list = []
+
+    def boom(_session, _art):
+        raise RuntimeError("vault down")
+
+    store = HostedRunStore(
+        memory=mem,
+        memory_setter=lambda a: mem.clear() or mem.extend(a),
+        account_session=object(),
+        save_cloud=boom,
+        error_setter=lambda msg: errors.append(msg),
+    )
+    assert store.persist_artifact(_art("h2")) is None
+    assert len(store.list_artifacts()) == 1
+    assert store.last_cloud_save_error is not None
+    assert "vault down" in store.last_cloud_save_error
+    assert errors and errors[-1] and "vault down" in errors[-1]
+    assert list(tmp_path.glob("*.json")) == []
+
+    def ok(_session, _art):
+        return None
+
+    store._save_cloud = ok
+    assert store.persist_artifact(_art("h3")) is None
+    assert store.last_cloud_save_error is None
+    assert errors[-1] is None

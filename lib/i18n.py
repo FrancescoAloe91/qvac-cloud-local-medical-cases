@@ -528,6 +528,18 @@ _STRINGS = {
             "Re-Prepare or claim-split edits start a new cohort."
         ),
         "bench.rebuild_sec_label": "Rebuild mean across N runs · $0 API",
+        "bench.ranking_mean_label": (
+            "Ranking · mean across runs · Indicative if N&lt;5"
+        ),
+        "bench.ranking_mean_local_label": (
+            "Only local · protocol ranking · mean across runs · Indicative if N&lt;5"
+        ),
+        "bench.rebuild_customs_warning": (
+            "**Warning:** Portfolio / Balanced may include **custom** stems from "
+            "History. **Public / screenshot claim = pack Case 1–10.** Prefer "
+            "Same-case on a pack slot, or Balanced after Multi×all on pack cases. "
+            "Disclosure only — customs are not hard-filtered out of means."
+        ),
         "bench.rebuild_scope_label": "Mean scope",
         "bench.rebuild_scope_same": "Selected case only",
         "bench.rebuild_scope_portfolio": (
@@ -695,15 +707,16 @@ _STRINGS = {
             "product / screenshot leaderboard (that claim is pack Case 1–10)."
         ),
         "comp.ranking_pack_caption": (
-            "**Official comparison / screenshot ranking = pack Case 1–10.** "
+            "**Public / screenshot ranking = pack Case 1–10.** "
             "Custom New cases (11+) are optional extras — do not treat "
             "custom-only means as the product leaderboard."
         ),
         "comp.rebuild_public_claim": (
-            "**Public claim = pack Case 1–10.** Portfolio / Balanced may mix "
-            "custom stems from History; for public posts use Rebuild scoped "
-            "to pack cases (or Same-case on a pack slot). Customs may appear "
-            "in History — they are not the headline ranking."
+            "**Warning — public claim = pack Case 1–10.** Portfolio / Balanced "
+            "may mix custom stems from History; for public posts use Rebuild "
+            "scoped to pack cases (or Same-case on a pack slot). Customs may "
+            "appear in History — they are not the headline ranking. Disclosure "
+            "only — no hard filter removes customs from means."
         ),
         "comp.same_key_warning": (
             "**Same OpenRouter key = shared History vault.** Anyone using "
@@ -1443,6 +1456,19 @@ _STRINGS = {
             "aprono un nuovo cohort."
         ),
         "bench.rebuild_sec_label": "Ricostruisci media su N run · $0 API",
+        "bench.ranking_mean_label": (
+            "Classifica · media tra run · Indicativa se N&lt;5"
+        ),
+        "bench.ranking_mean_local_label": (
+            "Solo locale · classifica protocollo · media tra run · Indicativa se N&lt;5"
+        ),
+        "bench.rebuild_customs_warning": (
+            "**Attenzione:** Portfolio / Bilanciati possono includere stem "
+            "**custom** dalla History. **Claim pubblica / screenshot = Case pack "
+            "1–10.** Preferisci Same-case su uno slot pack, o Bilanciati dopo "
+            "Multi×all sui casi pack. Solo disclosure — i custom non vengono "
+            "esclusi con un filtro hard dalle medie."
+        ),
         "bench.rebuild_scope_label": "Ambito media",
         "bench.rebuild_scope_same": "Solo caso selezionato",
         "bench.rebuild_scope_portfolio": (
@@ -1611,16 +1637,16 @@ _STRINGS = {
             "1–10)."
         ),
         "comp.ranking_pack_caption": (
-            "**Confronto ufficiale / classifica da screenshot = Case pack "
-            "1–10.** I New case custom (11+) sono extra opzionali — non "
+            "**Classifica pubblica / screenshot = Case pack 1–10.** "
+            "I New case custom (11+) sono extra opzionali — non "
             "trattare medie solo-custom come leaderboard di prodotto."
         ),
         "comp.rebuild_public_claim": (
-            "**Claim pubblica = Case pack 1–10.** Portfolio / Bilanciati "
-            "possono mescolare stem custom dalla History; per post pubblici "
-            "usa Rebuild sui casi pack (o Same-case su uno slot pack). I "
-            "custom possono apparire in History — non sono la classifica "
-            "principale."
+            "**Attenzione — claim pubblica = Case pack 1–10.** Portfolio / "
+            "Bilanciati possono mescolare stem custom dalla History; per post "
+            "pubblici usa Rebuild sui casi pack (o Same-case su uno slot pack). "
+            "I custom possono apparire in History — non sono la classifica "
+            "principale. Solo disclosure — nessun filtro hard li toglie dalle medie."
         ),
         "comp.same_key_warning": (
             "**Stessa chiave OpenRouter = vault History condiviso.** Chi "

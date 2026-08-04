@@ -165,13 +165,16 @@ repair. Genuinely absent clinical content is never scored, imputed, or credited.
 
 ## Repeated runs
 
-Each model enters the aggregate ranking when it has at least five valid
-observations from one immutable cohort. Models may therefore have different N:
+Rebuild / Multi mean ranking includes a model when it has **≥1** scored
+observation (`min_valid_for_ranking=1`). Models may therefore have different N:
 an N/A for one model neither removes nor delays valid data from another. Every
-mean exposes its own valid and failed counts, and no missing score is imputed. A
-cohort hash includes the case, confirmed reference **scoring contract** (claims
-only; section summaries are display-only), model configuration, prompt/scoring
-versions, and protocol track. Multi/Rebuild same-case means pool only on matching
+mean exposes its own valid and failed counts, and no missing score is imputed.
+Treat means with **N&lt;5** as **indicative / exploratory** (not a powered study);
+**N=5** is the default exploratory sample size for descriptive mean±std, not a
+hard gate that excludes models from the ranking table. A cohort hash includes
+the case, confirmed reference **scoring contract** (claims only; section
+summaries are display-only), model configuration, prompt/scoring versions, and
+protocol track. Multi/Rebuild same-case means pool only on matching
 `cohort_id`; `execution_cohort_id` (actual routed providers/models, GGUF SHA,
 QVAC device / ctx / seed, judge endpoint) is audit metadata and does not split
 the batch mean — same-case UI captions strengthen when it varies. **Portfolio**
@@ -216,23 +219,28 @@ Saved artifacts can be rescored without API calls:
   formula used and never silently stamps v3 runs as v4.
 - Re-validate stored judge JSON with current local salvage; N/A rows that were
   only presentation/schema failures may recover offline.
-- History “rebuild last N” builds exploratory or official means from eligible
-  same-cohort runs (official means still need ≥5 valid cohort observations).
-  **N = max observations per model** (newest first), not a global slice of the
-  newest N run documents. Cohort identity is the SHA-256 of normalized case stem + confirmed gold
+- History “rebuild last N” builds means from eligible same-cohort runs. Ranking
+  uses `min_valid_for_ranking=1` (a model appears with ≥1 scored observation).
+  Label the result **indicative / exploratory when N&lt;5**; there is no separate
+  “official ≥5” gate in Rebuild code. **N = max observations per model**
+  (newest first), not a global slice of the newest N run documents. Cohort
+  identity is the SHA-256 of normalized case stem + confirmed gold
   (excluding `confirmed_at`) + `scoring_version` + prompt version + model
   config + track — not “whatever text is currently pasted.” Re-Prepare that
   changes claim splits creates a new cohort; Confirm on unchanged claims keeps
   the same cohort. History resume restores the exact
   prior confirmed gold (case-family key = normalized stem + raw reference);
   different Confirm contracts stay separate and are never auto-merged.
-- Optional **Portfolio** scope averages ≤N **per-model** observations across
-  cases (same track + `scoring_version`; **roster shapes may differ**). Each
-  model keeps its own newest ≤N ranking rows (ok + technical N/A) from History —
-  so cloud models with older full-roster runs still appear when the newest
-  global runs were medical-only. Scores remain reference-relative per case; the
-  cross-case mean is exploratory, not clinical validation, and never
-  auto-merges incompatible scoring versions.
+- Optional **Portfolio** / **Balanced** scopes average ≤N **per-model**
+  **successful non-zero** scores across cases (same track + `scoring_version`;
+  **roster shapes may differ**). Rebuild defaults to `keep_failures=False`:
+  technical N/A and exact Clinical Composite == 0 are excluded from the scored
+  mean and reported in the separate **Failures/N/A** ops table (counts +
+  relative %), matching `benchmark/report.py`. Scores remain reference-relative
+  per case; the cross-case mean is exploratory, not clinical validation, and
+  never auto-merges incompatible scoring versions. Portfolio / Balanced may
+  include custom stems from History — public / screenshot claim stays pack
+  Case 1–10 (disclosure only; no hard stem filter on means).
 - Prior rankings are stamped under `reproducibility.offline_rescore.stored_ranking`
   so old vs new comparisons remain possible.
 

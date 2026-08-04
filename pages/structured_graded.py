@@ -442,9 +442,19 @@ if is_streamlit_cloud():
     if _HOSTED_ENCRYPTED:
         _hosted_kwargs["account_session"] = _account_session
         _hosted_kwargs["save_cloud"] = account_save_artifact
+        _hosted_kwargs["error_setter"] = lambda msg: st.session_state.__setitem__(
+            "_hosted_cloud_save_error", msg
+        )
     RUN_STORE = HostedRunStore(**_hosted_kwargs)
 else:
     RUN_STORE = LocalRunStore(WORKSPACE_DIR)
+
+_hosted_save_err = st.session_state.get("_hosted_cloud_save_error")
+if _hosted_save_err:
+    st.warning(
+        "Encrypted cloud save failed — run kept in session memory "
+        f"(no plaintext fallback): {_hosted_save_err}"
+    )
 
 
 def _persist_run_artifact(artifact, workspace: Path):
@@ -1307,7 +1317,7 @@ def history_mean_rebuild_dialog():
         st,
         _ops_rows,
         n_per_model_cap=payload.get("n_per_model_cap"),
-        chart_key="hm_dlg_ops_chart",
+        chart_key="hm_dlg_ops_table",
         table_footer_html=screenshot_footer_html(
             lang=_ui_lang(),
             scope=_scope,
@@ -1317,16 +1327,6 @@ def history_mean_rebuild_dialog():
             pack_revision_label=_dlg_pack_rev or None,
             protocol_id=str(SCORING_VERSION),
             extra="failures/N/A % · scan window · not clinical mean",
-        ),
-        chart_footer_html=screenshot_footer_html(
-            lang=_ui_lang(),
-            scope=_scope,
-            roster_n=_dlg_roster_n,
-            cohort_id=_dlg_cohort,
-            n_label=_ops_n_label,
-            pack_revision_label=_dlg_pack_rev or None,
-            protocol_id=str(SCORING_VERSION),
-            extra="ops reliability · zeros+N/A · not clinical mean",
         ),
     )
 
@@ -4827,7 +4827,7 @@ with _results_zone:
                     st.session_state["last_multi_summary"] = summary.model_dump()
 
                     st.markdown(
-                        '<div class="sec-label">Only local · protocol ranking · mean across runs</div>',
+                        f'<div class="sec-label">{t("bench.ranking_mean_local_label", _ui_lang())}</div>',
                         unsafe_allow_html=True,
                     )
                     st.caption(reliability_caption(summary))
@@ -5933,7 +5933,7 @@ with _results_zone:
                     st.session_state["last_multi_summary"] = summary.model_dump()
 
                     st.markdown(
-                        '<div class="sec-label">Official ranking · mean across runs</div>',
+                        f'<div class="sec-label">{t("bench.ranking_mean_label", _ui_lang())}</div>',
                         unsafe_allow_html=True,
                     )
                     st.caption(reliability_caption(summary))
@@ -6775,13 +6775,13 @@ with _rebuild_zone:
 
     # Scope control — highly visible, immediately next to N / Rebuild.
     if "history_rebuild_scope" not in st.session_state:
-        st.session_state["history_rebuild_scope"] = "portfolio"
+        st.session_state["history_rebuild_scope"] = "balanced_cases"
     if st.session_state.get("history_rebuild_scope") not in {
         "same_case",
         "portfolio",
         "balanced_cases",
     }:
-        st.session_state["history_rebuild_scope"] = "portfolio"
+        st.session_state["history_rebuild_scope"] = "balanced_cases"
     _rebuild_scope = st.radio(
         t("bench.rebuild_scope_label", _ui_lang()),
         options=["same_case", "portfolio", "balanced_cases"],
@@ -6817,6 +6817,8 @@ with _rebuild_zone:
             scope=scope_label(_rebuild_scope, _ui_lang()),
         )
     )
+    if _rebuild_scope in {"portfolio", "balanced_cases"}:
+        st.warning(t("bench.rebuild_customs_warning", _ui_lang()))
 
     if _rebuild_scope == "portfolio":
         st.caption(t("bench.rebuild_portfolio_intro", _ui_lang()))
@@ -7275,6 +7277,6 @@ else:
         if len(same_case) >= 2:
             st.caption(
                 f"{len(same_case)} saved runs for {case_display_name(hist.case_id)} — "
-                "use **Rebuild mean across N runs** above for the chart "
+                "use **Rebuild mean across N runs** above for the ranking table "
                 "(same-cohort protocol, $0 API)."
             )

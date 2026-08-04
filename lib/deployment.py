@@ -5,6 +5,8 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+from lib.runtime_env import is_streamlit_cloud
+
 
 def streamlit_home_page() -> str:
     """Main-script basename for ``st.switch_page`` / ``st.page_link``.
@@ -23,14 +25,6 @@ def streamlit_home_page() -> str:
     except Exception:
         pass
     return "app.py"
-
-
-def is_streamlit_cloud() -> bool:
-    return bool(
-        os.environ.get("STREAMLIT_SHARING_MODE")
-        or os.environ.get("STREAMLIT_CLOUD")
-        or Path("/mount/src").is_dir()
-    )
 
 
 def is_local_install() -> bool:

@@ -10,8 +10,18 @@ GITHUB_REPO_URL = "https://github.com/FrancescoAloe91/qvac-cloud-local-medical-c
 
 
 def is_streamlit_cloud() -> bool:
-    """True when running on Streamlit Community Cloud (no local Ollama)."""
+    """True when running on Streamlit Community Cloud (no local Ollama).
+
+    Single source of truth for Cloud heuristics. ``lib.deployment`` re-exports
+    this so callers agree on STREAMLIT_* env vars, ``*.streamlit.app`` host, and
+    the ``/mount/src`` Community Cloud mount.
+    """
     if os.environ.get("STREAMLIT_RUNTIME_ENVIRONMENT", "").lower() == "cloud":
+        return True
+    if os.environ.get("STREAMLIT_CLOUD"):
+        return True
+    sharing = (os.environ.get("STREAMLIT_SHARING_MODE") or "").strip()
+    if sharing:
         return True
     host_blob = " ".join(
         str(os.environ.get(key, ""))
@@ -22,8 +32,6 @@ def is_streamlit_cloud() -> bool:
         )
     ).lower()
     if "streamlit.app" in host_blob:
-        return True
-    if os.environ.get("STREAMLIT_SHARING_MODE", "").lower() in ("true", "1", "yes"):
         return True
     # Streamlit Cloud mounts the repo at /mount/src/<repo>
     return Path("/mount/src").is_dir()
