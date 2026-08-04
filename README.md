@@ -10,7 +10,8 @@ advice, not a powered clinical study, and not an official MedPsy blog
 evaluation.** Scores measure agreement with a frozen reference on this bench,
 not real-world diagnostic accuracy.
 
-Live app: https://francescoaloe91-qvac-vs-cloud-llms-health-test-app-wihxyd.streamlit.app  
+Live app: https://qvac-cloud-local-medical-cases.streamlit.app  
+
 Repository: https://github.com/FrancescoAloe91/qvac-cloud-local-medical-cases
 
 ## Two tracks (KPIs never pool)

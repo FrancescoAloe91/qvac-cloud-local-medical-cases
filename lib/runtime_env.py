@@ -5,9 +5,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-LIVE_DEMO_URL = (
-    "https://francescoaloe91-qvac-vs-cloud-llms-health-test-app-wihxyd.streamlit.app"
-)
+LIVE_DEMO_URL = "https://qvac-cloud-local-medical-cases.streamlit.app"
 GITHUB_REPO_URL = "https://github.com/FrancescoAloe91/qvac-cloud-local-medical-cases"
 
 

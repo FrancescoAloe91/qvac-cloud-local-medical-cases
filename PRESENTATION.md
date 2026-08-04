@@ -106,7 +106,7 @@ Exact ties remain ties. Technical N/A is not a synthetic zero.
 
 | Mode | Link / command |
 |---|---|
-| **Public** | [Live demo](https://francescoaloe91-qvac-vs-cloud-llms-health-test-app-wihxyd.streamlit.app) — hosted path usually has no QVAC sidecar (cloud roster only) |
+| **Public** | [Live demo](https://qvac-cloud-local-medical-cases.streamlit.app) — hosted path usually has no QVAC sidecar (cloud roster only) |
 | **Full (live QVAC)** | `git clone` → `./install.sh` → sidecar + `streamlit run app.py` → `http://localhost:8501` |
 
 ## Stack
