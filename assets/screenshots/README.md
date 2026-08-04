@@ -1,7 +1,8 @@
 # Screenshots (marketing / docs only)
 
-These PNGs are **not** the live Clinical Composite ranking from Comprehension
-or Structured.
+**Non-authoritative / pre-gold.** These PNGs are marketing illustrations only —
+**not** live Clinical Composite rankings, not Rebuild means, and not proof of
+model quality. Do not cite them as current bench results.
 
 - Live tracks score via the DeepSeek R1 judge (`app.py`,
   `pages/structured_graded.py`).

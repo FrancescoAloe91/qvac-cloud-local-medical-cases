@@ -39,7 +39,7 @@ KPIs **never pool** across tracks. Same C/Q/D math underneath; different collect
 | TTFT / TPS | Measured from API stream | Measured from local sidecar |
 | Models | Pinned API routes (GPT / Claude / Gemini) | MedPsy + open peer GGUFs |
 
-N=5 is exploratory. Showing **larger descriptive N** (e.g. ~70 scored runs in a suite mean) improves stability of mean±std — it still does **not** create clinical validation or significance claims. **Controlled** track uses temp 0.2 (separate cohort from `native_defaults`). TTFT/TPS are ops metrics, not hardware-normalized. Keep the honesty block + mean footer visible in every screenshot.
+N=5 is exploratory. Showing **larger descriptive N** (e.g. ~70 scored runs in a suite mean) improves stability of mean±std — it still does **not** create clinical validation or significance claims. **Controlled** track uses temp 0.2 (separate cohort from `native_defaults`). TTFT/TPS are ops metrics, not hardware-normalized. Keep the honesty block + mean footer visible in every screenshot. PNGs under `assets/screenshots/` are **non-authoritative / pre-gold marketing only** — not live rankings.
 
 ### Known limitations / How to read results
 

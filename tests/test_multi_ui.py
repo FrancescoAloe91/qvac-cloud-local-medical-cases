@@ -42,11 +42,35 @@ def test_progressive_panel_uses_tab_label_for_beta_rounds():
         ],
         n_total=14,
         batch_done=False,
+        footer_html='<div class="screenshot-footer">mean±std · test footer</div>',
     )
     assert "R8 · Case 1" in html
     assert "R8 · Case 1 · AKI · table + histogram" in html
     assert "Waiting for all runs" in html
     assert "Completed <b style=\"color:#fbbf24\">1</b> / 14" in html or "1</b> / 14" in html
+    assert "screenshot-footer" in html
+    assert "test footer" in html
+
+
+def test_live_judging_board_paint_appends_footer():
+    class _Slot:
+        def __init__(self) -> None:
+            self.last = ""
+
+        def markdown(self, body, **_kwargs):
+            self.last = body
+
+    board = LiveJudgingBoard(
+        title="Live judging · Comprehension",
+        label_by_key={"chatgpt": "ChatGPT"},
+        footer_html='<div class="screenshot-footer">live footer</div>',
+    )
+    slot = _Slot()
+    board.bind(board_slot=slot)
+    board.ensure_queued("chatgpt")
+    assert "screenshot-footer" in slot.last
+    assert "live footer" in slot.last
+    assert "Live judging · Comprehension" in slot.last
 
 
 def test_live_judging_session_updates_provisional_scores():

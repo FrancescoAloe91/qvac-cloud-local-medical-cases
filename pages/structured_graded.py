@@ -3213,6 +3213,32 @@ with _live_zone:
                         unsafe_allow_html=True,
                     )
 
+    def _struct_live_footer_html(
+        *,
+        cohort_id: str | None = None,
+        n_label: str = "live · provisional",
+        extra: str = "Structured · live provisional",
+    ) -> str:
+        """Screenshot footer for live / session Structured ranking surfaces."""
+        return screenshot_footer_html(
+            lang=_ui_lang(),
+            scope="same_case",
+            cohort_id=cohort_id
+            or str(
+                st.session_state.get("_active_cohort_id")
+                or st.session_state.get("_restored_cohort_id")
+                or ""
+            )
+            or None,
+            n_label=n_label,
+            protocol_id=str(SCORING_VERSION),
+            pack_revision_label=str(
+                st.session_state.get("_ui_pack_revision") or _pack_rev_now or ""
+            )
+            or None,
+            extra=extra,
+        )
+
     def _paint_multi_progress(
         slot,
         completed: list,
@@ -3221,10 +3247,18 @@ with _live_zone:
         batch_done: bool = False,
         toast_html: str = "",
         height: int = 220,
+        footer_html: str = "",
     ) -> None:
         """Render multi progress in an iframe so onclick modals/toasts survive sanitizer."""
+        foot = footer_html or _struct_live_footer_html(
+            n_label="live Multi · per-run ranking",
+            extra="Structured · progressive Multi",
+        )
         body = progressive_multi_panel_html(
-            completed, n_total=n_total, batch_done=batch_done
+            completed,
+            n_total=n_total,
+            batch_done=batch_done,
+            footer_html=foot,
         ) + (toast_html or "")
         # Extra height when toast is present
         h = height + (180 if toast_html else 0)
@@ -3234,6 +3268,16 @@ with _live_zone:
                 f"""<!doctype html><html><head><meta charset="utf-8"/>
     <style>
       body {{ margin:0; background:transparent; font-family: ui-sans-serif, system-ui, sans-serif; }}
+      .screenshot-footer {{
+        margin:0.45rem 0 0.85rem; padding:0.55rem 0.7rem; border-radius:8px;
+        border:2px solid #f59e0b; background:#1c1917; color:#fde68a;
+        font-size:0.78rem; font-weight:600;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        line-height:1.4; word-break:break-word;
+      }}
+      .screenshot-footer-gloss {{
+        margin-top:0.32rem; font-size:0.72rem; font-weight:500; color:#fbbf24;
+      }}
     </style></head><body>{body}</body></html>""",
                 height=h,
                 scrolling=True,
@@ -3540,6 +3584,10 @@ with _results_zone:
                                 lo_board,
                                 highlight_key=lo_ui["highlight"],
                                 title="Live judging · local + MedPsy",
+                            )
+                            + _struct_live_footer_html(
+                                n_label="live round · provisional",
+                                extra="Structured · live provisional",
                             ),
                             unsafe_allow_html=True,
                         )
@@ -5228,6 +5276,10 @@ with _results_zone:
                             full_board,
                             highlight_key=full_ui["highlight"],
                             title="Live judging · cloud + local + MedPsy",
+                        )
+                        + _struct_live_footer_html(
+                            n_label="live round · provisional",
+                            extra="Structured · live provisional",
                         ),
                         unsafe_allow_html=True,
                     )
@@ -6402,6 +6454,13 @@ with _results_zone:
             st.markdown(
                 _reliability_table_html(_sum.ranking_mean), unsafe_allow_html=True
             )
+            st.markdown(
+                _struct_live_footer_html(
+                    n_label=f"this session · N={_sum.n} runs · successful scores",
+                    extra="Structured · session mean ranking",
+                ),
+                unsafe_allow_html=True,
+            )
             st.plotly_chart(
                 fig_judge_mean_accuracy_bars(
                     _sum.ranking_mean,
@@ -6410,6 +6469,13 @@ with _results_zone:
                 ),
                 use_container_width=True,
                 key="rank_chart_saved_multi",
+            )
+            st.markdown(
+                _struct_live_footer_html(
+                    n_label=f"this session · N={_sum.n} runs · successful scores",
+                    extra="Structured · session mean chart",
+                ),
+                unsafe_allow_html=True,
             )
             _paths = st.session_state.get("last_multi_paths") or []
             if _paths:
@@ -6433,6 +6499,13 @@ with _results_zone:
                 fig_judge_accuracy_bars(_saved_rank, height=260),
                 use_container_width=True,
                 key="rank_chart_saved",
+            )
+            st.markdown(
+                _struct_live_footer_html(
+                    n_label="this session · ranking",
+                    extra="Structured · session ranking",
+                ),
+                unsafe_allow_html=True,
             )
             rows = []
             _any_partial = False
@@ -6834,7 +6907,7 @@ with _rebuild_zone:
     **In parole semplici** — protocollo esplorativo amateur, **non** validazione medica.
 
     **Composite (voto totale)**  
-    Cinque “capitoli”: diagnosi, esami, urgenza, safety, piano. Ogni capitolo pesa in genere circa **1/5** del totale (a volte safety un filo di più). Dentro ogni capitolo: *copertura* (hai detto le cose chiave?) ~50%, *qualità* ~35%, *disciplina* (pochissime aggiunte pericolose) ~15%. Il voto non è “a occhio”: è la media pesata di questi pezzi.
+    Cinque “capitoli” con pesi **non uguali**: diagnosi **30%**, safety **25%**, piano **20%**, esami **15%**, urgenza **10%**. Dentro ogni capitolo: *copertura* (hai detto le cose chiave?) ~50%, *qualità* ~35%, *disciplina* (pochissime aggiunte pericolose) ~15%. Il voto non è “a occhio”: è la media pesata di questi pezzi.
 
     **Media (mean) — base della classifica**  
     Con N rebuild validi: somma i punteggi e dividi per N. È il risultato “tipico”.  
@@ -6869,7 +6942,7 @@ with _rebuild_zone:
     **In plain words** — exploratory amateur protocol, **not** medical validation.
 
     **Composite (total score)**  
-    Five chapters: diagnosis, tests, urgency, safety, plan. Each usually about **1/5** of the total (safety sometimes a bit more). Inside each chapter: *coverage* ~50%, *quality* ~35%, *discipline* ~15%. Weighted average — not a vibe score.
+    Five chapters with **unequal** weights: diagnosis **30%**, safety **25%**, plan **20%**, tests **15%**, urgency **10%**. Inside each chapter: *coverage* ~50%, *quality* ~35%, *discipline* ~15%. Weighted average — not a vibe score.
 
     **Mean — ranking basis**  
     Average of up to N successful non-zero scored runs. Technical N/A and exact-zero skipped. Rank (#) and CV bands follow the mean (±std). At small N (5–10) mean is usually clearer than median.

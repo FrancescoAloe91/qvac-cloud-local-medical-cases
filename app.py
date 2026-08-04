@@ -127,6 +127,31 @@ from lib.stream_panels import (
 )
 
 
+def _comp_live_footer_html(
+    *,
+    cohort_id: Optional[str] = None,
+    pack_revision_label: Optional[str] = None,
+    n_label: str = "live · provisional",
+    extra: str = "Comprehension · live provisional",
+) -> str:
+    """Screenshot footer for live / session Comprehension ranking surfaces."""
+    return screenshot_footer_html(
+        lang=str(st.session_state.get("lang") or "en"),
+        scope="same_case",
+        cohort_id=cohort_id or str(st.session_state.get("beta_last_cohort") or "") or None,
+        n_label=n_label,
+        protocol_id=PROTOCOL_ID,
+        pack_revision_label=str(
+            pack_revision_label
+            or (st.session_state.get("beta_confirmed_gold") or {}).get("pack_revision")
+            or st.session_state.get("_comp_pack_revision")
+            or ""
+        )
+        or None,
+        extra=extra,
+    )
+
+
 def _paint_beta_multi_progress(
     slot,
     completed: list,
@@ -135,10 +160,18 @@ def _paint_beta_multi_progress(
     batch_done: bool = False,
     toast_html: str = "",
     height: int = 240,
+    footer_html: str = "",
 ) -> None:
     """Same progressive Multi strip as graded dashboard (iframe for clickable tabs)."""
+    foot = footer_html or _comp_live_footer_html(
+        n_label="live Multi · per-run ranking",
+        extra="Comprehension · progressive Multi",
+    )
     body = progressive_multi_panel_html(
-        completed, n_total=n_total, batch_done=batch_done
+        completed,
+        n_total=n_total,
+        batch_done=batch_done,
+        footer_html=foot,
     ) + (toast_html or "")
     h = height + (180 if toast_html else 0)
     slot.empty()
@@ -148,6 +181,16 @@ def _paint_beta_multi_progress(
 <style>
   body {{ margin:0; background:transparent;
     font-family: ui-sans-serif, system-ui, sans-serif; }}
+  .screenshot-footer {{
+    margin:0.45rem 0 0.85rem; padding:0.55rem 0.7rem; border-radius:8px;
+    border:2px solid #f59e0b; background:#1c1917; color:#fde68a;
+    font-size:0.78rem; font-weight:600;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    line-height:1.4; word-break:break-word;
+  }}
+  .screenshot-footer-gloss {{
+    margin-top:0.32rem; font-size:0.72rem; font-weight:500; color:#fbbf24;
+  }}
 </style></head><body>{body}</body></html>""",
             height=h,
             scrolling=True,
@@ -616,6 +659,9 @@ st.caption(
     t("comp.track_caption", _guide_lang)
     + f" · *Advanced: protocol `{PROTOCOL_ID}`*"
 )
+if is_streamlit_cloud():
+    st.info(t("cloud.demo_banner", _guide_lang))
+    st.caption(t("cloud.demo_link", _guide_lang))
 _qvac_guide_status = (
     "ready — MedPsy will be included"
     if _qvac_loaded
@@ -726,6 +772,7 @@ if not pack_slots:
     st.stop()
 
 _pack_revision = int(pack.get("revision") or 0)
+st.session_state["_comp_pack_revision"] = _pack_revision
 _pack_title = str(pack.get("title") or "Comprehension pack")
 st.caption(
     f"**{_pack_title}** · pack version **{_pack_revision}** · "
@@ -1666,6 +1713,12 @@ if _ready:
             label_by_key=label_by_key,
             status_boxes=status_boxes,
             status_pill_fn=status_pill,
+            footer_html=_comp_live_footer_html(
+                cohort_id=cohort,
+                pack_revision_label=str(_art_pack_rev or _pack_revision),
+                n_label="live round · provisional",
+                extra="Comprehension · live provisional",
+            ),
         )
         last_pipe_poll = 0.0
         t_run_i0 = time.time()
@@ -1921,6 +1974,12 @@ if _ready:
                     live_board.board,
                     highlight_key=live_board.highlight,
                     title=f"Live judging · Comprehension · {tab_label}",
+                )
+                + _comp_live_footer_html(
+                    cohort_id=cohort,
+                    pack_revision_label=str(_art_pack_rev or _pack_revision),
+                    n_label="live round · provisional",
+                    extra="Comprehension · live provisional",
                 ),
                 unsafe_allow_html=True,
             )
@@ -2012,6 +2071,15 @@ if _ready:
             fig_judge_accuracy_bars(last_ranking),
             use_container_width=True,
             key="comp_bar_live_single",
+        )
+        st.markdown(
+            _comp_live_footer_html(
+                cohort_id=last_cohort,
+                pack_revision_label=str(_pack_revision),
+                n_label="this session · 1 run",
+                extra="Comprehension · session ranking",
+            ),
+            unsafe_allow_html=True,
         )
         st.session_state["beta_last_ranking"] = last_ranking
         st.session_state["beta_last_cohort"] = last_cohort
@@ -2242,6 +2310,11 @@ if _beta_prog.get("completed") is not None and not st.session_state.get("beta_ru
 st.markdown("### Comprehension KPIs (this session)")
 _last_rank = st.session_state.get("beta_last_ranking")
 _last_sum = st.session_state.get("beta_last_multi_summary")
+_sess_cohort = str(st.session_state.get("beta_last_cohort") or "") or None
+_sess_pack = str(
+    (st.session_state.get("beta_confirmed_gold") or {}).get("pack_revision")
+    or _pack_revision
+)
 if _last_sum is not None:
     mean_rows = list(getattr(_last_sum, "ranking_mean", None) or [])
     if mean_rows:
@@ -2251,16 +2324,43 @@ if _last_sum is not None:
             st.html(_sess_html)
         else:
             st.markdown(_sess_html, unsafe_allow_html=True)
+        st.markdown(
+            _comp_live_footer_html(
+                cohort_id=_sess_cohort,
+                pack_revision_label=_sess_pack,
+                n_label="this session · successful scores",
+                extra="Comprehension · session mean ranking",
+            ),
+            unsafe_allow_html=True,
+        )
         st.plotly_chart(
             fig_judge_mean_accuracy_bars(mean_rows, hide_partial_labels=True),
             use_container_width=True,
             key="comp_bar_kpi_mean",
+        )
+        st.markdown(
+            _comp_live_footer_html(
+                cohort_id=_sess_cohort,
+                pack_revision_label=_sess_pack,
+                n_label="this session · successful scores",
+                extra="Comprehension · session mean chart",
+            ),
+            unsafe_allow_html=True,
         )
 elif _last_rank:
     st.plotly_chart(
         fig_judge_accuracy_bars(_last_rank),
         use_container_width=True,
         key="comp_bar_kpi_last",
+    )
+    st.markdown(
+        _comp_live_footer_html(
+            cohort_id=_sess_cohort,
+            pack_revision_label=_sess_pack,
+            n_label="this session · ranking",
+            extra="Comprehension · session ranking",
+        ),
+        unsafe_allow_html=True,
     )
 else:
     st.caption("No Comprehension run in this session yet.")

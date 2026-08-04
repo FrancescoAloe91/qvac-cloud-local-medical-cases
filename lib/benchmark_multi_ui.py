@@ -86,11 +86,13 @@ class LiveJudgingBoard:
         label_by_key: Optional[Dict[str, str]] = None,
         status_boxes: Optional[Dict[str, Any]] = None,
         status_pill_fn: Optional[Callable[[str, str], str]] = None,
+        footer_html: Optional[str] = None,
     ) -> None:
         self.title = title
         self.label_by_key = dict(label_by_key or {})
         self.status_boxes = status_boxes or {}
         self.status_pill_fn = status_pill_fn
+        self.footer_html = footer_html or ""
         self.board: Dict[str, Dict[str, Any]] = {}
         self.started: set[str] = set()
         self.highlight: Optional[str] = None
@@ -114,14 +116,14 @@ class LiveJudgingBoard:
     def paint(self) -> None:
         if self.board_slot is None:
             return
-        self.board_slot.markdown(
-            live_judging_board_html(
-                self.board,
-                highlight_key=self.highlight,
-                title=self.title,
-            ),
-            unsafe_allow_html=True,
+        body = live_judging_board_html(
+            self.board,
+            highlight_key=self.highlight,
+            title=self.title,
         )
+        if self.footer_html:
+            body = f"{body}{self.footer_html}"
+        self.board_slot.markdown(body, unsafe_allow_html=True)
 
     def ensure_queued(self, key: str, label: Optional[str] = None) -> None:
         """Append to FIFO board as soon as collect finishes (before DeepSeek returns)."""
@@ -852,10 +854,13 @@ def progressive_multi_panel_html(
     *,
     n_total: int,
     batch_done: bool = False,
+    footer_html: Optional[str] = None,
 ) -> str:
     """
     Live multi-run results strip: empty mean card + clickable run tabs with HTML modals.
     Works during the blocking collect/judge loop (no Streamlit widget click needed).
+    Optional ``footer_html`` (e.g. screenshot_footer_html) is appended under each
+    per-run ranking modal — escape-safe caller HTML only.
     """
     n_done = len(completed)
     mean_block = (
@@ -863,13 +868,14 @@ def progressive_multi_panel_html(
         if batch_done
         else mean_placeholder_html(n_done=n_done, n_total=n_total)
     )
+    foot = footer_html or ""
 
     if not completed:
         tabs = (
             '<div style="color:#64748b;font-size:0.85rem;margin:0.25rem 0 0.6rem;">'
             "Run tabs appear here as soon as run 1 finishes.</div>"
         )
-        return mean_block + tabs
+        return mean_block + tabs + foot
 
     chips = []
     modals = []
@@ -914,6 +920,7 @@ def progressive_multi_panel_html(
             f'style="border:0;background:#334155;color:#e2e8f0;border-radius:8px;padding:0.35rem 0.7rem;'
             f'cursor:pointer;">Close</button></div>'
             f"{_run_summary_body_html(ranking)}"
+            f"{foot}"
             f'<div style="color:#64748b;font-size:0.78rem;margin-top:0.65rem;">'
             f'Cost ${float(snap.get("total_cost_usd") or 0):.4f} · full detail after batch ends'
             f"</div></div></div>"

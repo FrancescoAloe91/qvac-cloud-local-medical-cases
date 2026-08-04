@@ -145,10 +145,19 @@ def test_honesty_block_includes_core_phrases():
     assert "crush the average" in html
     assert "refusal" in html.lower()
     assert "MedGemma" in html and "~2/109" in html
-    assert "reliability chart" in html.lower()
+    assert "failures/n/a" in html.lower() and "table" in html.lower()
+    assert "reliability chart" not in html.lower()
     assert "Same-case" in html
     assert "abcdef01" in html
     assert str(DEFAULT_ROSTER_VERSION) in html
+    it_html = honesty_block_html(
+        lang="it",
+        roster_n=DEFAULT_ROSTER_VERSION,
+        scope="same_case",
+        cohort_id="abcdef0123456789",
+    )
+    assert "failures/n/a" in it_html.lower() and "tabella" in it_html.lower()
+    assert "grafico di" not in it_html.lower()
     # Comprehension extras stay plain-language + sharp validity.
     comp = honesty_block_html(lang="en", scope="comprehension", roster_n=9)
     assert "Not medical validity" in comp

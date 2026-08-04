@@ -762,8 +762,8 @@ _STRINGS = {
             "MedGemma ~2/109 (~2%) refusal zeros · rate varies by model"
         ),
         "disclosure.bullet_ops": (
-            "Zeros and technical failures appear in a <b>separate reliability "
-            "chart</b> — not in the main average ranking"
+            "Zeros and technical failures appear in a <b>separate Failures/N/A "
+            "table</b> — not in the main average ranking"
         ),
         "disclosure.bullet_scope": "Average scope",
         "disclosure.bullet_confirm": (
@@ -1682,8 +1682,8 @@ _STRINGS = {
             "il tasso varia per modello"
         ),
         "disclosure.bullet_ops": (
-            "Zeri e fallimenti tecnici compaiono in un <b>grafico di "
-            "affidabilità separato</b> — non nella classifica media principale"
+            "Zeri e fallimenti tecnici compaiono in una <b>tabella Failures/N/A "
+            "separata</b> — non nella classifica media principale"
         ),
         "disclosure.bullet_scope": "Ambito della media",
         "disclosure.bullet_confirm": (

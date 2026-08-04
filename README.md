@@ -382,6 +382,10 @@ author-supplied gold · uncalibrated judge · N=5 exploratory). Legacy Ollama
 i18n/`lib/medpsy` helpers are unused on the gold Automated Benchmark path
 (live path = QVAC sidecar).
 
+**`assets/screenshots/`** PNGs are **non-authoritative / pre-gold marketing
+only** — not live rankings and not Rebuild means. See
+[`assets/screenshots/README.md`](assets/screenshots/README.md).
+
 Hosted BYOK: both Comprehension (`app.py`) and Structured strip any process-wide
 `OPENROUTER_API_KEY` on Streamlit Cloud so a host secret cannot silently pay for
 visitors. Process git history may retain older scrubbed internal notes — treat
