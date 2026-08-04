@@ -6,7 +6,7 @@ import os
 from pathlib import Path
 
 LIVE_DEMO_URL = "https://qvac-cloud-local-medical-cases.streamlit.app"
-GITHUB_REPO_URL = "https://github.com/frankys91/qvac-cloud-local-medical-cases"
+GITHUB_REPO_URL = "https://github.com/frankys-tech/qvac-cloud-local-medical-cases"
 
 
 def is_streamlit_cloud() -> bool:

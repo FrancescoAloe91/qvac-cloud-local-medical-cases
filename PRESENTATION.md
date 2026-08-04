@@ -117,4 +117,4 @@ Streamlit · Python · OpenRouter (BYOK) · DeepSeek R1 judge · Qwen whole-run 
 
 > *“Same frozen gold — free-form Comprehension on Home for real narrative capability; optional Structured if you care about slot contracts. Amateur exercise, loud disclaimers, no medical validity.”*
 
-**Repo:** https://github.com/frankys91/qvac-cloud-local-medical-cases
+**Repo:** https://github.com/frankys-tech/qvac-cloud-local-medical-cases

@@ -5,7 +5,7 @@
 **Target URL (custom subdomain):**
 https://qvac-cloud-local-medical-cases.streamlit.app
 
-**Repo:** `frankys91/qvac-cloud-local-medical-cases` · branch `main` ·
+**Repo:** `frankys-tech/qvac-cloud-local-medical-cases` · branch `main` ·
 entrypoint `streamlit_app.py` (Community Cloud default; `app.py` also works)
 
 There is **no** Streamlit Cloud rename/redeploy API usable from this repo’s CLI
@@ -22,7 +22,7 @@ Old slug (orphaned / stale):
 `qvac-vs-cloud-llms-health-test`).
 
 1. Open [share.streamlit.io](https://share.streamlit.io) and sign in with the
-   GitHub account that owns `frankys91/qvac-cloud-local-medical-cases`
+   GitHub account that owns `frankys-tech/qvac-cloud-local-medical-cases`
    (reconnect GitHub after a username rename if prompted).
 2. If the old app still appears:
    - Overflow (⋮) → **Delete** if Delete is enabled; or
@@ -31,7 +31,7 @@ Old slug (orphaned / stale):
      — temporarily restore the old GitHub name *or* ask Snowflake/Streamlit
      support to delete the disconnected app — then continue below.
 3. **New app** → choose repository
-   `frankys91/qvac-cloud-local-medical-cases`, branch `main`,
+   `frankys-tech/qvac-cloud-local-medical-cases`, branch `main`,
    Main file path `streamlit_app.py` (Cloud default; or `app.py`) → Deploy.
 4. After deploy: overflow (⋮) → **Settings** → **General** → set App URL
    subdomain to `qvac-cloud-local-medical-cases` (6–63 chars) → **Save**.
