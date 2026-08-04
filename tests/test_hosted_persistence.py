@@ -98,6 +98,22 @@ def test_comprehension_cloud_uses_hosted_run_store_and_skips_custom_disk():
     assert "LocalRunStore(WORKSPACE_DIR)" in home
 
 
+def test_structured_cloud_uses_hosted_run_store_and_ephemeral_id():
+    """H1b: Structured Cloud mirrors Comprehension — HostedRunStore + ephemeral."""
+    root = Path(__file__).resolve().parents[1]
+    src = (root / "pages" / "structured_graded.py").read_text(encoding="utf-8")
+    assert "HostedRunStore" in src
+    assert "_cloud_anon_ws" in src
+    assert "cloud_ephemeral_id=" in src
+    # HostedRunStore whenever on Cloud (not only Supabase+auth).
+    assert "if is_streamlit_cloud():" in src
+    assert "_HOSTED_ENCRYPTED" in src
+    assert "_HOSTED_NO_PLAINTEXT = bool(is_streamlit_cloud())" in src
+    # ensure_owner_slots must not persist plaintext when store says so.
+    assert "persist=bool(getattr(RUN_STORE, \"writes_plaintext\", True))" in src
+    assert "LocalRunStore(WORKSPACE_DIR)" in src
+
+
 def test_readme_separates_comprehension_and_structured_privacy():
     """H2: README Privacy must distinguish Comprehension Cloud vs Structured."""
     text = (Path(__file__).resolve().parents[1] / "README.md").read_text(
@@ -105,6 +121,7 @@ def test_readme_separates_comprehension_and_structured_privacy():
     )
     assert "Privacy and hosted persistence" in text
     assert "Comprehension on Streamlit Cloud" in text
+    assert "Structured on Streamlit Cloud" in text
     assert "Structured + Supabase" in text or "Structured + Supabase hosted" in text
     assert "session-memory" in text or "session memory" in text
     assert "_local_no_key" in text

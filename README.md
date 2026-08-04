@@ -357,8 +357,12 @@ visitor key into process-global environment state. **Comprehension** and
   (`_cloud_ephemeral_<hash16>`), never the shared `_local_no_key` bucket.
   History/Rebuild for that visit lives in the browser session and is lost on
   refresh.
-- **Structured + Supabase hosted** (`pages/structured_graded.py` with Auth +
-  Fernet `APP_ENCRYPTION_KEY`): configure Supabase Auth and apply
+- **Structured on Streamlit Cloud** (`pages/structured_graded.py`): same
+  session-memory rule — **no** plaintext run JSON / case drafts on the host FS
+  (even without Supabase). Anonymous visitors use per-browser
+  `_cloud_ephemeral_<hash16>`, not `_local_no_key`.
+- **Structured + Supabase hosted** (Auth + Fernet `APP_ENCRYPTION_KEY`):
+  configure Supabase Auth and apply
   `supabase/migrations/202607270001_secure_benchmark.sql`. Workspace directories
   use the Supabase user id. After decrypt, artifacts stay in session memory —
   plaintext is **not** written to disk on the host. Rows are encrypted at rest

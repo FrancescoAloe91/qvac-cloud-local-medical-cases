@@ -36,9 +36,9 @@ Hosted behavior:
 - QVAC/GGUF models are unavailable unless the host also runs the local sidecar;
 - technical failures are N/A and remain visible in artifacts.
 
-If Supabase variables are absent, hosted keys are session-only and local disk
-history is not durable. The UI shows a quiet caption for this state (no durable
-account vault).
+If Supabase variables are absent, hosted keys and History stay session-only
+(Comprehension and Structured): no plaintext run JSON on the host FS. The UI
+shows a quiet caption for this state (no durable account vault).
 
 Honesty fence (product copy, not scoring): cloud slots are OpenRouter API routes
 ≠ consumer ChatGPT/Claude/Gemini web; scores are gold-relative / not medical

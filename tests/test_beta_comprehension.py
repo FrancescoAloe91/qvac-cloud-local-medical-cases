@@ -199,12 +199,15 @@ def test_beta_multi_finish_arms_mean_popup_like_graded():
     )
     assert "open_new_beta_case_slot" in src
     assert "delete_beta_custom_slot" in src
-    assert "custom_slots_for_multi_all" in src
     assert "beta_locked_custom_slots" in src
     assert "load_beta_custom_state" in src
     assert "save_beta_custom_state" in src
     assert "beta_custom_workspace_fp" in src
     assert "custom_slots_ready_for_multi_all" in src
+    # Ready helper (used by Multi×all); underlying filter lives in beta_pack.
+    assert "custom_slots_for_multi_all" in (
+        root / "benchmark" / "beta_pack.py"
+    ).read_text(encoding="utf-8")
     assert "is_photocopy_custom_gold" in src
     assert "Cloud & local medical LLMs" in src
     i18n = (root / "lib" / "i18n.py").read_text(encoding="utf-8")

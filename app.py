@@ -27,7 +27,6 @@ from benchmark.beta_pack import (
     auto_freeze_beta_slot,
     beta_case_slot_of,
     count_beta_runs_by_slot,
-    custom_slots_for_multi_all,
     custom_slots_ready_for_multi_all,
     delete_beta_artifacts_for_slot,
     delete_beta_custom_slot,

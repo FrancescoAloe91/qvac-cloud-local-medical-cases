@@ -4,7 +4,8 @@ Not part of the Streamlit dashboard path. Do **not** use for public posts or
 to selectively boost MedPsy in published means.
 
 Re-cleans candidate answers (strip ``<think>``), calls DeepSeek judge again,
-and may persist the artifact in place. Does not invent scores offline.
+and may persist the artifact in place when ``dry_run=False`` (CLI ``--write``).
+Default is dry-run. Does not invent scores offline.
 Run only intentionally from CLI/scripts against a private workspace.
 """
 
@@ -299,9 +300,15 @@ def rejudge_owner_beta_medpsy_na(
     owner_dir: Path,
     *,
     api_key: Optional[str] = None,
-    dry_run: bool = False,
+    dry_run: bool = True,
     limit: Optional[int] = None,
 ) -> Dict[str, Any]:
+    """Rejudge MedPsy N/A rows under ``owner_dir``.
+
+    Default ``dry_run=True`` lists targets only. Pass ``dry_run=False`` (CLI
+    ``--write``) to call the judge API and rewrite finished ``beta-*.json``
+    artifacts in place. Never mutates when the API key is missing.
+    """
     key = (api_key or resolve_openrouter_key()).strip()
     targets = iter_beta_medpsy_na_artifacts(owner_dir)
     if limit is not None:

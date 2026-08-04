@@ -362,19 +362,30 @@ if _session_key and not is_usable_openrouter_key(_session_key):
     _session_key = ""
 has_key = is_usable_openrouter_key(_session_key)
 
-# Local fallback workspace is explicitly scoped from this session's key. Cloud
-# account-backed persistence replaces this filesystem in configured deployments.
+# Local: key-scoped (or `_local_no_key`). Cloud without key/account: per-browser
+# ephemeral owner — never shared hash of "anonymous" / `_local_no_key`.
 _account_uid = (
     _account_session.user_id
     if isinstance(_account_session, AccountSession)
     else None
 )
-WORKSPACE_DIR = scoped_artifacts_dir(_session_key, account_user_id=_account_uid)
-_HOSTED_NO_PLAINTEXT = bool(
+_cloud_ephemeral = None
+if is_streamlit_cloud() and not has_key and not _account_uid:
+    if "_cloud_anon_ws" not in st.session_state:
+        st.session_state["_cloud_anon_ws"] = str(uuid.uuid4())
+    _cloud_ephemeral = str(st.session_state["_cloud_anon_ws"])
+WORKSPACE_DIR = scoped_artifacts_dir(
+    _session_key,
+    account_user_id=_account_uid,
+    cloud_ephemeral_id=_cloud_ephemeral,
+)
+# Encrypted Supabase path (Cloud + Auth). Any Cloud path skips host plaintext.
+_HOSTED_ENCRYPTED = bool(
     is_streamlit_cloud()
     and account_store_configured()
     and isinstance(_account_session, AccountSession)
 )
+_HOSTED_NO_PLAINTEXT = bool(is_streamlit_cloud())
 _moved_legacy = maybe_claim_legacy_root_artifacts()
 if _moved_legacy and not st.session_state.get("_legacy_artifacts_toast"):
     st.session_state["_legacy_artifacts_toast"] = True
@@ -387,7 +398,11 @@ if _moved_legacy and not st.session_state.get("_legacy_artifacts_toast"):
     except Exception:
         pass
 # Refresh workspace path after claim (same dir, now populated)
-WORKSPACE_DIR = scoped_artifacts_dir(_session_key, account_user_id=_account_uid)
+WORKSPACE_DIR = scoped_artifacts_dir(
+    _session_key,
+    account_user_id=_account_uid,
+    cloud_ephemeral_id=_cloud_ephemeral,
+)
 if (
     account_store_configured()
     and isinstance(_account_session, AccountSession)
@@ -397,6 +412,7 @@ if (
         _synced = []
         for _cloud_row in account_list_artifacts(_account_session, limit=200):
             _synced.append(_cloud_row["artifact"])
+            # Local + Supabase may mirror to disk; Cloud never writes plaintext.
             if not _HOSTED_NO_PLAINTEXT:
                 write_artifact(_cloud_row["artifact"], WORKSPACE_DIR)
         st.session_state["_account_artifacts_memory"] = _synced
@@ -406,19 +422,23 @@ if (
 
 from lib.run_store import HostedRunStore, LocalRunStore
 
-if _HOSTED_NO_PLAINTEXT:
-    RUN_STORE = HostedRunStore(
+# Cloud Structured: session-memory only (no plaintext run JSON on host FS).
+# With Supabase Auth, also encrypt to account vault. Local: LocalRunStore.
+if is_streamlit_cloud():
+    _hosted_kwargs = dict(
         memory=list(st.session_state.get("_account_artifacts_memory") or []),
         memory_setter=lambda arts: st.session_state.__setitem__(
             "_account_artifacts_memory", arts
         ),
-        account_session=_account_session,
-        save_cloud=account_save_artifact,
         summaries=list(st.session_state.get("_account_summaries_memory") or []),
         summaries_setter=lambda s: st.session_state.__setitem__(
             "_account_summaries_memory", s
         ),
     )
+    if _HOSTED_ENCRYPTED:
+        _hosted_kwargs["account_session"] = _account_session
+        _hosted_kwargs["save_cloud"] = account_save_artifact
+    RUN_STORE = HostedRunStore(**_hosted_kwargs)
 else:
     RUN_STORE = LocalRunStore(WORKSPACE_DIR)
 
@@ -6981,7 +7001,11 @@ with _rebuild_zone:
                 scoring_version=SCORING_VERSION,
                 track=str(benchmark_track or "controlled"),
                 model_ids=_portfolio_model_ids,
-                preloaded=_preloaded_artifacts() if _HOSTED_NO_PLAINTEXT else None,
+                preloaded=(
+                    None
+                    if getattr(RUN_STORE, "writes_plaintext", True)
+                    else _preloaded_artifacts()
+                ),
                 pack_revision=int(_pack_rev_now),
                 current_pack_revision=int(_pack_rev_now),
             )
@@ -6993,7 +7017,11 @@ with _rebuild_zone:
                 track=str(benchmark_track or "controlled"),
                 model_ids=_portfolio_model_ids,
                 ordered_stem_keys=_ordered_case_stems,
-                preloaded=_preloaded_artifacts() if _HOSTED_NO_PLAINTEXT else None,
+                preloaded=(
+                    None
+                    if getattr(RUN_STORE, "writes_plaintext", True)
+                    else _preloaded_artifacts()
+                ),
                 pack_revision=int(_pack_rev_now),
                 current_pack_revision=int(_pack_rev_now),
             )
