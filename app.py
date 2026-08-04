@@ -28,9 +28,11 @@ from benchmark.beta_pack import (
     beta_case_slot_of,
     count_beta_runs_by_slot,
     custom_slots_for_multi_all,
+    custom_slots_ready_for_multi_all,
     delete_beta_artifacts_for_slot,
     delete_beta_custom_slot,
     is_beta_artifact,
+    is_photocopy_custom_gold,
     list_beta_slots,
     load_beta_custom_state,
     load_beta_pack,
@@ -158,7 +160,7 @@ except Exception:  # pragma: no cover
     qvac_bridge = None  # type: ignore
 
 st.set_page_config(
-    page_title="Comprehension · QVAC vs Cloud",
+    page_title="Comprehension · Cloud & local medical LLMs",
     page_icon="🩺",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -429,6 +431,12 @@ def _paint_beta_rebuild_mean_body(
             )
             rank_by = str(rank_pick or "mean")
         st.markdown("##### Chart (mean %; whiskers = ±1 std)")
+        st.caption(
+            t(
+                "comp.zero_mean_policy",
+                str(st.session_state.get("lang") or "en"),
+            )
+        )
         st.plotly_chart(
             fig_judge_mean_accuracy_bars(
                 mean_rows,
@@ -440,6 +448,17 @@ def _paint_beta_rebuild_mean_body(
             key=f"{key_prefix}_mean_chart",
         )
         _ui_lang = str(st.session_state.get("lang") or "en")
+        _exec_notes = [
+            o
+            for o in list(getattr(summary, "outliers", None) or [])
+            if "execution_cohort" in str(o).lower()
+        ]
+        if _exec_notes:
+            st.warning(
+                t("comp.exec_cohort_banner", _ui_lang)
+                + " "
+                + " · ".join(str(o) for o in _exec_notes[:2])
+            )
         _scan_banner = rebuild_scan_honesty_html(
             list(payload.get("ops_reliability") or []),
             lang=_ui_lang,
@@ -572,15 +591,15 @@ if st.session_state.get("show_beta_mean_popup") and not st.session_state.get(
 
 st.markdown(
     """
-<div class="demo-hero" style="margin:0 0 0.35rem 0">QVAC vs Cloud · Comprehension</div>
+<div class="demo-hero" style="margin:0 0 0.35rem 0">Cloud &amp; local medical LLMs · Comprehension</div>
 <div style="display:flex;align-items:center;gap:0.75rem;flex-wrap:wrap;margin-bottom:0.5rem">
   <span style="font-size:0.7rem;font-weight:800;letter-spacing:0.08em;padding:0.25rem 0.55rem;
   border-radius:999px;background:#fbbf24;color:#78350f;border:1px solid #f59e0b">COMPREHENSION · DEFAULT</span>
   <span style="color:#94a3b8;font-size:0.95rem">Discursive free-form · main track · isolated KPIs</span>
 </div>
 <p class="demo-sub" style="margin:0 0 0.75rem 0">
-Local MedPsy on your machine · your own OpenRouter key · an AI judge scores answers ·
-hobby comparison — not medical advice and not a medical device.
+QVAC / local medical peers on your machine · cloud models via OpenRouter API ·
+an AI judge scores answers · hobby comparison — not medical advice and not a medical device.
 </p>
 """,
     unsafe_allow_html=True,
@@ -756,7 +775,7 @@ _slots_locked = bool(
 _locked_custom_ids = [
     int(x) for x in (st.session_state.get("beta_locked_custom_slots") or [])
 ]
-_multi_all_extra = custom_slots_for_multi_all(slots, _locked_custom_ids)
+_multi_all_extra = custom_slots_ready_for_multi_all(slots, _locked_custom_ids)
 _n_multi_all_cases = len(pack_slots) + len(_multi_all_extra)
 
 # --- case pickers (NEW CASE + buttons + run counts; NOT toggles) ---
@@ -904,6 +923,10 @@ if _is_custom_case and not _slots_locked:
 
 if _is_custom_case:
     st.caption(t("comp.custom_multi_caption", _guide_lang))
+    if is_photocopy_custom_gold(
+        {**case_row, "stem": stem or "", "reference_prose": prose or ""}
+    ):
+        st.warning(t("comp.photocopy_gold_warning", _guide_lang))
     _del_sid = int(case_row["slot"])
     _del_pending = int(st.session_state.get("beta_delete_custom_pending") or 0)
     if _del_pending == _del_sid:
@@ -1391,7 +1414,9 @@ if _ready:
         _launch_locked = [
             int(x) for x in (st.session_state.get("beta_locked_custom_slots") or [])
         ]
-        _launch_customs = custom_slots_for_multi_all(_launch_slots, _launch_locked)
+        _launch_customs = custom_slots_ready_for_multi_all(
+            _launch_slots, _launch_locked
+        )
         cases_plan = list(pack_slots) + _launch_customs
         _n_pack_plan = len(pack_slots)
         _n_custom_plan = len(_launch_customs)
@@ -1439,6 +1464,7 @@ if _ready:
     judge_temp = float(judge_cfg.get("temperature", 0) or 0)
     verifier_model = str(judge_cfg.get("verifier_model") or "")
     judge_providers = list(judge_cfg.get("allowed_providers") or [])
+    verifier_providers = list(judge_cfg.get("verifier_allowed_providers") or [])
     base_case = load_case("caseC")
     label_by_key = {
         c["key"]: str(c.get("label") or c["key"]) for c in candidates_cfg
@@ -1679,6 +1705,7 @@ if _ready:
                 run_scope=f"beta-{case_slot}-{round_i}",
                 benchmark_track=benchmark_track,
                 judge_allowed_providers=judge_providers,
+                verifier_allowed_providers=verifier_providers,
             )
             collected: List[Any] = []
             judgments: List[Any] = []

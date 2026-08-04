@@ -232,7 +232,7 @@ def _mean_rows_to_last_ranking(ranking_mean):
     return out
 
 st.set_page_config(
-    page_title="Structured (legacy / advanced) · QVAC vs Cloud",
+    page_title="Structured (legacy / advanced) · Cloud & local medical LLMs",
     page_icon="📋",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -1469,7 +1469,7 @@ if st.session_state.get("or_key_session") and is_usable_openrouter_key(
     has_key = True
 
 st.markdown(
-    '<p class="demo-hero">QVAC vs Cloud · Structured '
+    '<p class="demo-hero">Cloud &amp; local medical LLMs · Structured '
     '<span style="font-size:0.65em;opacity:.75">'
     "(legacy / advanced · optional)</span></p>",
     unsafe_allow_html=True,
@@ -3717,6 +3717,12 @@ with _results_zone:
                                 )
                                 or []
                             ),
+                            verifier_allowed_providers=list(
+                                ((cfg.get("judge") or {}) if isinstance(cfg, dict) else {}).get(
+                                    "verifier_allowed_providers"
+                                )
+                                or []
+                            ),
                         )
                         judge_status_ctx = st.status(
                             "DeepSeek R1 · pipelined with collect · "
@@ -4862,10 +4868,11 @@ with _results_zone:
                             o for o in summary.outliers if o not in _exec_notes
                         ]
                         if _exec_notes:
-                            st.caption(
-                                "⚠️ "
+                            st.warning(
+                                "**Execution cohort varied** across pooled runs — "
+                                "primary judge vs verifier/route may differ. "
                                 + " · ".join(_exec_notes)
-                                + " · mean same recipe; routes/N/A may differ."
+                                + " · mean still pools on cohort_id (requested recipe)."
                             )
                         if _other_notes:
                             st.caption("Notes · " + " · ".join(_other_notes[:4]))
@@ -5199,6 +5206,12 @@ with _results_zone:
                     benchmark_track=benchmark_track,
                     judge_allowed_providers=list(
                         (prep["cfg"].get("judge") or {}).get("allowed_providers") or []
+                    ),
+                    verifier_allowed_providers=list(
+                        (prep["cfg"].get("judge") or {}).get(
+                            "verifier_allowed_providers"
+                        )
+                        or []
                     ),
                 )
                 full_started: set[str] = set()
@@ -5989,10 +6002,11 @@ with _results_zone:
                             o for o in summary.outliers if o not in _exec_notes
                         ]
                         if _exec_notes:
-                            st.caption(
-                                "⚠️ "
+                            st.warning(
+                                "**Execution cohort varied** across pooled runs — "
+                                "primary judge vs verifier/route may differ. "
                                 + " · ".join(_exec_notes)
-                                + " · mean same recipe; routes/N/A may differ."
+                                + " · mean still pools on cohort_id (requested recipe)."
                             )
                         if _other_notes:
                             st.caption("Notes · " + " · ".join(_other_notes[:4]))

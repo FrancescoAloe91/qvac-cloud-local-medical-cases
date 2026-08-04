@@ -1,8 +1,9 @@
-# QVAC vs Cloud LLMs — Gold-relative Health Benchmark
+# Cloud & local medical LLMs — Medical Cases
 
-Experimental, open-source comparison of pinned **OpenRouter API** models and
-on-device GGUFs through the QVAC SDK. Blind DeepSeek R1 judge, evidence-linked
-scoring, frozen author-supplied reference.
+Experimental, open-source comparison of pinned **OpenRouter API** cloud models
+and **on-device / local medical LLMs** (QVAC SDK + peer GGUFs) on teaching
+medical cases. Blind DeepSeek R1 judge, evidence-linked scoring, frozen
+author-supplied reference.
 
 **This is a research / demo exercise — not a medical device, not clinical
 advice, not a powered clinical study, and not an official MedPsy blog
@@ -367,10 +368,14 @@ visitor key into process-global environment state. **Comprehension** and
 - Files under `artifacts/`, `.env`, secrets, and GGUF weights are gitignored.
 
 Scores are **reference-relative** (Clinical Composite vs the user-confirmed
-gold), not external clinical accuracy. Public screenshots should keep at least
-one honesty caption visible (OpenRouter API ≠ web · author-supplied gold ·
-uncalibrated judge · N=5 exploratory). Legacy Ollama i18n/`lib/medpsy` helpers
-are unused on the gold Automated Benchmark path (live path = QVAC sidecar).
+gold), not external clinical accuracy. **Mean policy:** exact Clinical
+Composite **0** is excluded from averages (treated like N/A for pooling);
+technical N/A are separate; low **non-zero** scores still count. Public
+screenshots / official ranking claim = **pack Case 1–10** (not custom-only
+means). Keep at least one honesty caption visible (OpenRouter API ≠ web ·
+author-supplied gold · uncalibrated judge · N=5 exploratory). Legacy Ollama
+i18n/`lib/medpsy` helpers are unused on the gold Automated Benchmark path
+(live path = QVAC sidecar).
 
 Hosted BYOK: both Comprehension (`app.py`) and Structured strip any process-wide
 `OPENROUTER_API_KEY` on Streamlit Cloud so a host secret cannot silently pay for

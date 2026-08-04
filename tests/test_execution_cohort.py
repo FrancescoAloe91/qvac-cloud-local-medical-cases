@@ -184,3 +184,7 @@ def test_pipelined_judge_uses_strict_track_flags():
     src = inspect.getsource(PipelinedJudge)
     assert "allow_fallbacks=not is_strict_track" in src
     assert "require_parameters=is_strict_track" in src
+    assert "verifier_allowed_providers" in src
+    # Whole-run verifier must not use positional empty-string escape hatch.
+    assert 'judge_candidate,\n                    self.case,\n                    cand,\n                    self.verifier_model,\n                    0.0,' not in src
+    assert "allow_verifier=False" in src

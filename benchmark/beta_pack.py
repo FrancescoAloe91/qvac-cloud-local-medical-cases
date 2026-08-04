@@ -402,6 +402,69 @@ def resolve_beta_gold_raw(case_entry: Mapping[str, Any]) -> str:
     return synthetic_gold_raw_from_prose(prose)
 
 
+def _section_body_for_photocopy_check(section: Any) -> str:
+    """Normalize one gold section body (strip [tag] prefixes)."""
+    summary = ""
+    claims_text = ""
+    if hasattr(section, "summary"):
+        summary = str(getattr(section, "summary", "") or "")
+        claims = list(getattr(section, "claims", None) or [])
+        claims_text = " ".join(str(getattr(c, "text", "") or "") for c in claims)
+    elif isinstance(section, Mapping):
+        summary = str(section.get("summary") or "")
+        claims = section.get("claims") or []
+        if isinstance(claims, list):
+            claims_text = " ".join(
+                str((c.get("text") if isinstance(c, Mapping) else getattr(c, "text", "")) or "")
+                for c in claims
+            )
+    raw = f"{summary} {claims_text}".strip()
+    for tag in ("[diagnosis]", "[tests]", "[urgency]", "[safety]", "[plan]"):
+        raw = raw.replace(tag, " ")
+    return " ".join(raw.lower().split())
+
+
+def is_photocopy_custom_gold(case_entry: Mapping[str, Any]) -> bool:
+    """True when custom gold is the undivided-prose scaffold (same body × 5).
+
+    Pack cases with curated distinct Q1–A5 return False. Used to warn and to
+    keep Multi×all public plan on pack + non-photocopy customs only.
+    """
+    if not case_entry.get("custom"):
+        return False
+    try:
+        raw = resolve_beta_gold_raw(case_entry)
+    except ValueError:
+        return True
+    sections = try_extract_qna_sections(raw)
+    if not sections:
+        return True
+    bodies = []
+    for key in ("diagnosis", "tests", "urgency", "safety", "plan"):
+        sec = sections.get(key) if hasattr(sections, "get") else None
+        if sec is None and isinstance(sections, Mapping):
+            sec = sections.get(key)
+        body = _section_body_for_photocopy_check(sec) if sec is not None else ""
+        if body:
+            bodies.append(body)
+    if len(bodies) < 5:
+        return True
+    return len(set(bodies)) <= 1
+
+
+def custom_slots_ready_for_multi_all(
+    slots: List[Dict[str, Any]],
+    locked_custom_slots: Optional[Iterable[Any]] = None,
+) -> List[Dict[str, Any]]:
+    """Lock-ed customs with non-empty text and non-photocopy gold only."""
+    out: List[Dict[str, Any]] = []
+    for entry in custom_slots_for_multi_all(slots, locked_custom_slots):
+        if is_photocopy_custom_gold(entry):
+            continue
+        out.append(entry)
+    return out
+
+
 def auto_freeze_beta_slot(case_entry: Mapping[str, Any]) -> Dict[str, Any]:
     """Force-confirm a pack slot for Multi×all-cases (no manual UI checkbox)."""
     gold_raw = resolve_beta_gold_raw(case_entry)

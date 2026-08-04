@@ -939,6 +939,9 @@ def _merge_collect_meta(first: CandidateAnswer, second: CandidateAnswer) -> None
     second.meta.cost_usd = round(first_cost + second_cost, 8)
     second.meta.prompt_tokens += first.meta.prompt_tokens
     second.meta.completion_tokens += first.meta.completion_tokens
+    second.meta.reasoning_tokens = int(second.meta.reasoning_tokens or 0) + int(
+        first.meta.reasoning_tokens or 0
+    )
     second.meta.latency_s = round(
         float(first.meta.latency_s or 0.0) + float(second.meta.latency_s or 0.0),
         3,
@@ -951,11 +954,23 @@ def _merge_collect_meta(first: CandidateAnswer, second: CandidateAnswer) -> None
             "status": "error" if first.meta.error else "superseded",
             "model": first.meta.model,
             "provider": first.meta.provider,
+            "requested_model": first.meta.requested_model or "",
+            "routed_model": first.meta.routed_model or first.meta.model or "",
+            "routed_provider": first.meta.routed_provider or first.meta.provider or "",
             "latency_s": first.meta.latency_s,
             "finish_reason": first.meta.finish_reason or "",
+            "prompt_tokens": int(first.meta.prompt_tokens or 0),
+            "completion_tokens": int(first.meta.completion_tokens or 0),
+            "reasoning_tokens": int(first.meta.reasoning_tokens or 0),
+            "cost_usd": first_cost,
+            "requested_providers": list(first.meta.requested_providers or []),
         }
     )
     second.meta.prior_attempts = prior + list(second.meta.prior_attempts or [])
+    # Keep first-attempt paid_attempts trail when present.
+    first_paid = list(first.meta.paid_attempts or [])
+    if first_paid:
+        second.meta.paid_attempts = first_paid + list(second.meta.paid_attempts or [])
 
 
 def _collect_candidate(
@@ -1704,6 +1719,11 @@ def run_once(
         api_key=api_key,
         verifier_model=str(judge_cfg.get("verifier_model") or ""),
         benchmark_track=benchmark_track,
+        judge_allowed_providers=list(judge_cfg.get("allowed_providers") or []) or None,
+        verifier_allowed_providers=list(
+            judge_cfg.get("verifier_allowed_providers") or []
+        )
+        or None,
     )
     for j in judgments:
         _emit(

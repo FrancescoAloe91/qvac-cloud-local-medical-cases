@@ -1358,6 +1358,7 @@ class PipelinedJudge:
         benchmark_track: str = "controlled",
         max_retries: Optional[int] = None,
         judge_allowed_providers: Optional[List[str]] = None,
+        verifier_allowed_providers: Optional[List[str]] = None,
     ) -> None:
         self.case = case
         self.judge_model = judge_model
@@ -1370,6 +1371,7 @@ class PipelinedJudge:
         self.run_scope = run_scope or f"pipe-{id(self)}"
         self.benchmark_track = benchmark_track
         self.judge_allowed_providers = list(judge_allowed_providers or [])
+        self.verifier_allowed_providers = list(verifier_allowed_providers or [])
         self.max_wall_s = max(30.0, float(max_wall_s))
         # Wall-clock starts at the first submit(), not at pipeline construction.
         self._pipeline_started: Optional[float] = None
@@ -1668,11 +1670,22 @@ class PipelinedJudge:
                     self.case,
                     cand,
                     self.verifier_model,
-                    0.0,
-                    self.gold_reference,
-                    self.api_key,
-                    "",
-                    False,
+                    temperature=0.0,
+                    gold_reference=self.gold_reference,
+                    api_key=self.api_key,
+                    verifier_model="",
+                    allow_verifier=False,
+                    allowed_providers=(
+                        self.verifier_allowed_providers
+                        if self.verifier_allowed_providers
+                        else (
+                            self.judge_allowed_providers
+                            if uses_controlled_sampling(self.benchmark_track)
+                            else None
+                        )
+                    ),
+                    require_parameters=is_strict_track(self.benchmark_track),
+                    allow_fallbacks=not is_strict_track(self.benchmark_track),
                 )
             ] = cand
         done, pending = self._wait_with_heartbeats(
@@ -2242,6 +2255,8 @@ def judge_candidates_parallel(
     verifier_model: str = "",
     run_scope: str = "",
     benchmark_track: str = "controlled",
+    judge_allowed_providers: Optional[List[str]] = None,
+    verifier_allowed_providers: Optional[List[str]] = None,
 ) -> List[JudgeResult]:
     """Score all candidates in parallel while preserving legitimate ties.
 
@@ -2262,6 +2277,8 @@ def judge_candidates_parallel(
         verifier_model=verifier_model,
         run_scope=run_scope,
         benchmark_track=benchmark_track,
+        judge_allowed_providers=judge_allowed_providers,
+        verifier_allowed_providers=verifier_allowed_providers,
     )
     for c in candidates:
         pipe.submit(c)

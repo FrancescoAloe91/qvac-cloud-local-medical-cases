@@ -478,14 +478,16 @@ def summarize_runs(
     if len(exec_ids_present) > 1:
         if case_id == "portfolio":
             outliers.append(
-                "execution_cohort_id varied across runs (audit only; mean still same "
-                "cohort_id — e.g. per-run N/A or best-effort routing)."
+                "WARNING: execution_cohort_id varied across pooled runs "
+                "(audit only — mean still uses cohort_id / requested recipe; "
+                "routes, GGUF, or per-run N/A may differ)."
             )
         else:
             outliers.append(
-                "Same-case Multi mean pools on cohort_id (requested recipe); "
-                "execution_cohort_id varied — routes/N/A/GGUF may differ "
-                "(audit only; Portfolio cross-case means unchanged)."
+                "WARNING: execution_cohort_id varied — DeepSeek vs verifier/Qwen "
+                "or different routes may be mixed in one mean. Pooling stays on "
+                "cohort_id (requested recipe); treat as audit caveat, not identical "
+                "backends."
             )
     extra_notes: List[str] = []
     if partial_keys:
@@ -673,23 +675,26 @@ def reliability_caption(
         if successful_only:
             return (
                 "No model has a successful scored observation for Rebuild mean yet. "
-                "Means use only error-free non-zero scored runs "
-                "(technical N/A and exact-zero composites skipped)."
+                "Policy: means use only error-free non-zero scored runs — "
+                "technical N/A and exact Clinical Composite 0 are excluded "
+                "(like N/A for pooling); low non-zero scores still count."
             )
         return (
             "No model has a scored observation for mean ranking yet. "
-            "Failed % = share of pooled runs that are technical N/A "
-            "(collect/judge/timeout/partial/empty) or exact-zero composite — "
-            "not a clinical low score; means use only non-zero scored runs."
+            "Failed % = technical N/A or exact-zero composite rate "
+            "(collect/judge/timeout/partial/empty/zero_score) — "
+            "exact 0 is not a clinical low score for pooling; "
+            "means use only non-zero scored runs."
         )
     eligible = len(ranked)
     if successful_only:
         return (
             f"Mean ranking for {eligible} model(s) with ≥1 successful scored run · "
-            "each mean is over its last ≤N successful non-zero runs "
-            "(technical N/A and exact-zero composites skipped; "
-            "older successful History used) · models with only failures are omitted · "
-            "C/Q/D = coverage/quality/discipline (quality independent of coverage) · "
+            "each mean is over its last ≤N successful non-zero runs · "
+            "policy: technical N/A and exact Clinical Composite 0 excluded "
+            "(like N/A); low non-zero kept; Rebuild may use older non-zero "
+            "History to fill N · models with only failures omitted · "
+            "C/Q/D = coverage/quality/discipline · "
             "sample SD + median/IQR do not measure clinical generalization."
         )
     n_partial = sum(1 for r in ranked if r.get("partial"))

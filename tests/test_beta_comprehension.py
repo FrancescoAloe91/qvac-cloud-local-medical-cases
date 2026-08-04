@@ -9,9 +9,11 @@ from benchmark.beta_pack import (
     beta_case_slot_of,
     count_beta_runs_by_slot,
     custom_slots_for_multi_all,
+    custom_slots_ready_for_multi_all,
     delete_beta_artifacts_for_slot,
     delete_beta_custom_slot,
     is_beta_artifact,
+    is_photocopy_custom_gold,
     list_beta_slots,
     load_beta_custom_state,
     load_beta_pack,
@@ -202,6 +204,16 @@ def test_beta_multi_finish_arms_mean_popup_like_graded():
     assert "load_beta_custom_state" in src
     assert "save_beta_custom_state" in src
     assert "beta_custom_workspace_fp" in src
+    assert "custom_slots_ready_for_multi_all" in src
+    assert "is_photocopy_custom_gold" in src
+    assert "Cloud & local medical LLMs" in src
+    i18n = (root / "lib" / "i18n.py").read_text(encoding="utf-8")
+    assert "comp.zero_mean_policy" in i18n
+    assert "comp.photocopy_gold_warning" in i18n
+    assert "comp.exec_cohort_banner" in i18n
+    judge_src = (root / "benchmark" / "judge.py").read_text(encoding="utf-8")
+    assert "verifier_allowed_providers" in judge_src
+    assert "require_parameters=is_strict_track" in judge_src
     assert "run_boot_dialogs" in src
     # Plain-language lock copy + pack revision + balanced default.
     assert 't("comp.lock_btn"' in src or "comp.lock_btn" in src
@@ -415,6 +427,45 @@ def test_custom_slots_for_multi_all_requires_lock_and_text():
     assert len(plan) == n_pack + 1
     assert all(not s.get("custom") for s in plan[:n_pack])
     assert plan[-1].get("custom") is True
+    # Photocopy synthetic gold is Lock-able but blocked from Multi×all plan.
+    assert is_photocopy_custom_gold(only_locked[0]) is True
+    assert custom_slots_ready_for_multi_all(merged, [n_pack + 1]) == []
+    # Distinct Q1–A5 custom gold is allowed in Multi×all.
+    distinct = {
+        "slot": n_pack + 4,
+        "title": "distinct",
+        "stem": "Patient: distinct custom",
+        "reference_prose": "unused when gold_raw parses",
+        "gold_raw": (
+            "Q1 [diagnosis]: What is the diagnosis?\n"
+            "A1: Anaphylaxis with airway risk.\n\n"
+            "Q2 [tests]: Which tests?\n"
+            "A2: Bedside glucose and ECG monitoring.\n\n"
+            "Q3 [urgency]: Urgency?\n"
+            "A3: Critical — treat immediately.\n\n"
+            "Q4 [safety]: Safety traps?\n"
+            "A4: Avoid delayed epinephrine.\n\n"
+            "Q5 [plan]: Plan?\n"
+            "A5: IM epinephrine then airway support."
+        ),
+        "custom": True,
+    }
+    assert is_photocopy_custom_gold(distinct) is False
+    merged2 = merge_beta_slots(
+        pack_slots,
+        {
+            **drafts,
+            n_pack + 4: {
+                "title": distinct["title"],
+                "stem": distinct["stem"],
+                "reference_prose": distinct["reference_prose"],
+                "gold_raw": distinct["gold_raw"],
+            },
+        },
+    )
+    ready = custom_slots_ready_for_multi_all(merged2, [n_pack + 4])
+    assert [int(s["slot"]) for s in ready] == [n_pack + 4]
+    assert not is_photocopy_custom_gold(list_beta_slots()[0])
 
 
 def test_beta_custom_state_persists_per_workspace(tmp_path: Path):

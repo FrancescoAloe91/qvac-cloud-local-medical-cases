@@ -1,7 +1,11 @@
-"""Paid rejudge for Beta MedPsy N/A rows after answer hygiene fixes.
+"""OFFLINE ops tool — paid rejudge for Comprehension MedPsy N/A rows only.
+
+Not part of the Streamlit dashboard path. Do **not** use for public posts or
+to selectively boost MedPsy in published means.
 
 Re-cleans candidate answers (strip ``<think>``), calls DeepSeek judge again,
-and persists the artifact in place. Does not invent scores offline.
+and may persist the artifact in place. Does not invent scores offline.
+Run only intentionally from CLI/scripts against a private workspace.
 """
 
 from __future__ import annotations

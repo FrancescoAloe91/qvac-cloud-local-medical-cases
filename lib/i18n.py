@@ -7,12 +7,12 @@ SUPPORTED_LANGS = ("en", "it")
 
 _STRINGS = {
     "en": {
-        "page_title": "QVAC vs Cloud LLMs - Medical Cases",
+        "page_title": "Cloud & local medical LLMs — Medical Cases",
         "lang_label": "Language",
-        "title": "QVAC vs Cloud LLMs - Medical Cases",
-        "subtitle": "Identical prompt for every model · QVAC-only depth setting · Manual cloud paste · Diagnosis comparison",
-        "cloud.demo_banner": "☁️ **Public demo (free hosting)** — Cloud LLM paste + rankings work here. **Live QVAC Run benchmark** needs a local Mac/PC with the QVAC sidecar (`./install.sh` + `sidecar`). You can paste a QVAC answer generated locally into the QVAC box.",
-        "cloud.demo_link": "Full local setup (free): [GitHub README](https://github.com/FrancescoAloe91/qvac-cloud-local-medical-cases) · [Live demo](https://francescoaloe91-qvac-vs-cloud-llms-health-test-app-wihxyd.streamlit.app)",
+        "title": "Cloud & local medical LLMs — Medical Cases",
+        "subtitle": "Compare cloud API models with on-device / local medical LLMs on teaching cases.",
+        "cloud.demo_banner": "☁️ **Public Streamlit demo** — OpenRouter API cloud models + rankings work here. **Live QVAC** needs a local Mac/PC with the sidecar (`./install.sh` + `sidecar`). Not a free-LLM benchmark.",
+        "cloud.demo_link": "Local setup: [GitHub README](https://github.com/FrancescoAloe91/qvac-cloud-local-medical-cases) · [Live demo](https://francescoaloe91-qvac-vs-cloud-llms-health-test-app-wihxyd.streamlit.app)",
         "guide.setup_btn": "Setup guide",
         "guide.rank_btn": "How ranking works",
         "guide.setup_title": "QVAC + MedPsy setup",
@@ -705,6 +705,22 @@ _STRINGS = {
             "Rebuild means for that workspace. Use a private key if you need "
             "isolated runs."
         ),
+        "comp.zero_mean_policy": (
+            "**Mean policy:** exact Clinical Composite **0** is excluded from "
+            "averages (like N/A). Technical N/A are separate. Low **non-zero** "
+            "scores still count. Rebuild may fill N from older non-zero History."
+        ),
+        "comp.exec_cohort_banner": (
+            "**Execution cohort varied** across pooled runs — primary judge vs "
+            "verifier/route may differ. Mean still pools on the requested recipe "
+            "(cohort_id); treat as an audit caveat."
+        ),
+        "comp.photocopy_gold_warning": (
+            "**Custom reference is a single-text scaffold** (same prose reused "
+            "across diagnosis/tests/urgency/safety/plan). Fine for exploration; "
+            "**not** for Multi×all or public ranking. Paste distinct Q1–A5 "
+            "sections, or stick to pack Case 1–10 for screenshots."
+        ),
         "bench.case_slot_loaded": (
             "Loaded **Case {n}** case text + confirmed reference from History."
         ),
@@ -896,12 +912,12 @@ _STRINGS = {
         ),
     },
     "it": {
-        "page_title": "QVAC vs Cloud LLMs - Medical Cases",
+        "page_title": "Cloud & local medical LLMs — Medical Cases",
         "lang_label": "Lingua",
-        "title": "QVAC vs Cloud LLMs - Medical Cases",
-        "subtitle": "Prompt identico per tutti · Profondità scelta solo per QVAC · Cloud manuali · Confronto diagnosi",
-        "cloud.demo_banner": "☁️ **Demo pubblica (hosting gratuito)** — Incolla cloud + ranking funzionano qui. **Run benchmark QVAC live** richiede Mac/PC locale con sidecar QVAC (`./install.sh` + `sidecar`). Puoi incollare nel riquadro QVAC una risposta generata in locale.",
-        "cloud.demo_link": "Setup locale completo (gratis): [README GitHub](https://github.com/FrancescoAloe91/qvac-cloud-local-medical-cases) · [Demo live](https://francescoaloe91-qvac-vs-cloud-llms-health-test-app-wihxyd.streamlit.app)",
+        "title": "Cloud & local medical LLMs — Medical Cases",
+        "subtitle": "Confronta modelli cloud via API con LLM medicali on-device / locali su casi teaching.",
+        "cloud.demo_banner": "☁️ **Demo Streamlit pubblica** — modelli cloud via API OpenRouter + ranking. **QVAC live** richiede Mac/PC locale con sidecar (`./install.sh` + `sidecar`). Non è un benchmark di LLM gratis.",
+        "cloud.demo_link": "Setup locale: [README GitHub](https://github.com/FrancescoAloe91/qvac-cloud-local-medical-cases) · [Demo live](https://francescoaloe91-qvac-vs-cloud-llms-health-test-app-wihxyd.streamlit.app)",
         "guide.setup_btn": "Guida setup",
         "guide.rank_btn": "Come funziona la classifica",
         "guide.setup_title": "Setup QVAC + MedPsy",
@@ -1599,6 +1615,24 @@ _STRINGS = {
             "usa questa chiave su questa macchina condivide History, casi "
             "custom e medie Rebuild di quel workspace. Usa una chiave "
             "privata se ti servono run isolate."
+        ),
+        "comp.zero_mean_policy": (
+            "**Policy medie:** Clinical Composite **0** esatto è escluso "
+            "dalle medie (come N/A). N/A tecnici sono separati. I punteggi "
+            "**non-zero** bassi contano. Rebuild può riempire N da History "
+            "non-zero più vecchia."
+        ),
+        "comp.exec_cohort_banner": (
+            "**Execution cohort variato** tra i run in pool — giudice "
+            "primario vs verifier/route possono differire. La media resta "
+            "sul recipe richiesto (cohort_id); trattalo come caveat di audit."
+        ),
+        "comp.photocopy_gold_warning": (
+            "**Il riferimento custom è uno scaffold a testo unico** (stessa "
+            "prosa riusata su diagnosis/tests/urgency/safety/plan). Ok per "
+            "esplorazione; **non** per Multi×all o classifica pubblica. "
+            "Incolla Q1–A5 distinti, oppure usa Case pack 1–10 per gli "
+            "screenshot."
         ),
         "bench.case_slot_loaded": (
             "Caricato **Case {n}**: testo del caso + riferimento confermato "

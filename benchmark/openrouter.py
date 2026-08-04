@@ -81,7 +81,7 @@ def _headers(key: str) -> Dict[str, str]:
         "Authorization": f"Bearer {key}",
         "Content-Type": "application/json",
         "HTTP-Referer": "https://github.com/FrancescoAloe91/qvac-cloud-local-medical-cases",
-        "X-Title": "QVAC Health Benchmark",
+        "X-Title": "Cloud & local medical LLMs",
     }
 
 
