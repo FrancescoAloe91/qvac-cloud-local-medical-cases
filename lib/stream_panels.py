@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import html
+from typing import Optional
+
+from lib.i18n import t
 
 
 def kpi_line(meta: dict, text: str = "") -> str:
@@ -47,13 +50,38 @@ def stream_uid(panel_id: str) -> str:
     return "".join(ch if ch.isalnum() else "_" for ch in (panel_id or "ans"))[:32]
 
 
-def stream_shell_html(*, title: str = "Answer", panel_id: str = "ans") -> str:
+def stream_shell_html(
+    *,
+    title: str = "Answer",
+    panel_id: str = "ans",
+    lang: Optional[str] = None,
+) -> str:
+    """Fullscreen chrome only — render once; never remount during token stream.
+
+    Client-side checkbox + ``.fs-overlay`` (see ``dashboard_portal.js``): open/close
+    does not Streamlit-rerun, so Multi×all collect/judge keep running.
+    """
     tid = html.escape(title or "Answer")
     uid = stream_uid(panel_id)
+    open_lab = html.escape(t("stream.fullscreen", lang))
+    open_title = html.escape(t("stream.fullscreen_title", lang))
+    close_lab = html.escape(t("stream.close", lang))
     return f"""
 <div class="stream-wrap" data-panel="{uid}">
   <div class="stream-toolbar">
-    <span style="color:#94a3b8;font-size:0.8rem">{tid}</span>
+    <label class="stream-fs-lab" for="fs_{uid}" title="{open_title}">{open_lab}</label>
+  </div>
+  <input type="checkbox" id="fs_{uid}" class="fs-ck" autocomplete="off" />
+  <div class="fs-overlay" hidden style="display:none !important;visibility:hidden !important">
+    <div class="fs-card">
+      <div class="fs-bar">
+        <span>{tid}</span>
+        <button type="button" class="fs-close" data-fs="fs_{uid}" title="{close_lab}" aria-label="{close_lab}">✕</button>
+      </div>
+      <div class="fs-scroll">
+        <pre class="fs-pre"></pre>
+      </div>
+    </div>
   </div>
 </div>
 """
@@ -72,4 +100,19 @@ def stream_body_html(
     return (
         f'<div class="stream-out" data-panel="{uid}" id="sout_{uid}">'
         f"{body}{caret}</div>"
+    )
+
+
+def stream_html(
+    text: str,
+    live: bool = False,
+    *,
+    title: str = "Answer",
+    panel_id: str = "ans",
+    lang: Optional[str] = None,
+) -> str:
+    """Shell + body (idle / final paint). Prefer shell once + body updates while live."""
+    return (
+        stream_shell_html(title=title, panel_id=panel_id, lang=lang)
+        + stream_body_html(text, live=live, panel_id=panel_id)
     )

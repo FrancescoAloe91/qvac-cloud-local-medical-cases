@@ -19,6 +19,12 @@ _STRINGS = {
         "guide.rank_title": "How ranking works",
         "guide.hint": "Opens without pausing the run · ✕ to close",
         "guide.close": "Close",
+        "stream.fullscreen": "⛶ Full screen",
+        "stream.fullscreen_title": "Open full screen (does not pause the run)",
+        "stream.close": "Close",
+        "stream.live_caption_fs": (
+            "Click **⛶ Full screen** · ✕ / Esc closes · collect/judge keep running."
+        ),
         "sidebar.reset": "Reset",
         "sidebar.reset_help": "Clear everything including wallet to 0 USDT",
         "sidebar.cloud_tiers": "Cloud model versions",
@@ -924,6 +930,12 @@ _STRINGS = {
         "guide.rank_title": "Come funziona la classifica",
         "guide.hint": "Si apre senza mettere in pausa la run · ✕ per chiudere",
         "guide.close": "Chiudi",
+        "stream.fullscreen": "⛶ Schermo intero",
+        "stream.fullscreen_title": "Apri a schermo intero (non mette in pausa la run)",
+        "stream.close": "Chiudi",
+        "stream.live_caption_fs": (
+            "Clicca **⛶ Schermo intero** · ✕ / Esc chiude · collect/judge continuano."
+        ),
         "sidebar.reset": "Reset",
         "sidebar.reset_help": "Azzera tutto incluso wallet a 0 USDT",
         "sidebar.cloud_tiers": "Versioni modelli cloud",

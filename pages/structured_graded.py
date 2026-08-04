@@ -160,6 +160,10 @@ from lib.disclosure import (
 from lib.boot_welcome import init_boot_state, run_boot_dialogs
 from lib.guide_overlays import guides_always_available_html
 from lib.i18n import t
+from lib.stream_panels import (
+    stream_body_html as _stream_body_html_shared,
+    stream_shell_html as _stream_shell_html_shared,
+)
 from lib.spend_confirm import (
     fmt_cost_multi as _fmt_cost_multi,
     fmt_cost_single as _fmt_cost_single,
@@ -2915,33 +2919,11 @@ def _na_failure_label(status: str, reason: str) -> str:
     return "N/A · technical"
 
 
-def _stream_uid(panel_id: str) -> str:
-    return "".join(ch if ch.isalnum() else "_" for ch in (panel_id or "ans"))[:32]
-
-
 def _stream_shell_html(*, title: str = "Answer", panel_id: str = "ans") -> str:
     """Fullscreen chrome only — render once; never remount during token stream."""
-    tid = html.escape(title or "Answer")
-    uid = _stream_uid(panel_id)
-    return f"""
-<div class="stream-wrap" data-panel="{uid}">
-  <div class="stream-toolbar">
-    <label class="stream-fs-lab" for="fs_{uid}" title="Open full screen (does not pause the run)">⛶ Full screen</label>
-  </div>
-  <input type="checkbox" id="fs_{uid}" class="fs-ck" autocomplete="off" />
-  <div class="fs-overlay" hidden style="display:none !important;visibility:hidden !important">
-    <div class="fs-card">
-      <div class="fs-bar">
-        <span>{tid}</span>
-        <button type="button" class="fs-close" data-fs="fs_{uid}" title="Close" aria-label="Close">✕</button>
-      </div>
-      <div class="fs-scroll">
-        <pre class="fs-pre"></pre>
-      </div>
-    </div>
-  </div>
-</div>
-"""
+    return _stream_shell_html_shared(
+        title=title, panel_id=panel_id, lang=_ui_lang()
+    )
 
 
 def _stream_body_html(
@@ -2951,10 +2933,7 @@ def _stream_body_html(
     panel_id: str = "ans",
 ) -> str:
     """Fixed-height answer box only — safe to remount every few tokens."""
-    caret = '<span class="caret"></span>' if live else ""
-    body = html.escape(text or "")
-    uid = _stream_uid(panel_id)
-    return f'<div class="stream-out" data-panel="{uid}" id="sout_{uid}">{body}{caret}</div>'
+    return _stream_body_html_shared(text, live=live, panel_id=panel_id)
 
 
 def _stream_html(
@@ -3099,7 +3078,7 @@ with _live_zone:
     st.markdown('<div class="sec-label">Live responses</div>', unsafe_allow_html=True)
     st.caption(
         "Same prompt for all models · shorter answers = early stop, not a smaller prompt. "
-        "Click **⛶ Full screen** · ✕ / Esc closes · collect/judge keep running."
+        + t("stream.live_caption_fs", _ui_lang())
         + (
             " · Grid 3×4 · on-device GGUFs load one after another."
             if n_models >= 12

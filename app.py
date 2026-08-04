@@ -1488,7 +1488,9 @@ if _ready:
     )
     st.caption(
         "Model streams first · Multi progress / KPI / totals / Rebuild stay below "
-        "these boxes (no overlay). Same order as Structured."
+        "these boxes. "
+        + t("stream.live_caption_fs", str(st.session_state.get("lang") or "en"))
+        + " Same order as Structured."
     )
 
     phase = st.empty()
@@ -1530,13 +1532,16 @@ if _ready:
                     '<div class="kpi-slot"></div>', unsafe_allow_html=True
                 )
                 shell_slot = st.empty()
+                _shell = stream_shell_html(
+                    title=label,
+                    panel_id=key,
+                    lang=str(st.session_state.get("lang") or "en"),
+                )
                 if hasattr(shell_slot, "html"):
-                    shell_slot.html(
-                        stream_shell_html(title=label, panel_id=key)
-                    )
+                    shell_slot.html(_shell)
                 else:
                     shell_slot.markdown(
-                        stream_shell_html(title=label, panel_id=key),
+                        _shell,
                         unsafe_allow_html=True,
                     )
                 text_boxes[key] = st.empty()
@@ -2142,8 +2147,9 @@ if not st.session_state.get("beta_running") and not _ready:
             unsafe_allow_html=True,
         )
         st.caption(
-            "Last streams stay here · KPI / totals / Rebuild are below "
-            "(same order as Structured)."
+            "Last streams stay here · KPI / totals / Rebuild are below. "
+            + t("stream.live_caption_fs", str(st.session_state.get("lang") or "en"))
+            + " Same order as Structured."
         )
         _idle_rows = panel_rows_for_roster(roster) if roster else []
         if not _idle_rows and _saved_out:
@@ -2190,23 +2196,35 @@ if not st.session_state.get("beta_running") and not _ready:
                             status_pill("done", str(_prev.get("status") or "Done")),
                             unsafe_allow_html=True,
                         )
-                        st.markdown(
-                            stream_body_html(
-                                str(_prev.get("text") or ""),
-                                live=False,
-                                panel_id=_key,
-                            ),
-                            unsafe_allow_html=True,
-                        )
                     else:
                         st.markdown(
                             status_pill("ready", "Ready"),
                             unsafe_allow_html=True,
                         )
-                        st.markdown(
-                            stream_body_html("", live=False, panel_id=_key),
-                            unsafe_allow_html=True,
+                    _idle_shell = stream_shell_html(
+                        title=str(
+                            _cand.get("label") or _prev.get("label") or _key
+                        ),
+                        panel_id=_key,
+                        lang=str(st.session_state.get("lang") or "en"),
+                    )
+                    _idle_shell_slot = st.empty()
+                    if hasattr(_idle_shell_slot, "html"):
+                        _idle_shell_slot.html(_idle_shell)
+                    else:
+                        _idle_shell_slot.markdown(
+                            _idle_shell, unsafe_allow_html=True
                         )
+                    st.markdown(
+                        stream_body_html(
+                            str(_prev.get("text") or "")
+                            if _prev.get("text") is not None
+                            else "",
+                            live=False,
+                            panel_id=_key,
+                        ),
+                        unsafe_allow_html=True,
+                    )
 
 # --- persist progressive Multi strip across reruns (like graded) ---
 _beta_prog = st.session_state.get("beta_multi_progress") or {}
