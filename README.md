@@ -12,7 +12,7 @@ not real-world diagnostic accuracy.
 
 Live app: https://qvac-cloud-local-medical-cases.streamlit.app  
 
-Repository: https://github.com/alofra/qvac-cloud-local-medical-cases
+Repository: https://github.com/alofrankys/qvac-cloud-local-medical-cases
 
 ## Two tracks (KPIs never pool)
 
@@ -402,7 +402,7 @@ Requirements: Python 3.9+ (hashed locks and CI use 3.9; `./install.sh` prefers
 sidecar.
 
 ```bash
-git clone https://github.com/alofra/qvac-cloud-local-medical-cases.git
+git clone https://github.com/alofrankys/qvac-cloud-local-medical-cases.git
 cd qvac-cloud-local-medical-cases
 
 chmod +x install.sh
