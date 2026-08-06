@@ -2,16 +2,26 @@
 from __future__ import annotations
 
 import json
+import os
+import sys
 from pathlib import Path
 
 from benchmark.report import load_artifact, rescore_artifact_current_formula
 from benchmark.scoring import graded_clinical_score
 
 ROOT = Path(__file__).resolve().parents[1]
-ARTIFACT = ROOT / (
-    "artifacts/owners/893e6a29cf690fbef4d6aee2/caseC-3f5bb3a7ef.json"
-)
-REPORT = ROOT / ".cursor" / "offline_rescore_caseC-3f5bb3a7ef.json"
+_ARTIFACT_ENV = (os.environ.get("OFFLINE_RESCORE_ARTIFACT") or "").strip()
+if not _ARTIFACT_ENV:
+    print(
+        "Set OFFLINE_RESCORE_ARTIFACT=artifacts/owners/<id>/<run>.json "
+        "(no hardcoded default).",
+        file=sys.stderr,
+    )
+    raise SystemExit(2)
+ARTIFACT = Path(_ARTIFACT_ENV)
+if not ARTIFACT.is_absolute():
+    ARTIFACT = ROOT / ARTIFACT
+REPORT = ROOT / ".cursor" / f"offline_rescore_{ARTIFACT.stem}.json"
 
 
 def _rank_map(rows):

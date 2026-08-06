@@ -40,8 +40,23 @@ Place the MedPsy GGUF at `../models/medpsy-4b-q4_k_m-imat.gguf` (or set `QVAC_MO
 
 ```bash
 npm start
-# GET  http://127.0.0.1:8787/health
-# POST http://127.0.0.1:8787/generate  {"prompt":"..."}
+# GET  http://127.0.0.1:8787/health   (no auth)
+# POST http://127.0.0.1:8787/generate  requires Authorization: Bearer <token>
+```
+
+**Auth:** `POST /load` and `POST /generate[/stream]` require
+`Authorization: Bearer <QVAC_SIDECAR_TOKEN>` (or `X-QVAC-Token`). If the env
+var is unset, the sidecar creates a random token at `/tmp/qvac-sidecar.token`
+(mode 0600). The Python client (`benchmark/qvac_bridge.py`) reads the same
+file. Default bind is `127.0.0.1`; non-loopback requires
+`QVAC_SIDECAR_ALLOW_REMOTE=1` **and** a token.
+
+```bash
+TOKEN=$(cat /tmp/qvac-sidecar.token)
+curl -s http://127.0.0.1:8787/generate \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"prompt":"hello"}'
 ```
 
 Model **warm-loads at startup** (set `QVAC_WARM_LOAD=0` to defer).  

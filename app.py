@@ -81,8 +81,24 @@ from benchmark.config import is_usable_openrouter_key
 from datetime import datetime, timezone
 from lib.deployment import (
     capture_and_strip_openrouter_env,
+    is_hosted_byok_required,
     is_local_install,
     is_streamlit_cloud,
+)
+from lib.secure_account_store import (
+    AccountSession,
+)
+from lib.secure_account_store import (
+    configured as account_store_configured,
+)
+from lib.secure_account_store import (
+    list_artifacts as account_list_artifacts,
+)
+from lib.secure_account_store import (
+    load_openrouter_key as account_load_key,
+)
+from lib.secure_account_store import (
+    save_artifact as account_save_artifact,
 )
 from lib.benchmark_multi_ui import (
     LiveJudgingBoard,
@@ -311,8 +327,24 @@ if _env_path.exists():
             os.environ[_k] = _v
 
 _server_env_key = capture_and_strip_openrouter_env()
+
+# Restore only from an authenticated encrypted vault; never from IP identity.
+_account_session = st.session_state.get("account_session")
 if (
-    (not is_streamlit_cloud())
+    account_store_configured()
+    and isinstance(_account_session, AccountSession)
+    and not st.session_state.get("_account_key_loaded")
+):
+    try:
+        _account_key = account_load_key(_account_session)
+        if is_usable_openrouter_key(_account_key):
+            st.session_state["or_key_session"] = _account_key
+        st.session_state["_account_key_loaded"] = True
+    except Exception as _account_exc:
+        st.session_state["_account_key_error"] = str(_account_exc)
+
+if (
+    (not is_hosted_byok_required())
     and is_local_install()
     and is_usable_openrouter_key(_server_env_key)
     and not st.session_state.get("or_key_session")
@@ -325,19 +357,46 @@ if _session_key and not is_usable_openrouter_key(_session_key):
     st.session_state.pop("or_key_session", None)
     _session_key = ""
 has_key = is_usable_openrouter_key(_session_key)
-# Cloud + no key: per-browser ephemeral owner — never shared `_local_no_key`.
+_account_uid = (
+    _account_session.user_id
+    if isinstance(_account_session, AccountSession)
+    else None
+)
+# Cloud + no key/account: per-browser ephemeral owner — never shared `_local_no_key`.
 _cloud_ephemeral: Optional[str] = None
-if is_streamlit_cloud() and not has_key:
+if is_streamlit_cloud() and not has_key and not _account_uid:
     if "_cloud_anon_ws" not in st.session_state:
         st.session_state["_cloud_anon_ws"] = str(uuid.uuid4())
     _cloud_ephemeral = str(st.session_state["_cloud_anon_ws"])
 WORKSPACE_DIR = scoped_artifacts_dir(
-    _session_key, cloud_ephemeral_id=_cloud_ephemeral
+    _session_key,
+    account_user_id=_account_uid,
+    cloud_ephemeral_id=_cloud_ephemeral,
 )
-# Cloud Comprehension: session-memory only (no plaintext run JSON on host FS).
+# Encrypted Supabase path (Cloud + Auth). Any Cloud path skips host plaintext.
+_HOSTED_ENCRYPTED = bool(
+    is_streamlit_cloud()
+    and account_store_configured()
+    and isinstance(_account_session, AccountSession)
+)
+if (
+    account_store_configured()
+    and isinstance(_account_session, AccountSession)
+    and not st.session_state.get("_comp_account_artifacts_synced")
+):
+    try:
+        _synced = []
+        for _cloud_row in account_list_artifacts(_account_session, limit=200):
+            _synced.append(_cloud_row["artifact"])
+        st.session_state["_comp_artifacts_memory"] = _synced
+        st.session_state["_comp_account_artifacts_synced"] = True
+    except Exception as _sync_exc:
+        st.session_state["_comp_account_sync_error"] = str(_sync_exc)
+
+# Cloud Comprehension: session-memory + optional encrypted vault (no plaintext FS).
 # Local: keep LocalRunStore so History/means under artifacts/owners/ unchanged.
 if is_streamlit_cloud():
-    RUN_STORE = HostedRunStore(
+    _comp_hosted_kwargs = dict(
         memory=list(st.session_state.get("_comp_artifacts_memory") or []),
         memory_setter=lambda arts: st.session_state.__setitem__(
             "_comp_artifacts_memory", arts
@@ -347,8 +406,22 @@ if is_streamlit_cloud():
             "_comp_summaries_memory", s
         ),
     )
+    if _HOSTED_ENCRYPTED:
+        _comp_hosted_kwargs["account_session"] = _account_session
+        _comp_hosted_kwargs["save_cloud"] = account_save_artifact
+        _comp_hosted_kwargs["error_setter"] = lambda msg: st.session_state.__setitem__(
+            "_comp_hosted_cloud_save_error", msg
+        )
+    RUN_STORE = HostedRunStore(**_comp_hosted_kwargs)
 else:
     RUN_STORE = LocalRunStore(WORKSPACE_DIR)
+
+_comp_hosted_save_err = st.session_state.get("_comp_hosted_cloud_save_error")
+if _comp_hosted_save_err:
+    st.warning(
+        "Encrypted cloud save failed — run kept in session memory "
+        f"(no plaintext fallback): {_comp_hosted_save_err}"
+    )
 
 
 def _comp_preloaded() -> List[Any]:
@@ -356,6 +429,7 @@ def _comp_preloaded() -> List[Any]:
     return [a for _, a in RUN_STORE.list_artifacts()]
 
 # Boot: API key every session · QVAC SDK OK remembered locally (not mid-run / spend).
+# show_account=True so Supabase vault sign-in works on the home track too.
 _qvac_online = bool(qvac_bridge and qvac_bridge.reachable())
 _qvac_loaded = bool(qvac_bridge and qvac_bridge.available())
 _beta_busy = bool(
@@ -371,6 +445,7 @@ run_boot_dialogs(
     running=_beta_busy,
     pending_spend=_beta_pending_spend,
     other_dialog_open=bool(st.session_state.get("show_beta_mean_popup")),
+    show_account=True,
 )
 
 

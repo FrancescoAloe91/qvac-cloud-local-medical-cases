@@ -351,23 +351,27 @@ visitor key into process-global environment state. **Comprehension** and
   case text, reference quotes, and model answers — treat the folder as sensitive
   PHI/clinical **plaintext**; do not commit or share it. Anonymize cases before
   paste.
-- **Comprehension on Streamlit Cloud** (home track): session-memory only for run
+- **Comprehension on Streamlit Cloud** (home track): session-memory for run
   artifacts and custom drafts — **no** plaintext run JSON and **no**
   `comprehension_custom_drafts.json` on the host FS. Requires visitor BYOK.
   Anonymous (no key) visitors get a per-browser ephemeral owner id
   (`_cloud_ephemeral_<hash16>`), never the shared `_local_no_key` bucket.
-  History/Rebuild for that visit lives in the browser session and is lost on
-  refresh.
+  Without Supabase Auth, History/Rebuild for that visit lives in the browser
+  session and is lost on refresh.
 - **Structured on Streamlit Cloud** (`pages/structured_graded.py`): same
   session-memory rule — **no** plaintext run JSON / case drafts on the host FS
   (even without Supabase). Anonymous visitors use per-browser
   `_cloud_ephemeral_<hash16>`, not `_local_no_key`.
-- **Structured + Supabase hosted** (Auth + Fernet `APP_ENCRYPTION_KEY`):
-  configure Supabase Auth and apply
+- **Comprehension or Structured + Supabase hosted** (Auth + Fernet
+  `APP_ENCRYPTION_KEY`): configure Supabase Auth and apply
   `supabase/migrations/202607270001_secure_benchmark.sql`. Workspace directories
   use the Supabase user id. After decrypt, artifacts stay in session memory —
   plaintext is **not** written to disk on the host. Rows are encrypted at rest
-  with RLS on `auth.uid()`.
+  with RLS on `auth.uid()`. Both tracks can encrypt History when the visitor
+  is signed in.
+- **Render / public bind** (`HOSTED_BYOK=1` or `server.address=0.0.0.0`): same
+  BYOK fence as Streamlit Cloud — host `OPENROUTER_API_KEY` is stripped and
+  never used as a visitor fallback.
 - The public Streamlit demo typically has **no QVAC sidecar**; on-device MedPsy
   requires a local install (`./install.sh` + sidecar).
 - Files under `artifacts/`, `.env`, secrets, and GGUF weights are gitignored.

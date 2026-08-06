@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import statistics
+import sys
 from collections import Counter, defaultdict
 from pathlib import Path
 
@@ -15,7 +17,16 @@ from benchmark.report import (
     write_artifact,
 )
 
-OWNER = Path("artifacts/owners/893e6a29cf690fbef4d6aee2")
+# Require explicit owner — never default to a personal fingerprint.
+_OWNER_ENV = (os.environ.get("OFFLINE_RESCORE_OWNER") or "").strip()
+if not _OWNER_ENV:
+    print(
+        "Set OFFLINE_RESCORE_OWNER=artifacts/owners/<fingerprint> "
+        "(no hardcoded default).",
+        file=sys.stderr,
+    )
+    raise SystemExit(2)
+OWNER = Path(_OWNER_ENV)
 FOCUS_KEYS = [
     "chatgpt",
     "claude",

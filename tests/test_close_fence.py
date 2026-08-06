@@ -38,10 +38,45 @@ def test_h2_openrouter_refuses_env_fallback_on_cloud(monkeypatch):
     assert _resolve_api_key("sk-or-v1-" + ("b" * 40)).startswith("sk-or-v1-")
 
 
+def test_h2_render_and_public_bind_strip_host_key(monkeypatch):
+    """Render / 0.0.0.0 hosts must enforce BYOK like Streamlit Cloud."""
+    from lib.deployment import (
+        capture_and_strip_openrouter_env,
+        is_hosted_byok_required,
+        is_local_install,
+    )
+    from benchmark.openrouter import _resolve_api_key
+
+    monkeypatch.delenv("STREAMLIT_CLOUD", raising=False)
+    monkeypatch.delenv("STREAMLIT_RUNTIME_ENVIRONMENT", raising=False)
+    monkeypatch.delenv("STREAMLIT_SHARING_MODE", raising=False)
+    monkeypatch.setenv("HOSTED_BYOK", "1")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-v1-" + ("d" * 40))
+    assert is_hosted_byok_required() is True
+    assert is_local_install() is False
+    assert capture_and_strip_openrouter_env() == ""
+    assert not (os.environ.get("OPENROUTER_API_KEY") or "").strip()
+    with pytest.raises(RuntimeError, match="BYOK|hosted|not used"):
+        _resolve_api_key("")
+
+    monkeypatch.delenv("HOSTED_BYOK", raising=False)
+    monkeypatch.setenv("RENDER", "true")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-v1-" + ("e" * 40))
+    assert is_hosted_byok_required() is True
+    assert capture_and_strip_openrouter_env() == ""
+
+    monkeypatch.delenv("RENDER", raising=False)
+    monkeypatch.setenv("STREAMLIT_SERVER_ADDRESS", "0.0.0.0")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-v1-" + ("f" * 40))
+    assert is_hosted_byok_required() is True
+    assert capture_and_strip_openrouter_env() == ""
+
+
 def test_h2_local_env_fallback_still_works(monkeypatch):
     from benchmark import openrouter as or_mod
     from lib import deployment as dep
 
+    monkeypatch.setattr(dep, "is_hosted_byok_required", lambda: False)
     monkeypatch.setattr(dep, "is_streamlit_cloud", lambda: False)
     monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-v1-" + ("c" * 40))
     key = or_mod._resolve_api_key("")

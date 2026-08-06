@@ -2,17 +2,19 @@
 """Rejudge Beta MedPsy N/A rows with think-stripped answers (DeepSeek API).
 
 Default is dry-run (list eligible targets; no History rewrite). Pass ``--write``
-to persist rejudged artifacts in place under the owner workspace.
+**and** ``--force-selective`` to persist rejudged artifacts in place.
 
 Usage:
-  python scripts/rejudge_beta_medpsy_na.py
-  python scripts/rejudge_beta_medpsy_na.py --dry-run
-  python scripts/rejudge_beta_medpsy_na.py --write
-  python scripts/rejudge_beta_medpsy_na.py --write --owner artifacts/owners/<id>
+  python scripts/rejudge_beta_medpsy_na.py --owner artifacts/owners/<id>
+  python scripts/rejudge_beta_medpsy_na.py --owner artifacts/owners/<id> --dry-run
+  python scripts/rejudge_beta_medpsy_na.py --owner artifacts/owners/<id> \\
+      --write --force-selective
 
 Requires OPENROUTER_API_KEY for ``--write`` (env or repo `.env`).
 Does not interrupt live Streamlit / collect processes — only rewrites finished
-beta-*.json artifacts when ``--write`` is set.
+beta-*.json artifacts when ``--write --force-selective`` is set.
+
+This tool selectively rejudges MedPsy keys only — not for public ranking posts.
 """
 
 from __future__ import annotations
@@ -37,13 +39,21 @@ def main() -> int:
     ap.add_argument(
         "--owner",
         type=Path,
-        default=ROOT / "artifacts/owners/893e6a29cf690fbef4d6aee2",
-        help="Owner artifact directory",
+        required=True,
+        help="Owner artifact directory (e.g. artifacts/owners/<fingerprint>)",
     )
     ap.add_argument(
         "--write",
         action="store_true",
-        help="Persist rejudged artifacts in place (default: dry-run, no rewrite)",
+        help="Persist rejudged artifacts in place (requires --force-selective)",
+    )
+    ap.add_argument(
+        "--force-selective",
+        action="store_true",
+        help=(
+            "Acknowledge MedPsy-only selective rejudge (required with --write). "
+            "Not for public posts."
+        ),
     )
     ap.add_argument(
         "--dry-run",
@@ -61,14 +71,25 @@ def main() -> int:
     if args.write and args.dry_run:
         print("Use either --write or --dry-run, not both.", file=sys.stderr)
         return 2
+    if args.write and not args.force_selective:
+        print(
+            "--write requires --force-selective (MedPsy-only selective rejudge; "
+            "not for public ranking posts).",
+            file=sys.stderr,
+        )
+        return 2
     dry_run = not args.write
     owner = args.owner.resolve()
+    if not owner.is_dir():
+        print(f"Owner directory not found: {owner}", file=sys.stderr)
+        return 2
     key = resolve_openrouter_key()
     if not dry_run and not key.startswith("sk-or-"):
         print(
             "OPENROUTER_API_KEY missing. Export it or put it in .env, then re-run.\n"
             "  export OPENROUTER_API_KEY=sk-or-v1-...\n"
-            "  python scripts/rejudge_beta_medpsy_na.py --write",
+            "  python scripts/rejudge_beta_medpsy_na.py --owner … "
+            "--write --force-selective",
             file=sys.stderr,
         )
         return 2

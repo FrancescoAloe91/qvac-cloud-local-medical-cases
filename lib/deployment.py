@@ -27,19 +27,43 @@ def streamlit_home_page() -> str:
     return "app.py"
 
 
+def is_hosted_byok_required() -> bool:
+    """True when visitor BYOK is mandatory (no host OPENROUTER_API_KEY fallback).
+
+    Covers Streamlit Community Cloud plus public/shared hosts (Render, explicit
+    ``HOSTED_BYOK=1``, Streamlit bound to ``0.0.0.0`` / ``::``). Local loopback
+    installs keep developer ``.env`` prefill.
+    """
+    if is_streamlit_cloud():
+        return True
+    flag = (os.environ.get("HOSTED_BYOK") or "").strip().lower()
+    if flag in {"1", "true", "yes", "on"}:
+        return True
+    if os.environ.get("RENDER") or os.environ.get("RENDER_SERVICE_ID"):
+        return True
+    if os.environ.get("DYNO"):  # Heroku-style
+        return True
+    addr = (os.environ.get("STREAMLIT_SERVER_ADDRESS") or "").strip().lower()
+    if addr in {"0.0.0.0", "::", "[::]", "*"}:
+        return True
+    return False
+
+
 def is_local_install() -> bool:
-    return not is_streamlit_cloud()
+    """True for a private developer machine (loopback), not a public host."""
+    return not is_hosted_byok_required()
 
 
 def capture_and_strip_openrouter_env() -> str:
-    """Return server OPENROUTER key for local prefill; strip it on Cloud.
+    """Return server OPENROUTER key for local prefill; strip it on hosted BYOK.
 
-    On Streamlit Cloud, always clear process-wide ``OPENROUTER_API_KEY`` so a
-    host/shared secret cannot be spent via ``openrouter_api_key()`` fallback
-    when the visitor session key is empty. Local ``.env`` remains developer-only.
+    On Streamlit Cloud / Render / any public bind (``HOSTED_BYOK``), always clear
+    process-wide ``OPENROUTER_API_KEY`` so a host/shared secret cannot be spent
+    via ``openrouter_api_key()`` fallback when the visitor session key is empty.
+    Local loopback ``.env`` remains developer-only.
     """
     server = (os.environ.get("OPENROUTER_API_KEY") or "").strip()
-    if is_streamlit_cloud():
+    if is_hosted_byok_required():
         os.environ.pop("OPENROUTER_API_KEY", None)
         return ""
     return server

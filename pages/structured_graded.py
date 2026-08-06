@@ -148,6 +148,7 @@ from lib.charts import (
 )
 from lib.deployment import (
     capture_and_strip_openrouter_env,
+    is_hosted_byok_required,
     is_local_install,
     is_streamlit_cloud,
 )
@@ -355,9 +356,9 @@ if (
     except Exception as _account_exc:
         st.session_state["_account_key_error"] = str(_account_exc)
 
-# Local install may prefill .env; cloud keys must come from the authenticated/session vault.
+# Local install may prefill .env; hosted BYOK keys must come from session/vault.
 if (
-    (not is_streamlit_cloud())
+    (not is_hosted_byok_required())
     and is_local_install()
     and is_usable_openrouter_key(_server_env_key)
     and not st.session_state.get("or_key_session")

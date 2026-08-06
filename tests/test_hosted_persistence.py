@@ -88,6 +88,11 @@ def test_comprehension_cloud_uses_hosted_run_store_and_skips_custom_disk():
     assert "_comp_artifacts_memory" in home
     assert "_cloud_anon_ws" in home
     assert "cloud_ephemeral_id=" in home
+    # Encrypted vault parity with Structured when Supabase Auth is on.
+    assert "_HOSTED_ENCRYPTED" in home
+    assert 'save_cloud"] = account_save_artifact' in home
+    assert "show_account=True" in home
+    assert "account_user_id=_account_uid" in home
     # _persist_beta_customs must early-return on Cloud.
     assert "def _persist_beta_customs()" in home
     idx = home.index("def _persist_beta_customs()")
@@ -135,9 +140,13 @@ def test_readme_separates_comprehension_and_structured_privacy():
     assert "Privacy and hosted persistence" in text
     assert "Comprehension on Streamlit Cloud" in text
     assert "Structured on Streamlit Cloud" in text
-    assert "Structured + Supabase" in text or "Structured + Supabase hosted" in text
+    assert "Supabase hosted" in text
+    assert "Comprehension or Structured + Supabase" in text or (
+        "both tracks" in text.lower()
+    )
     assert "session-memory" in text or "session memory" in text
     assert "_local_no_key" in text
     assert "_cloud_ephemeral_" in text
     assert "plaintext" in text.lower()
     assert "Same OpenRouter key = shared History" in text
+    assert "HOSTED_BYOK" in text

@@ -18,17 +18,17 @@ OPENROUTER_URL = os.environ.get(
 
 
 def _resolve_api_key(api_key: Optional[str] = None) -> str:
-    """Prefer explicit session key; never fall back to host env on Cloud."""
+    """Prefer explicit session key; never fall back to host env on hosted BYOK."""
     key = (api_key or "").strip()
     if key:
         return key
     try:
-        from lib.deployment import is_streamlit_cloud
+        from lib.deployment import is_hosted_byok_required
 
-        if is_streamlit_cloud():
+        if is_hosted_byok_required():
             raise RuntimeError(
                 "OpenRouter API key required in this session (BYOK). "
-                "Host OPENROUTER_API_KEY is not used on Streamlit Cloud."
+                "Host OPENROUTER_API_KEY is not used on public/hosted deployments."
             )
     except ImportError:
         pass

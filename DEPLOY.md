@@ -59,8 +59,9 @@ rename a subdomain.
    (as above).
 2. Do not configure a shared `OPENROUTER_API_KEY`. Visitors use BYOK.
    Both Comprehension and Structured strip any process-wide
-   `OPENROUTER_API_KEY` on Streamlit Cloud and refuse env fallback when the
-   session key is empty (no silent host-key spend).
+   `OPENROUTER_API_KEY` on Streamlit Cloud, Render (`HOSTED_BYOK=1`), and any
+   public bind (`STREAMLIT_SERVER_ADDRESS=0.0.0.0`), and refuse env fallback
+   when the session key is empty (no silent host-key spend).
 3. Create a Supabase project and apply
    `supabase/migrations/202607270001_secure_benchmark.sql`.
 4. Generate a Fernet key:
@@ -77,11 +78,14 @@ never be committed or exposed. Rotating it requires re-encrypting existing rows.
 
 Hosted behavior:
 
-- each visitor signs into a Supabase account;
-- OpenRouter keys and complete artifacts are encrypted before persistence;
+- each visitor signs into a Supabase account (boot dialog on Comprehension home
+  and Structured);
+- OpenRouter keys and complete artifacts are encrypted before persistence on
+  **both** tracks when Auth + Fernet are configured;
 - no IP-address key vault and no process-global visitor key;
 - cloud candidates/judges run through the visitor’s explicit session key;
-- QVAC/GGUF models are unavailable unless the host also runs the local sidecar;
+- QVAC/GGUF models are unavailable unless the host also runs the local sidecar
+  (sidecar requires `QVAC_SIDECAR_TOKEN` on `/load` and `/generate`);
 - technical failures are N/A and remain visible in artifacts.
 
 If Supabase variables are absent, hosted keys and History stay session-only

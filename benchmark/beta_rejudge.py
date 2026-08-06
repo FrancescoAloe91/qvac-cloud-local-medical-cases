@@ -255,6 +255,12 @@ def rejudge_medpsy_on_artifact(
             "at": utc_now_iso(),
             "formula": "beta-think-strip-rejudge-v1",
             "scoring_version": SCORING_VERSION,
+            "selective_medpsy_only": True,
+            "keys_in_scope": list(keys),
+            "disclosure": (
+                "OFFLINE selective rejudge of MedPsy N/A only — not a full-roster "
+                "rejudge; do not use for public ranking posts without disclosing."
+            ),
             "attempted": report["attempted"],
             "recovered": report["recovered"],
             "still_na": report["still_na"],
@@ -262,10 +268,11 @@ def rejudge_medpsy_on_artifact(
         }
     )
     repro["beta_paid_rejudge"] = prior_events
+    repro["selective_medpsy_rejudge"] = True
     clone.reproducibility = repro
     if report["recovered"]:
         note = (clone.notes or "").strip()
-        tag = "beta-rejudged: " + ", ".join(
+        tag = "beta-rejudged(selective-medpsy): " + ", ".join(
             f"{r['key']}->{r['accuracy']:.1f}" for r in report["recovered"]
         )
         if tag not in note:
@@ -318,6 +325,10 @@ def rejudge_owner_beta_medpsy_na(
         "n_artifacts": len(targets),
         "dry_run": dry_run,
         "has_api_key": bool(key.startswith("sk-or-")),
+        "selective_medpsy_only": True,
+        "disclosure": (
+            "MedPsy-only selective rejudge — not for undisclosed public rankings."
+        ),
         "reports": [],
         "recovered_total": 0,
         "still_na_total": 0,

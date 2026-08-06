@@ -4,6 +4,10 @@
  *
  * Env:
  *   QVAC_SIDECAR_PORT   default 8787
+ *   QVAC_SIDECAR_HOST   default 127.0.0.1 (non-loopback requires ALLOW_REMOTE + token)
+ *   QVAC_SIDECAR_TOKEN  shared secret for /load and /generate (auto-created if unset)
+ *   QVAC_SIDECAR_TOKEN_FILE  path for auto token (default /tmp/qvac-sidecar.token)
+ *   QVAC_SIDECAR_ALLOW_REMOTE  "1" to bind non-loopback (still requires token)
  *   QVAC_MODEL_PATH     path to MedPsy GGUF
  *   QVAC_DEVICE         "gpu" (default) | "cpu"
  *   QVAC_GPU_LAYERS     default 99 (0 = CPU-only layers)
@@ -14,6 +18,7 @@
  */
 import http from "node:http";
 import { execFileSync } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import fs from "node:fs";
@@ -21,6 +26,85 @@ import fs from "node:fs";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.QVAC_SIDECAR_PORT || 8787);
 const HOST = process.env.QVAC_SIDECAR_HOST || "127.0.0.1";
+const TOKEN_FILE =
+  process.env.QVAC_SIDECAR_TOKEN_FILE || "/tmp/qvac-sidecar.token";
+const ALLOW_REMOTE =
+  (process.env.QVAC_SIDECAR_ALLOW_REMOTE || "").trim() === "1";
+
+function isLoopbackHost(host) {
+  const h = String(host || "").trim().toLowerCase();
+  return (
+    h === "127.0.0.1" ||
+    h === "localhost" ||
+    h === "::1" ||
+    h === "[::1]"
+  );
+}
+
+function resolveSidecarToken() {
+  const fromEnv = (process.env.QVAC_SIDECAR_TOKEN || "").trim();
+  if (fromEnv) return fromEnv;
+  try {
+    if (fs.existsSync(TOKEN_FILE)) {
+      const existing = fs.readFileSync(TOKEN_FILE, "utf8").trim();
+      if (existing) {
+        process.env.QVAC_SIDECAR_TOKEN = existing;
+        return existing;
+      }
+    }
+  } catch {
+    /* ignore */
+  }
+  const generated = randomBytes(24).toString("hex");
+  try {
+    fs.writeFileSync(TOKEN_FILE, generated + "\n", { mode: 0o600 });
+  } catch (err) {
+    console.warn(
+      `[qvac-sidecar] could not write token file ${TOKEN_FILE}: ${err?.message || err}`
+    );
+  }
+  process.env.QVAC_SIDECAR_TOKEN = generated;
+  return generated;
+}
+
+const SIDECAR_TOKEN = resolveSidecarToken();
+
+if (!isLoopbackHost(HOST) && !ALLOW_REMOTE) {
+  console.error(
+    `[qvac-sidecar] refusing non-loopback bind (${HOST}). ` +
+      `Use QVAC_SIDECAR_HOST=127.0.0.1 or set QVAC_SIDECAR_ALLOW_REMOTE=1 ` +
+      `with QVAC_SIDECAR_TOKEN.`
+  );
+  process.exit(1);
+}
+if (!isLoopbackHost(HOST) && !SIDECAR_TOKEN) {
+  console.error(
+    "[qvac-sidecar] non-loopback bind requires QVAC_SIDECAR_TOKEN."
+  );
+  process.exit(1);
+}
+
+function requestToken(req) {
+  const auth = String(req.headers.authorization || "");
+  if (auth.toLowerCase().startsWith("bearer ")) {
+    return auth.slice(7).trim();
+  }
+  const hdr = req.headers["x-qvac-token"];
+  if (typeof hdr === "string" && hdr.trim()) return hdr.trim();
+  if (Array.isArray(hdr) && hdr[0]) return String(hdr[0]).trim();
+  return "";
+}
+
+function requireAuth(req, res) {
+  const got = requestToken(req);
+  if (!SIDECAR_TOKEN || got !== SIDECAR_TOKEN) {
+    send(res, 401, {
+      error: "Unauthorized — set Authorization: Bearer <QVAC_SIDECAR_TOKEN>",
+    });
+    return false;
+  }
+  return true;
+}
 
 function spaceFreePath(absPath) {
   // QVAC SDK worker fails on file:// URLs that contain spaces (%20). Prefer a
@@ -603,6 +687,7 @@ const server = http.createServer(async (req, res) => {
       ctx_size: CTX_SIZE,
       predict: PREDICT,
       stream: true,
+      auth_required: true,
       ram_mb: modelId ? lastRamMb : null,
       gguf_mb: modelId ? ggufSizeMb(MODEL_PATH) : null,
       lastError: loadError ? formatErr(loadError) : null,
@@ -610,6 +695,7 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (req.method === "POST" && urlPath === "/load") {
+    if (!requireAuth(req, res)) return;
     let raw = "";
     for await (const chunk of req) raw += chunk;
     let body = {};
@@ -634,6 +720,7 @@ const server = http.createServer(async (req, res) => {
     req.method === "POST" &&
     (urlPath === "/generate" || urlPath === "/generate/stream")
   ) {
+    if (!requireAuth(req, res)) return;
     let raw = "";
     for await (const chunk of req) raw += chunk;
     let body = {};
@@ -687,6 +774,9 @@ server.listen(PORT, HOST, async () => {
   console.log(`[qvac-sidecar] model path: ${MODEL_PATH}`);
   console.log(
     `[qvac-sidecar] prefer device=${DEVICE} gpu_layers=${GPU_LAYERS} (SDK default is GPU/Metal on Mac)`
+  );
+  console.log(
+    `[qvac-sidecar] auth required on POST /load /generate (token file: ${TOKEN_FILE})`
   );
   console.log(`[qvac-sidecar] GET /health  POST /generate  POST /load`);
   if (WARM_LOAD) {

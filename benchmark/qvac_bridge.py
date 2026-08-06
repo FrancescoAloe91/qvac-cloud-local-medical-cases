@@ -21,6 +21,55 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 _SIDECAR_DIR = _REPO_ROOT / "sidecar"
 _SIDECAR_LOG = Path(os.environ.get("QVAC_SIDECAR_LOG", "/tmp/qvac-sidecar.log"))
 _SIDECAR_PID = Path(os.environ.get("QVAC_SIDECAR_PID", "/tmp/qvac-sidecar.pid"))
+_SIDECAR_TOKEN_FILE = Path(
+    os.environ.get("QVAC_SIDECAR_TOKEN_FILE", "/tmp/qvac-sidecar.token")
+)
+
+
+def sidecar_token() -> str:
+    """Shared secret for sidecar /load and /generate (env or token file)."""
+    tok = (os.environ.get("QVAC_SIDECAR_TOKEN") or "").strip()
+    if tok:
+        return tok
+    try:
+        if _SIDECAR_TOKEN_FILE.is_file():
+            tok = _SIDECAR_TOKEN_FILE.read_text(encoding="utf-8").strip()
+            if tok:
+                os.environ["QVAC_SIDECAR_TOKEN"] = tok
+                return tok
+    except OSError:
+        pass
+    return ""
+
+
+def ensure_sidecar_token() -> str:
+    """Return a token, creating one for local spawn if missing."""
+    tok = sidecar_token()
+    if tok:
+        return tok
+    import secrets
+
+    tok = secrets.token_hex(24)
+    try:
+        _SIDECAR_TOKEN_FILE.write_text(tok + "\n", encoding="utf-8")
+        try:
+            _SIDECAR_TOKEN_FILE.chmod(0o600)
+        except OSError:
+            pass
+    except OSError:
+        pass
+    os.environ["QVAC_SIDECAR_TOKEN"] = tok
+    return tok
+
+
+def _sidecar_headers(*, json_body: bool = False) -> Dict[str, str]:
+    headers: Dict[str, str] = {}
+    if json_body:
+        headers["Content-Type"] = "application/json"
+    tok = sidecar_token()
+    if tok:
+        headers["Authorization"] = f"Bearer {tok}"
+    return headers
 
 
 def _opt_float(data: Dict[str, Any], key: str) -> Optional[float]:
@@ -137,7 +186,7 @@ def load_model(
         url,
         data=body,
         method="POST",
-        headers={"Content-Type": "application/json"},
+        headers=_sidecar_headers(json_body=True),
     )
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
@@ -178,6 +227,9 @@ def _spawn_sidecar() -> None:
     env.setdefault("QVAC_DEVICE", "gpu")
     env.setdefault("QVAC_GPU_LAYERS", "99")
     env.setdefault("QVAC_WARM_LOAD", "1")
+    tok = ensure_sidecar_token()
+    env["QVAC_SIDECAR_TOKEN"] = tok
+    env["QVAC_SIDECAR_TOKEN_FILE"] = str(_SIDECAR_TOKEN_FILE)
     # Prefer space-free symlink when present (SDK file:// breaks on spaces).
     link = Path.home() / ".local" / "qvac-models" / "medpsy-4b-q4_k_m-imat.gguf"
     if link.exists() and "QVAC_MODEL_PATH" not in env:
@@ -273,12 +325,28 @@ def generate(
         url,
         data=body,
         method="POST",
-        headers={"Content-Type": "application/json"},
+        headers=_sidecar_headers(json_body=True),
     )
     t0 = time.time()
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             data = json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        detail = ""
+        try:
+            detail = exc.read().decode("utf-8", errors="replace")
+            parsed = json.loads(detail)
+            detail = str(parsed.get("error") or detail)
+        except Exception:
+            detail = detail or f"HTTP {exc.code}"
+        return "", ModelCallMeta(
+            model="medpsy-4b",
+            provider="qvac",
+            display_label=display_label,
+            error=detail,
+            latency_s=round(time.time() - t0, 2),
+            cost_usd=0.0,
+        )
     except urllib.error.URLError as exc:
         return "", ModelCallMeta(
             model="medpsy-4b",
@@ -368,7 +436,7 @@ def generate_streaming(
         url,
         data=body,
         method="POST",
-        headers={"Content-Type": "application/json"},
+        headers=_sidecar_headers(json_body=True),
     )
     t0 = time.time()
     content_parts: list[str] = []
@@ -410,6 +478,22 @@ def generate_streaming(
                         latency_s=round(time.time() - t0, 2),
                         cost_usd=0.0,
                     )
+    except urllib.error.HTTPError as exc:
+        detail = ""
+        try:
+            detail = exc.read().decode("utf-8", errors="replace")
+            parsed = json.loads(detail)
+            detail = str(parsed.get("error") or detail)
+        except Exception:
+            detail = detail or f"HTTP {exc.code}"
+        return "", ModelCallMeta(
+            model="medpsy-4b",
+            provider="qvac",
+            display_label=display_label,
+            error=detail,
+            latency_s=round(time.time() - t0, 2),
+            cost_usd=0.0,
+        )
     except urllib.error.URLError as exc:
         # Older sidecar without /generate/stream — fall back to blocking JSON
         text, meta = _generate_blocking(prompt, timeout=timeout, display_label=display_label)
@@ -485,7 +569,7 @@ def _generate_blocking(
         url,
         data=body,
         method="POST",
-        headers={"Content-Type": "application/json"},
+        headers=_sidecar_headers(json_body=True),
     )
     t0 = time.time()
     try:
@@ -568,7 +652,7 @@ def iter_tokens(
         url,
         data=body,
         method="POST",
-        headers={"Content-Type": "application/json"},
+        headers=_sidecar_headers(json_body=True),
     )
     stream_err: str | None = None
     try:

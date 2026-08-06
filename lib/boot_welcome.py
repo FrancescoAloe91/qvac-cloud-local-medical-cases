@@ -136,10 +136,17 @@ def _render_account_block() -> None:
         )
     elif isinstance(account, AccountSession):
         st.success(f"Signed in · {account.email}")
-    elif is_streamlit_cloud():
-        st.caption(
-            "Hosted without Supabase · key and history stay session-only (not durable)."
-        )
+    else:
+        try:
+            from lib.deployment import is_hosted_byok_required
+
+            hosted = is_streamlit_cloud() or is_hosted_byok_required()
+        except Exception:
+            hosted = is_streamlit_cloud()
+        if hosted:
+            st.caption(
+                "Hosted without Supabase · key and history stay session-only (not durable)."
+            )
 
 
 @st.dialog("OpenRouter API key", width="small")
